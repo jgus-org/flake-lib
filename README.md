@@ -1,8 +1,8 @@
 # flake-lib
 
-Shared library for the `jgus/*-flake` family of pinned-dependency sub-flakes. It generates the boilerplate those repos would otherwise hand-copy: the per-version-branch orchestrator, the `update-version` machinery, and PyPI package builders all come from a small declarative spec.
+Shared library for the `jgus-org/*-flake` family of pinned-dependency sub-flakes. It generates the boilerplate those repos would otherwise hand-copy: the per-version-branch orchestrator, the `update-version` machinery, and PyPI package builders all come from a small declarative spec.
 
-Consumers pin it as an input (`github:jgus/flake-lib/v1`) and pull improvements by
+Consumers pin it as an input (`github:jgus-org/flake-lib/v1`) and pull improvements by
 bumping that pin — the same `nix flake update` the orchestrator already runs per
 branch. There is no copy-and-merge of scripts between repos.
 

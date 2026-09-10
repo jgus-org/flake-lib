@@ -10,7 +10,7 @@
 #
 # Each existing exact branch is `git merge`d with origin/main before its update-version runs, so orchestrator/workflow improvements that land on main propagate forward through every branch's tree. Branch-owned files (pin.nix, flake.lock, flake.nix, ...) stay as-is via the `ours` merge driver declared in .gitattributes. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
 #
-# Failures: per-branch update-version failures and aggregate targets missing the initial main commit are surfaced as GH Actions ::warning::
+# Failures: per-branch input-refresh or update-version failures and aggregate targets missing the initial main commit are surfaced as GH Actions ::warning::
 # annotations + a step summary, and cause a non-zero exit at the end of the run.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
@@ -234,6 +234,7 @@ git fetch --prune --quiet origin
 main_sha=$(git rev-parse --verify origin/main)
 
 declare -a failed=()
+declare -A failure_reason=()
 
 for v in "${tracked[@]}"; do
   branch="v${v}"
@@ -252,15 +253,19 @@ for v in "${tracked[@]}"; do
     (cd "${wt}" && prepare_new_branch_pin "${v}")
   fi
   pushd "${wt}" >/dev/null
-  set +e
-  nix flake update --option post-build-hook ""
-  FLAKE_ROOT="${wt}" nix run --option post-build-hook "" .#update-version -- "${v}" "${orig_of[$v]}"
-  uv_exit=$?
-  set -e
-  if (( uv_exit != 0 )); then
+  update_phase="nix flake update"
+  update_exit=0
+  if nix flake update --option post-build-hook ""; then
+    update_phase="update-version"
+    FLAKE_ROOT="${wt}" nix run --option post-build-hook "" .#update-version -- "${v}" "${orig_of[$v]}" || update_exit=$?
+  else
+    update_exit=$?
+  fi
+  if (( update_exit != 0 )); then
     failed+=("${v}")
-    echo "::warning title=Branch ${branch} skipped::update-version failed for ${v} (exit ${uv_exit}). Likely an upstream defect at that release; see the orchestrator log above."
-    echo "  WARN: update-version failed for ${branch} (exit ${uv_exit}); skipping." >&2
+    failure_reason["${v}"]="${update_phase} failed (exit ${update_exit})"
+    echo "::warning title=Branch ${branch} skipped::${update_phase} failed for ${v} (exit ${update_exit}); see the orchestrator log above."
+    echo "  WARN: ${update_phase} failed for ${branch} (exit ${update_exit}); skipping." >&2
     popd >/dev/null
     git worktree remove --force "${wt}" >/dev/null
     continue
@@ -351,10 +356,10 @@ if (( ${#failed[@]} > 0 )); then
     {
       echo "## :warning: ${#failed[@]} branch(es) failed to update"
       echo
-      echo "These upstream versions couldn't be packaged. Their exact branches were left unchanged; aggregate pointers were checked separately before publication."
+      echo "These upstream versions failed during input refresh or package update. Their exact branches were left unchanged; aggregate pointers were checked separately before publication."
       echo
       for v in "${failed[@]}"; do
-        echo "- \`v${v}\`"
+        echo "- \`v${v}\`: ${failure_reason[$v]}"
       done
       echo
       echo "See the orchestrator log for the underlying error per version."

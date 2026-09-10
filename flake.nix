@@ -87,9 +87,16 @@
         };
         update-branches-test-nix = pkgs.writeShellApplication {
           name = "nix";
-          runtimeInputs = [ pkgs.gnugrep ];
+          runtimeInputs = [ pkgs.git pkgs.gnugrep ];
           text = ''
             if [[ "''${1}" == "flake" ]]; then
+              CURRENT_BRANCH=$(git branch --show-current)
+              for FAILED_VERSION in ''${TEST_FAILED_REFRESH_VERSIONS:-}; do
+                if [[ "''${CURRENT_BRANCH}" == "v''${FAILED_VERSION}" ]]; then
+                  printf '%s\n' '{ "fixture": "partial-input-refresh" }' > flake.lock
+                  exit 42
+                fi
+              done
               exit 0
             fi
             [[ "''${1}" == "run" ]]
@@ -99,6 +106,12 @@
             done
             shift
             TARGET_VERSION="''${1}"
+            printf '%s\n' "''${TARGET_VERSION}" >> "''${TEST_UPDATE_VERSION_LOG}"
+            for FAILED_VERSION in ''${TEST_FAILED_VERSIONS:-}; do
+              if [[ "''${TARGET_VERSION}" == "''${FAILED_VERSION}" ]]; then
+                exit 1
+              fi
+            done
             printf '%s\n' \
               '{' \
               "  version = \"''${TARGET_VERSION}\";" \

@@ -99,6 +99,11 @@
             done
             shift
             TARGET_VERSION="''${1}"
+            for FAILED_VERSION in ''${TEST_FAILED_VERSIONS:-}; do
+              if [[ "''${TARGET_VERSION}" == "''${FAILED_VERSION}" ]]; then
+                exit 1
+              fi
+            done
             printf '%s\n' \
               '{' \
               "  version = \"''${TARGET_VERSION}\";" \

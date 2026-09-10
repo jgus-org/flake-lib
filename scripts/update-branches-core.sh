@@ -10,7 +10,7 @@
 #
 # Each existing exact branch is `git merge`d with origin/main before its update-version runs, so orchestrator/workflow improvements that land on main propagate forward through every branch's tree. Branch-owned files (pin.nix, flake.lock, flake.nix, ...) stay as-is via the `ours` merge driver declared in .gitattributes. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
 #
-# Failures: per-branch update-version failures are surfaced as GH Actions ::warning::
+# Failures: per-branch update-version failures and aggregate targets missing the initial main commit are surfaced as GH Actions ::warning::
 # annotations + a step summary, and cause a non-zero exit at the end of the run.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
@@ -288,7 +288,7 @@ declare -A tracked_version=()
 record() { local KEY="${1}" VERSION="${2}"; agg_target_version[${KEY}]="${VERSION}"; }
 for v in "${tracked[@]}"; do
   tracked_version[${v}]=1
-  # Only consider exact branches that actually exist on origin (failed branches won't have a ref to advance aggregates to). Checked against the just-pruned local refs, not via ls-remote — a transient network error misread as "absent" here would force-push aggregates backwards.
+  # Only consider exact branches that actually exist on origin (failed new branches have no ref). Existing branches may be stale after a failed refresh; check the final aggregate target below. Checked against the just-pruned local refs, not via ls-remote — a transient network error misread as "absent" here would force-push aggregates backwards.
   if ! git rev-parse --verify --quiet "origin/v${v}" >/dev/null; then
     continue
   fi
@@ -301,6 +301,7 @@ done
 
 echo
 echo "=== Updating aggregate pointers"
+declare -a blocked_aggregates=()
 for agg in "${!agg_target_version[@]}"; do
   target_v="${agg_target_version[$agg]}"
   if is_prerelease "${target_v}"; then
@@ -333,6 +334,12 @@ for agg in "${!agg_target_version[@]}"; do
     echo "  ${agg} already at ${target_branch}"
     continue
   fi
+  # Apply this after stable fallbacks too: a failed existing branch or an untracked stable branch can still exist on origin without the specification merged on main.
+  if ! git merge-base --is-ancestor "${main_sha}" "${target_sha}"; then
+    blocked_aggregates+=("${agg}")
+    echo "::warning title=Aggregate ${agg} skipped::${target_branch} does not contain the initial main commit ${main_sha}; retaining ${agg}."
+    continue
+  fi
   echo "  ${agg} -> ${target_branch} (${target_sha:0:8})"
   git push --force --quiet origin "${target_sha}:refs/heads/${agg}"
 done
@@ -344,7 +351,7 @@ if (( ${#failed[@]} > 0 )); then
     {
       echo "## :warning: ${#failed[@]} branch(es) failed to update"
       echo
-      echo "These upstream versions couldn't be packaged. They were skipped; aggregate pointers reflect only the successful branches."
+      echo "These upstream versions couldn't be packaged. Their exact branches were left unchanged; aggregate pointers were checked separately before publication."
       echo
       for v in "${failed[@]}"; do
         echo "- \`v${v}\`"
@@ -353,6 +360,24 @@ if (( ${#failed[@]} > 0 )); then
       echo "See the orchestrator log for the underlying error per version."
     } >> "${GITHUB_STEP_SUMMARY}"
   fi
+fi
+
+if (( ${#blocked_aggregates[@]} > 0 )); then
+  echo "=== ${#blocked_aggregates[@]} aggregate pointer(s) retained: ${blocked_aggregates[*]}"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+      echo "## :warning: ${#blocked_aggregates[@]} aggregate pointer(s) retained"
+      echo
+      echo "Their selected exact branches do not contain the initial main commit \`${main_sha}\`. Retaining these pointers prevents publication from discarding the current specification."
+      echo
+      for agg in "${blocked_aggregates[@]}"; do
+        echo "- \`${agg}\`"
+      done
+    } >> "${GITHUB_STEP_SUMMARY}"
+  fi
+fi
+
+if (( ${#failed[@]} > 0 || ${#blocked_aggregates[@]} > 0 )); then
   exit 1
 fi
 

@@ -15,6 +15,14 @@
 , verification ? if buildFailureHash == null then "evaluate" else "build"
 }:
 assert builtins.elem verification [ "evaluate" "build" ];
+let
+  hfManifest = source.manifest or null;
+  hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
+  effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
+in
+assert hfManifest == null || source.type == "huggingface";
+assert hfManifest == null || hfManifest ? path;
+assert hfManifestHashField == null || hfManifestHashField != "";
 pkgs.writeShellApplication {
   name = "update-version";
   # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
@@ -38,10 +46,14 @@ pkgs.writeShellApplication {
     HF_REPO = if source.type == "huggingface" then source.repo else "";
     HF_REVISION = source.revision or "main";
     HF_FILES = builtins.toJSON (source.files or [ ]);
+    HF_MANIFEST_PATH = if hfManifest == null then "" else hfManifest.path;
+    HF_MANIFEST_INCLUDE = builtins.toJSON (if hfManifest == null then [ ] else hfManifest.include or [ ]);
+    HF_MANIFEST_EXCLUDE = builtins.toJSON (if hfManifest == null then [ ] else hfManifest.exclude or [ ]);
+    HF_MANIFEST_HASH_FIELD = if hfManifestHashField == null then "" else hfManifestHashField;
     BUILD_ATTR = buildAttr;
     HASH_MODE = hashMode;
-    EXTRA_HASHES = builtins.toJSON extraHashes;
-    PIN_HASHES = builtins.toJSON (pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (buildFailureHash != null && buildFailureHash != "sourceHash") buildFailureHash));
+    EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
+    PIN_HASHES = builtins.toJSON (pkgs.lib.unique (effectiveExtraHashes ++ pkgs.lib.optional (buildFailureHash != null && buildFailureHash != "sourceHash") buildFailureHash));
     BUILD_FAILURE_HASH = if buildFailureHash == null then "" else buildFailureHash;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
     VERIFICATION = verification;

@@ -59,7 +59,15 @@
         };
         update-version-huggingface = lib.mkUpdateVersion {
           inherit pkgs;
-          source = { type = "huggingface"; repo = "example/model"; files = [ "config.json" ]; };
+          source = {
+            type = "huggingface";
+            repo = "example/model";
+            files = [ "config.json" ];
+            manifest = {
+              path = "model-manifest.json";
+              exclude = [ "^\\." ];
+            };
+          };
           buildAttr = "model";
         };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
@@ -130,6 +138,13 @@
             esac
           '';
         };
+        update-version-test-curl = pkgs.writeShellApplication {
+          name = "curl";
+          text = ''
+            [[ "''${*}" == *'huggingface.co/api/models/'*'?blobs=true'* ]]
+            printf '%s\n' "''${TEST_HF_METADATA}"
+          '';
+        };
         update-version-test-nix = pkgs.writeShellApplication {
           name = "nix";
           text = ''
@@ -152,6 +167,7 @@
               pkgs.gnugrep
               pkgs.jq
               update-version-test-gh
+              update-version-test-curl
               update-version-test-nix
               update-version-test-prefetch
             ];

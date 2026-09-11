@@ -66,3 +66,51 @@ assert_pin
 write_empty_pin
 run_update release '["rust-v"]' '' '' 1.2.3 1.2.3
 assert_pin
+
+cat > "${TEST_ROOT}/pin.nix" <<'EOF'
+{
+  version = "";
+  sourceRev = "";
+  manifestHash = "";
+}
+EOF
+TEST_HF_METADATA='{
+  "sha": "model-revision",
+  "lastModified": "2026-08-26T12:34:56.000Z",
+  "siblings": [
+    {"rfilename":"weights.safetensors","size":20,"blobId":"large-blob","lfs":{"sha256":"large-sha256"}},
+    {"rfilename":".gitattributes","size":10,"blobId":"hidden-blob"},
+    {"rfilename":"config.json","size":5,"blobId":"config-blob"},
+    {"rfilename":"conversion.complete.json","size":7,"blobId":"receipt-blob"}
+  ]
+}' \
+FLAKE_ROOT="${TEST_ROOT}" \
+SOURCE_TYPE=huggingface \
+HF_REPO=example/model \
+HF_REVISION=main \
+HF_FILES='[]' \
+HF_MANIFEST_PATH=model-manifest.json \
+HF_MANIFEST_INCLUDE='[]' \
+HF_MANIFEST_EXCLUDE='["^\\.","\\.complete\\.json$"]' \
+HF_MANIFEST_HASH_FIELD=manifestHash \
+BUILD_ATTR=model \
+HASH_MODE=prefetch \
+EXTRA_HASHES='["manifestHash"]' \
+PIN_HASHES='["manifestHash"]' \
+VERIFICATION=evaluate \
+SIBLINGS='[]' \
+bash "${UPDATE_VERSION}"
+
+grep -Fq 'version = "0-unstable-2026-08-26";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'sourceRev = "model-revision";' "${TEST_ROOT}/pin.nix"
+MANIFEST_HASH=$(sha256sum "${TEST_ROOT}/model-manifest.json" | cut -d' ' -f1)
+grep -Fq "manifestHash = \"${MANIFEST_HASH}\";" "${TEST_ROOT}/pin.nix"
+jq -e '
+  .repo == "example/model"
+  and .revision == "model-revision"
+  and .total_bytes == 25
+  and [.files[].path] == ["config.json", "weights.safetensors"]
+  and .files[0].sha256 == null
+  and .files[0].git_blob == "config-blob"
+  and .files[1].sha256 == "large-sha256"
+' "${TEST_ROOT}/model-manifest.json" >/dev/null

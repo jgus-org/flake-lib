@@ -60,6 +60,19 @@ source = {
 };
 ```
 
+For checkpoints too large to import into the Nix store, `manifest` writes immutable blob metadata without downloading the artifacts. `include` and `exclude` contain jq regular expressions matched against repository-relative paths. An empty `include` selects every file. The generated pin records the manifest's SHA256 in `manifestHash` by default; set `hashField` to choose another field name.
+
+```nix
+source = {
+  type = "huggingface";
+  repo = "example/large-model";
+  manifest = {
+    path = "model-manifest.json";
+    exclude = [ "^\\." "\\.complete\\.json$" ];
+  };
+};
+```
+
 The update machinery and the orchestrator's per-flake bits
 (`list_upstream_versions`, `prepare_new_branch_pin`, and sibling cascades) are all driven from that spec. `version-only` preserves the current complete pin while creating a branch so a bespoke updater can evaluate and atomically replace it with the target version's complete pin.
 

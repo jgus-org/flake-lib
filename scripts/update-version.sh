@@ -11,6 +11,8 @@
 #   GH_TAG                    release-tag template; token ${version} (default: v${version})  [github-release-asset]
 #   GITLAB_OWNER/GITLAB_REPO  GitLab owner/repo              [gitlab]
 #   GITLAB_TRACK              release (tags -> X.Y.Z) | commit (master HEAD -> 0-unstable-DATE)  [gitlab]
+#   HF_REPO/HF_REVISION       repository and followed revision                    [huggingface]
+#   HF_MANIFEST_*             optional metadata-only artifact manifest settings   [huggingface]
 #   SIBLINGS      JSON array of sibling-cascade specs (may be [])
 #   CASCADE_PY    path to cascade.py (python3+packaging supplied via runtimeInputs)
 #
@@ -58,6 +60,10 @@ GITLAB_TRACK="${GITLAB_TRACK:-commit}"
 HF_REPO="${HF_REPO:-}"
 HF_REVISION="${HF_REVISION:-main}"
 HF_FILES="${HF_FILES:-[]}"
+HF_MANIFEST_PATH="${HF_MANIFEST_PATH:-}"
+HF_MANIFEST_INCLUDE="${HF_MANIFEST_INCLUDE:-[]}"
+HF_MANIFEST_EXCLUDE="${HF_MANIFEST_EXCLUDE:-[]}"
+HF_MANIFEST_HASH_FIELD="${HF_MANIFEST_HASH_FIELD:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
 declare -A extra=()
@@ -302,8 +308,9 @@ write_source_pin() {
 }
 
 write_huggingface_pin() {
-  local VERSION="${1}" REV="${2}" FILE FILE_LITERAL HASH_LITERAL
+  local VERSION="${1}" REV="${2}" FILE FILE_LITERAL HASH_LITERAL NAME
   {
+    echo "# Auto-managed by \`nix run .#update-version\`. Manual edits will be overwritten by the next bump."
     echo "{"
     echo "  version = \"${VERSION}\";"
     echo "  sourceRev = \"${REV}\";"
@@ -316,12 +323,15 @@ write_huggingface_pin() {
       done < <(jq -r '.[]' <<<"${HF_FILES}")
       echo "  };"
     fi
+    for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
+      echo "  ${NAME} = \"${extra[${NAME}]:-}\";"
+    done
     echo "}"
   } > "${pin}"
 }
 
 huggingface_pin_current() {
-  local VERSION="${1}" REV="${2}" CURRENT_VERSION CURRENT_REV CURRENT_HASHES CURRENT_FILES EXPECTED_FILES FILE HASH
+  local VERSION="${1}" REV="${2}" CURRENT_VERSION CURRENT_REV CURRENT_HASHES CURRENT_FILES EXPECTED_FILES FILE HASH NAME CURRENT_EXTRA
   CURRENT_VERSION=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
   CURRENT_REV=$(nix eval --raw --file "${pin}" sourceRev 2>/dev/null || echo "")
   [[ "${CURRENT_VERSION}" == "${VERSION}" && "${CURRENT_REV}" == "${REV}" ]] || return 1
@@ -333,7 +343,53 @@ huggingface_pin_current() {
     HASH=$(jq -r --arg FILE "${FILE}" '.[$FILE] // ""' <<<"${CURRENT_HASHES}")
     [[ -n "${HASH}" ]] || return 1
   done < <(jq -r '.[]' <<<"${HF_FILES}")
+  for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
+    CURRENT_EXTRA=$(nix eval --raw --file "${pin}" "${NAME}" 2>/dev/null || echo "")
+    [[ -n "${CURRENT_EXTRA}" && "${CURRENT_EXTRA}" == "${extra[${NAME}]:-}" ]] || return 1
+  done
   return 0
+}
+
+write_huggingface_manifest() {
+  local METADATA="${1}" OUTPUT TMP
+  [[ -z "${HF_MANIFEST_PATH}" ]] && return 0
+  case "${HF_MANIFEST_PATH}" in
+    /* | .. | ../* | */.. | */../*)
+      echo "error: huggingface manifest path must stay within FLAKE_ROOT" >&2
+      exit 1
+      ;;
+  esac
+  OUTPUT="${FLAKE_ROOT}/${HF_MANIFEST_PATH}"
+  mkdir -p "$(dirname "${OUTPUT}")"
+  TMP="${OUTPUT}.tmp"
+  jq --arg REPO "${HF_REPO}" \
+    --argjson INCLUDE "${HF_MANIFEST_INCLUDE}" \
+    --argjson EXCLUDE "${HF_MANIFEST_EXCLUDE}" '
+      def matches_any($value; $patterns): reduce $patterns[] as $pattern (false; . or ($value | test($pattern)));
+      ([
+        .siblings[]
+        | {
+            path: .rfilename,
+            bytes: .size,
+            sha256: (.lfs.sha256 // null),
+            git_blob: .blobId
+          }
+        | select(($INCLUDE | length) == 0 or matches_any(.path; $INCLUDE))
+        | select(($EXCLUDE | length) == 0 or (matches_any(.path; $EXCLUDE) | not))
+      ] | sort_by(.path)) as $FILES
+      | {
+        repo: $REPO,
+        revision: .sha,
+        total_bytes: ([$FILES[].bytes] | add // 0),
+        files: $FILES
+      }
+      | if any(.files[]; (.path | type) != "string" or (.bytes | type) != "number" or (.git_blob | type) != "string")
+        then error("Hugging Face returned incomplete blob metadata")
+        else .
+        end
+    ' <<<"${METADATA}" > "${TMP}"
+  mv "${TMP}" "${OUTPUT}"
+  extra["${HF_MANIFEST_HASH_FIELD}"]=$(sha256sum "${OUTPUT}" | cut -d' ' -f1)
 }
 
 run_artifact_hook() {
@@ -543,7 +599,7 @@ EOF
     fi
     HF_REF="${requested:-${HF_REVISION}}"
     echo "Querying Hugging Face for ${HF_REPO}@${HF_REF}..."
-    HF_METADATA=$(retry curl -sSfL "https://huggingface.co/api/models/${HF_REPO}/revision/${HF_REF}")
+    HF_METADATA=$(retry curl -sSfL "https://huggingface.co/api/models/${HF_REPO}/revision/${HF_REF}${HF_MANIFEST_PATH:+?blobs=true}")
     HF_REV=$(jq -r '.sha // ""' <<<"${HF_METADATA}")
     HF_DATE=$(jq -r '.lastModified // ""' <<<"${HF_METADATA}" | cut -d'T' -f1)
     if [[ -z "${HF_REV}" || -z "${HF_DATE}" || "${HF_REV}" == "null" || "${HF_DATE}" == "null" ]]; then
@@ -551,6 +607,8 @@ EOF
       exit 1
     fi
     new_version="0-unstable-${HF_DATE}"
+    write_huggingface_manifest "${HF_METADATA}"
+    run_artifact_hook "${HF_REV}" "${new_version}"
     if huggingface_pin_current "${new_version}" "${HF_REV}"; then
       finish_unchanged "${new_version}"
     fi

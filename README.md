@@ -94,6 +94,37 @@ sourceHash, pnpmDepsHash }` branch placeholders.
 
 `templates/` holds `gitattributes` and `workflow.yml`, which a consuming repo installs as `.gitattributes` and `.github/workflows/update.yml`.
 
+### Split update-branches jobs
+
+`mkUpdateBranches` exposes a machine-readable interface for workflows that split
+maintenance across jobs:
+
+```console
+update-branches list
+update-branches refresh --base-sha SHA --version CANONICAL --upstream-version RAW
+update-branches publish --base-sha SHA --versions-json JSON
+```
+
+`list` writes exactly one compact JSON object to stdout; progress goes to stderr:
+
+```json
+{"baseSha":"<full commit SHA>","versions":[{"version":"1.2.3","upstreamVersion":"1.2.3","stable":true}],"newestStable":{"version":"1.2.3","upstreamVersion":"1.2.3","stable":true}}
+```
+
+`versions` is ordered newest first and `newestStable` is either the first stable
+entry or `null`. A refresh invocation does not query upstream: it creates or
+merges exactly one `v<version>` branch from `baseSha`, then updates and pushes
+that branch. Publication consumes the unchanged `versions` array, considers only
+exact refs containing `baseSha`, and updates aggregates independently. When the
+highest candidate is a prerelease but an aggregate is stable, the aggregate
+advances to the highest successful stable candidate. Invoking `update-branches`
+without arguments retains the compatible all-in-one behavior.
+
+The workflow template uses the newest stable entry as a fast path, refreshes all
+remaining exact versions in a parallel matrix, and runs a final publisher even
+when a maintenance job fails. Both publishers and every exact job reuse the
+discovery SHA and version manifest.
+
 ## Versioning
 
 Hand-versioned via git tags (`vX.Y.Z`) with a moving `v1` aggregate branch. Breaking

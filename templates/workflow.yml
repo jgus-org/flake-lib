@@ -16,7 +16,42 @@ env:
   MINIMUM_TRACKING_VERSION: "0.0.0"
 
 jobs:
-  update:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      versions: ${{ steps.plan.outputs.versions }}
+      newest_stable: ${{ steps.plan.outputs.newest_stable }}
+      maintenance: ${{ steps.plan.outputs.maintenance }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Discover tracked versions and specification base
+        id: plan
+        env:
+          # gh CLI reads GH_TOKEN, not GITHUB_TOKEN; required for github-source flakes.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          plan=$(nix run .#update-branches -- list)
+          base_sha=$(jq -r '.baseSha' <<<"${plan}")
+          versions=$(jq -c '.versions' <<<"${plan}")
+          newest_stable=$(jq -c '.newestStable' <<<"${plan}")
+          maintenance=$(jq -c '. as $plan | [.versions[] | select(.version != ($plan.newestStable.version // ""))]' <<<"${plan}")
+          {
+            echo "base_sha=${base_sha}"
+            echo "versions=${versions}"
+            echo "newest_stable=${newest_stable}"
+            echo "maintenance=${maintenance}"
+          } >> "${GITHUB_OUTPUT}"
+
+  newest-stable:
+    needs: discover
+    if: needs.discover.outputs.newest_stable != 'null'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +61,76 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - name: Orchestrate per-version branches
+      - name: Refresh newest stable
         env:
-          # gh CLI reads GH_TOKEN, not GITHUB_TOKEN; required for github-source flakes.
+          BASE_SHA: ${{ needs.discover.outputs.base_sha }}
+          ENTRY: ${{ needs.discover.outputs.newest_stable }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: nix run .#update-branches
+        run: |
+          version=$(jq -r '.version' <<<"${ENTRY}")
+          upstream_version=$(jq -r '.upstreamVersion' <<<"${ENTRY}")
+          nix run .#update-branches -- refresh \
+            --base-sha "${BASE_SHA}" \
+            --version "${version}" \
+            --upstream-version "${upstream_version}"
+
+      - name: Publish newest stable early
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ needs.discover.outputs.base_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSIONS: ${{ needs.discover.outputs.versions }}
+        run: |
+          nix run .#update-branches -- publish \
+            --base-sha "${BASE_SHA}" \
+            --versions-json "${VERSIONS}"
+
+  maintenance:
+    needs: [discover, newest-stable]
+    if: always() && needs.discover.result == 'success' && needs.discover.outputs.maintenance != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJson(needs.discover.outputs.maintenance) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Refresh exact version
+        env:
+          BASE_SHA: ${{ needs.discover.outputs.base_sha }}
+          VERSION: ${{ matrix.entry.version }}
+          UPSTREAM_VERSION: ${{ matrix.entry.upstreamVersion }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          nix run .#update-branches -- refresh \
+            --base-sha "${BASE_SHA}" \
+            --version "${VERSION}" \
+            --upstream-version "${UPSTREAM_VERSION}"
+
+  publish:
+    needs: [discover, newest-stable, maintenance]
+    if: always() && needs.discover.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Publish aggregate pointers
+        env:
+          BASE_SHA: ${{ needs.discover.outputs.base_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSIONS: ${{ needs.discover.outputs.versions }}
+        run: |
+          nix run .#update-branches -- publish \
+            --base-sha "${BASE_SHA}" \
+            --versions-json "${VERSIONS}"

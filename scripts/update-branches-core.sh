@@ -1,6 +1,8 @@
 #!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#curl nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#nix nixpkgs#coreutils --command bash
 
-# Per-version branch orchestrator. Runs on main, once per workflow run.
+# Per-version branch orchestrator. It supports both a backwards-compatible
+# all-in-one invocation and job-splittable discovery, exact-refresh, and
+# aggregate-publication commands.
 #
 # For each upstream version >= $MINIMUM_TRACKING_VERSION, ensures:
 #   - an exact branch `v<M>.<m>.<p>` exists and its pin is hash-validated
@@ -8,9 +10,9 @@
 #
 # Single knob: $MINIMUM_TRACKING_VERSION. Permanent pins are done via git tags (which the action never touches); there is no in-band freeze list.
 #
-# Each existing exact branch is `git merge`d with origin/main before its update-version runs, so orchestrator/workflow improvements that land on main propagate forward through every branch's tree. Branch-owned files (pin.nix, flake.lock, flake.nix, ...) stay as-is via the `ours` merge driver declared in .gitattributes. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
+# Each existing exact branch is `git merge`d with the immutable specification SHA captured by discovery before its update-version runs. Branch-owned files (pin.nix, flake.lock, flake.nix, ...) stay as-is via the `ours` merge driver declared in .gitattributes. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
 #
-# Failures: per-branch input-refresh or update-version failures and aggregate targets missing the initial main commit are surfaced as GH Actions ::warning::
+# Failures: per-branch input-refresh or update-version failures and aggregate targets missing the discovery base commit are surfaced as GH Actions ::warning::
 # annotations + a step summary, and cause a non-zero exit at the end of the run.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
@@ -191,199 +193,472 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 # Define the `ours` merge driver so .gitattributes' `merge=ours` rules take effect: `true` exits 0 without touching the file, leaving the branch's version.
 git config merge.ours.driver true
 
-echo "Querying upstream..."
-mapfile -t raw_versions < <(list_upstream_versions)
-if (( ${#raw_versions[@]} == 0 )); then
-  echo "error: list_upstream_versions returned no rows (auth issue?)" >&2
-  exit 1
-fi
-# Optional remap of upstream versions whose tag numbering doesn't sort correctly (see VERSION_OVERRIDES / VERSION_CANON in mkUpdateBranches). `all_versions` and everything downstream use the canonical form; `orig_of` recovers the raw upstream version so update-version still fetches the real tag.
 VERSION_OVERRIDES="${VERSION_OVERRIDES:-}"
 [[ -n "${VERSION_OVERRIDES}" ]] || VERSION_OVERRIDES='{}'
 VERSION_CANON="${VERSION_CANON:-}"
 version_re="^[0-9]+(\.[0-9]+){$((MIN_VERSION_COMPONENTS - 1)),2}([-+a-zA-Z0-9.]+)?$"
-declare -a all_versions=()
-declare -A orig_of=()
-for v in "${raw_versions[@]}"; do
-  v=$(github_version_from_tag "${v}" || true)
-  if [[ "${v}" =~ ${version_re} ]]; then
-    canon=$(canonicalize_version "${v}")
-    all_versions+=("${canon}")
-    orig_of["${canon}"]="${v}"
-  fi
-done
-
+safe_version_re='^[0-9]+(\.[0-9]+)*([-+a-zA-Z0-9.]+)?$'
 declare -a tracked=()
-if [[ "${SOURCE_TYPE}" == "pypi" ]]; then
-  mapfile -t tracked < <(printf '%s\n' "${all_versions[@]}" | python3 "${CASCADE_PY}" sort "${MINIMUM_TRACKING_VERSION}" all)
-else
-  for v in "${all_versions[@]}"; do
-    if ! version_lt "${v}" "${MINIMUM_TRACKING_VERSION}"; then
-      tracked+=("${v}")
+declare -A orig_of=()
+BASE_SHA=""
+LAST_FAILURE_REASON=""
+declare -a blocked_aggregates=()
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  update-branches
+  update-branches list
+  update-branches refresh --base-sha SHA --version VERSION --upstream-version VERSION
+  update-branches publish --base-sha SHA --versions-json JSON
+EOF
+}
+
+sort_versions_descending() {
+  local v numeric stable
+  if (( $# == 0 )); then
+    return
+  fi
+  if [[ "${SOURCE_TYPE}" == "pypi" ]]; then
+    printf '%s\n' "$@" | python3 "${CASCADE_PY}" sort "${MINIMUM_TRACKING_VERSION}" all | tac
+    return
+  fi
+  # GitHub's accepted version grammar is broader than PEP 440, so retain GNU
+  # version sorting there. The explicit stability rank corrects sort -V's
+  # treatment of 1.2.3-rc1 as newer than the final 1.2.3 with the same numeric
+  # core, without dropping non-PEP tags such as 1.2.3-ubuntu1.
+  for v in "$@"; do
+    [[ "${v}" =~ ^([0-9]+(\.[0-9]+)*)(.*)$ ]]
+    numeric="${BASH_REMATCH[1]}"
+    stable=1
+    if is_prerelease "${v}"; then stable=0; fi
+    printf '%s\t%s\t%s\n' "${numeric}" "${stable}" "${v}"
+  done | sort -t $'\t' -k1,1Vr -k2,2nr -k3,3Vr | cut -f3-
+}
+
+capture_base_sha() {
+  git fetch --prune --quiet origin
+  BASE_SHA=$(git rev-parse --verify 'origin/main^{commit}')
+}
+
+use_base_sha() {
+  local REQUESTED_SHA="${1}"
+  if [[ ! "${REQUESTED_SHA}" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+    echo "error: --base-sha must be a full commit SHA" >&2
+    return 2
+  fi
+  git fetch --prune --quiet origin
+  if ! git cat-file -e "${REQUESTED_SHA}^{commit}" 2>/dev/null; then
+    git fetch --quiet origin "${REQUESTED_SHA}"
+  fi
+  BASE_SHA=$(git rev-parse --verify "${REQUESTED_SHA}^{commit}")
+}
+
+discover_versions() {
+  local v canon
+  local -a raw_versions=() all_versions=() sorted_versions=()
+  local -A seen=()
+  tracked=()
+  orig_of=()
+
+  echo "Querying upstream..." >&2
+  mapfile -t raw_versions < <(list_upstream_versions)
+  if (( ${#raw_versions[@]} == 0 )); then
+    echo "error: list_upstream_versions returned no rows (auth issue?)" >&2
+    return 1
+  fi
+  # Canonical versions drive sorting and branch naming. The upstream version is
+  # retained in the discovery manifest for the exact refresh job.
+  for v in "${raw_versions[@]}"; do
+    v=$(github_version_from_tag "${v}" || true)
+    if [[ "${v}" =~ ${version_re} ]]; then
+      canon=$(canonicalize_version "${v}")
+      if [[ ! "${canon}" =~ ${safe_version_re} ]]; then
+        echo "error: upstream version ${v} canonicalizes to unsafe branch version ${canon}" >&2
+        return 1
+      fi
+      if [[ -n "${orig_of[${canon}]+set}" && "${orig_of[${canon}]}" != "${v}" ]]; then
+        echo "error: upstream versions ${orig_of[${canon}]} and ${v} canonicalize to ${canon}" >&2
+        return 1
+      fi
+      all_versions+=("${canon}")
+      orig_of["${canon}"]="${v}"
     fi
   done
-  mapfile -t tracked < <(printf '%s\n' "${tracked[@]}" | sort -V)
-fi
-if (( ${#tracked[@]} == 0 )); then
-  echo "No upstream versions >= ${MINIMUM_TRACKING_VERSION}; nothing to do."
-  exit 0
-fi
-echo "Tracking ${#tracked[@]} upstream versions: ${tracked[*]}"
 
-git fetch --prune --quiet origin
-main_sha=$(git rev-parse --verify origin/main)
+  if [[ "${SOURCE_TYPE}" == "pypi" ]]; then
+    mapfile -t sorted_versions < <(sort_versions_descending "${all_versions[@]}")
+  else
+    for v in "${all_versions[@]}"; do
+      if ! version_lt "${v}" "${MINIMUM_TRACKING_VERSION}"; then
+        sorted_versions+=("${v}")
+      fi
+    done
+    mapfile -t sorted_versions < <(sort_versions_descending "${sorted_versions[@]}")
+  fi
+  for v in "${sorted_versions[@]}"; do
+    if [[ -z "${seen[${v}]+set}" ]]; then
+      tracked+=("${v}")
+      seen["${v}"]=1
+    fi
+  done
 
-declare -a failed=()
-declare -A failure_reason=()
+  if (( ${#tracked[@]} == 0 )); then
+    echo "No upstream versions >= ${MINIMUM_TRACKING_VERSION}." >&2
+  else
+    echo "Tracking ${#tracked[@]} upstream versions (newest first): ${tracked[*]}" >&2
+  fi
+}
 
-for v in "${tracked[@]}"; do
-  branch="v${v}"
+versions_json() {
+  local v stable
+  {
+    for v in "${tracked[@]}"; do
+      stable=true
+      if is_prerelease "${v}"; then stable=false; fi
+      jq -cn \
+        --arg version "${v}" \
+        --arg upstreamVersion "${orig_of[${v}]}" \
+        --argjson stable "${stable}" \
+        '{version: $version, upstreamVersion: $upstreamVersion, stable: $stable}'
+    done
+  } | jq -sc '.'
+}
+
+load_versions_json() {
+  local JSON="${1}" row v upstream
+  local -a rows=() sorted_versions=()
+  local -A seen=()
+  if ! jq -e 'type == "array" and all(.[]; type == "object" and (.version | type == "string") and (.upstreamVersion | type == "string") and (.stable | type == "boolean"))' <<<"${JSON}" >/dev/null; then
+    echo "error: --versions-json must be the versions array emitted by update-branches list" >&2
+    return 2
+  fi
+  tracked=()
+  orig_of=()
+  mapfile -t rows < <(jq -r '.[] | [.version, .upstreamVersion] | @tsv' <<<"${JSON}")
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r v upstream <<<"${row}"
+    if [[ ! "${v}" =~ ${safe_version_re} || ! "${upstream}" =~ ${safe_version_re} ]]; then
+      echo "error: discovery manifest contains an unsafe version" >&2
+      return 2
+    fi
+    if [[ -n "${seen[${v}]+set}" ]]; then
+      echo "error: discovery manifest contains duplicate version ${v}" >&2
+      return 2
+    fi
+    seen["${v}"]=1
+    sorted_versions+=("${v}")
+    orig_of["${v}"]="${upstream}"
+  done
+  mapfile -t tracked < <(sort_versions_descending "${sorted_versions[@]}")
+}
+
+remove_worktree() {
+  local WT="${1}"
+  git worktree remove --force "${WT}" >/dev/null 2>&1 || true
+}
+
+refresh_version() {
+  local v="${1}" upstream="${2}" branch="v${1}" wt update_phase update_exit
+  LAST_FAILURE_REASON=""
+  if [[ ! "${v}" =~ ${safe_version_re} || ! "${upstream}" =~ ${safe_version_re} ]]; then
+    LAST_FAILURE_REASON="unsafe version argument"
+    return 2
+  fi
   wt=$(mktemp -d)
   if git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
     echo
-    echo "=== Refreshing existing branch ${branch}"
+    echo "=== Refreshing existing branch ${branch} from base ${BASE_SHA:0:8}"
     git fetch --quiet origin "${branch}:refs/remotes/origin/${branch}" || true
-    git worktree add -B "${branch}" "${wt}" "origin/${branch}" >/dev/null
-    # Merge orchestrator/workflow improvements from main; branch-owned files stay as-is per .gitattributes.
-    (cd "${wt}" && git merge --no-edit origin/main)
+    if ! git worktree add -B "${branch}" "${wt}" "origin/${branch}" >/dev/null; then
+      LAST_FAILURE_REASON="git worktree add failed"
+      remove_worktree "${wt}"
+      return 1
+    fi
+    # Never merge a live aggregate: every exact job uses the specification SHA
+    # captured by discovery, even if an earlier publisher has advanced main.
+    if ! (cd "${wt}" && git merge --no-edit "${BASE_SHA}"); then
+      LAST_FAILURE_REASON="merge of discovery base ${BASE_SHA} failed"
+      remove_worktree "${wt}"
+      return 1
+    fi
   else
     echo
-    echo "=== Creating new branch ${branch} from main"
-    git worktree add -B "${branch}" "${wt}" "${main_sha}" >/dev/null
-    (cd "${wt}" && prepare_new_branch_pin "${v}")
+    echo "=== Creating new branch ${branch} from base ${BASE_SHA:0:8}"
+    if ! git worktree add -B "${branch}" "${wt}" "${BASE_SHA}" >/dev/null; then
+      LAST_FAILURE_REASON="git worktree add failed"
+      remove_worktree "${wt}"
+      return 1
+    fi
+    if ! (cd "${wt}" && prepare_new_branch_pin "${v}"); then
+      LAST_FAILURE_REASON="preparing the new branch pin failed"
+      remove_worktree "${wt}"
+      return 1
+    fi
   fi
+
   pushd "${wt}" >/dev/null
   update_phase="nix flake update"
   update_exit=0
   if nix flake update --option post-build-hook ""; then
     update_phase="update-version"
-    FLAKE_ROOT="${wt}" nix run --option post-build-hook "" .#update-version -- "${v}" "${orig_of[$v]}" || update_exit=$?
+    FLAKE_ROOT="${wt}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
   else
     update_exit=$?
   fi
   if (( update_exit != 0 )); then
-    failed+=("${v}")
-    failure_reason["${v}"]="${update_phase} failed (exit ${update_exit})"
+    LAST_FAILURE_REASON="${update_phase} failed (exit ${update_exit})"
     echo "::warning title=Branch ${branch} skipped::${update_phase} failed for ${v} (exit ${update_exit}); see the orchestrator log above."
     echo "  WARN: ${update_phase} failed for ${branch} (exit ${update_exit}); skipping." >&2
     popd >/dev/null
-    git worktree remove --force "${wt}" >/dev/null
-    continue
+    remove_worktree "${wt}"
+    return 1
   fi
   # shellcheck disable=SC2086
   if ! git diff --quiet -- ${BRANCH_OWNED_FILES} || [[ -n "$(git ls-files --others --exclude-standard -- ${BRANCH_OWNED_FILES})" ]]; then
     # shellcheck disable=SC2086
-    git add ${BRANCH_OWNED_FILES}
-    git commit -q -m "auto: ${v} pin"
-    git push --quiet origin "${branch}"
+    if ! git add ${BRANCH_OWNED_FILES} || ! git commit -q -m "auto: ${v} pin" || ! git push --quiet origin "HEAD:refs/heads/${branch}"; then
+      LAST_FAILURE_REASON="committing or pushing ${branch} failed"
+      popd >/dev/null
+      remove_worktree "${wt}"
+      return 1
+    fi
   else
     echo "  no change on ${branch}"
-    # Merge may have advanced HEAD without touching tracked files we diff for; push if local HEAD is ahead of origin.
+    # Merge may have advanced HEAD without touching the branch-owned files.
     if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/${branch}")" ]]; then
-      git push --quiet origin "${branch}"
-    fi
-  fi
-  popd >/dev/null
-  git worktree remove --force "${wt}" >/dev/null
-done
-
-git fetch --prune --quiet origin
-declare -A agg_target_version=()
-declare -A tracked_version=()
-record() { local KEY="${1}" VERSION="${2}"; agg_target_version[${KEY}]="${VERSION}"; }
-for v in "${tracked[@]}"; do
-  tracked_version[${v}]=1
-  # Only consider exact branches that actually exist on origin (failed new branches have no ref). Existing branches may be stale after a failed refresh; check the final aggregate target below. Checked against the just-pruned local refs, not via ls-remote — a transient network error misread as "absent" here would force-push aggregates backwards.
-  if ! git rev-parse --verify --quiet "origin/v${v}" >/dev/null; then
-    continue
-  fi
-  # Aggregates only for levels shorter than the version's component count, so a short version's exact branch (e.g. v2 for tag "2") is never clobbered by an aggregate push.
-  IFS='.' read -r M m p <<<"${v}"
-  record "main" "${v}"
-  if [[ -n "${m}" ]]; then record "v${M}" "${v}"; fi
-  if [[ -n "${p}" ]]; then record "v${M}.${m}" "${v}"; fi
-done
-
-echo
-echo "=== Updating aggregate pointers"
-declare -a blocked_aggregates=()
-for agg in "${!agg_target_version[@]}"; do
-  target_v="${agg_target_version[$agg]}"
-  if is_prerelease "${target_v}"; then
-    STABLE_V="${target_v%%-*}"
-    if [[ "${STABLE_V}" != "${target_v}" && -n "${tracked_version[${STABLE_V}]:-}" ]] && git rev-parse --verify --quiet "origin/v${STABLE_V}" >/dev/null; then
-      target_v="${STABLE_V}"
-    fi
-  fi
-  target_branch="v${target_v}"
-  target_sha=$(git rev-parse --verify "origin/${target_branch}")
-  cur_sha=$(git rev-parse --verify "origin/${agg}" 2>/dev/null || echo "")
-  if [[ "${cur_sha}" == "${target_sha}" ]]; then
-    echo "  ${agg} already at ${target_branch}"
-    continue
-  fi
-  if is_prerelease "${target_v}" && [[ -n "${cur_sha}" ]]; then
-    CURRENT_V=$(git show "${cur_sha}:pin.nix" | sed -nE 's/^[[:space:]]*version = "([^"]+)";$/\1/p' | head -1)
-    if ! is_prerelease "${CURRENT_V}"; then
-      CURRENT_BRANCH="v${CURRENT_V}"
-      if [[ -n "${CURRENT_V}" ]] && git rev-parse --verify --quiet "origin/${CURRENT_BRANCH}" >/dev/null; then
-        target_branch="${CURRENT_BRANCH}"
-        target_sha=$(git rev-parse --verify "origin/${target_branch}")
-      else
-        echo "  ${agg} remains at its current stable target"
-        continue
+      if ! git push --quiet origin "HEAD:refs/heads/${branch}"; then
+        LAST_FAILURE_REASON="pushing ${branch} failed"
+        popd >/dev/null
+        remove_worktree "${wt}"
+        return 1
       fi
     fi
   fi
-  if [[ "${cur_sha}" == "${target_sha}" ]]; then
-    echo "  ${agg} already at ${target_branch}"
-    continue
-  fi
-  # Apply this after stable fallbacks too: a failed existing branch or an untracked stable branch can still exist on origin without the specification merged on main.
-  if ! git merge-base --is-ancestor "${main_sha}" "${target_sha}"; then
-    blocked_aggregates+=("${agg}")
-    echo "::warning title=Aggregate ${agg} skipped::${target_branch} does not contain the initial main commit ${main_sha}; retaining ${agg}."
-    continue
-  fi
-  echo "  ${agg} -> ${target_branch} (${target_sha:0:8})"
-  git push --force --quiet origin "${target_sha}:refs/heads/${agg}"
-done
+  popd >/dev/null
+  remove_worktree "${wt}"
+}
 
-echo
-if (( ${#failed[@]} > 0 )); then
-  echo "=== ${#failed[@]} branch(es) failed: ${failed[*]}"
-  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-    {
-      echo "## :warning: ${#failed[@]} branch(es) failed to update"
-      echo
-      echo "These upstream versions failed during input refresh or package update. Their exact branches were left unchanged; aggregate pointers were checked separately before publication."
-      echo
-      for v in "${failed[@]}"; do
-        echo "- \`v${v}\`: ${failure_reason[$v]}"
+aggregate_keys_for_version() {
+  local v="${1}" M m p
+  printf '%s\n' main
+  IFS='.' read -r M m p <<<"${v}"
+  if [[ -n "${m}" ]]; then printf 'v%s\n' "${M}"; fi
+  if [[ -n "${p}" ]]; then printf 'v%s.%s\n' "${M}" "${m}"; fi
+}
+
+publish_aggregates() {
+  local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v
+  local -a keys=() aggregates=()
+  local -A highest_any=() highest_stable=() aggregate_set=()
+  blocked_aggregates=()
+
+  git fetch --prune --quiet origin || return
+  for v in "${tracked[@]}"; do
+    branch="v${v}"
+    if ! git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
+      continue
+    fi
+    target_sha=$(git rev-parse --verify "origin/${branch}^{commit}")
+    stable=true
+    if is_prerelease "${v}"; then stable=false; fi
+    mapfile -t keys < <(aggregate_keys_for_version "${v}")
+    if ! git merge-base --is-ancestor "${BASE_SHA}" "${target_sha}"; then
+      for agg in "${keys[@]}"; do
+        aggregate_set["${agg}"]=1
       done
-      echo
-      echo "See the orchestrator log for the underlying error per version."
-    } >> "${GITHUB_STEP_SUMMARY}"
+      continue
+    fi
+    for agg in "${keys[@]}"; do
+      aggregate_set["${agg}"]=1
+      if [[ -z "${highest_any[${agg}]+set}" ]]; then highest_any["${agg}"]="${v}"; fi
+      if [[ "${stable}" == true && -z "${highest_stable[${agg}]+set}" ]]; then highest_stable["${agg}"]="${v}"; fi
+    done
+  done
+
+  echo
+  echo "=== Updating aggregate pointers from base ${BASE_SHA:0:8}"
+  if (( ${#aggregate_set[@]} > 0 )); then
+    mapfile -t aggregates < <(printf '%s\n' "${!aggregate_set[@]}" | sort)
   fi
-fi
+  for agg in "${aggregates[@]}"; do
+    if [[ -z "${highest_any[${agg}]+set}" ]]; then
+      blocked_aggregates+=("${agg}")
+      echo "::warning title=Aggregate ${agg} skipped::No candidate for ${agg} contains discovery base ${BASE_SHA}; retaining ${agg}."
+      continue
+    fi
+    target_v="${highest_any[${agg}]}"
+    target_branch="v${target_v}"
+    target_sha=$(git rev-parse --verify "origin/${target_branch}^{commit}")
+    cur_sha=$(git rev-parse --verify "origin/${agg}^{commit}" 2>/dev/null || true)
 
-if (( ${#blocked_aggregates[@]} > 0 )); then
-  echo "=== ${#blocked_aggregates[@]} aggregate pointer(s) retained: ${blocked_aggregates[*]}"
-  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-    {
-      echo "## :warning: ${#blocked_aggregates[@]} aggregate pointer(s) retained"
-      echo
-      echo "Their selected exact branches do not contain the initial main commit \`${main_sha}\`. Retaining these pointers prevents publication from discarding the current specification."
-      echo
-      for agg in "${blocked_aggregates[@]}"; do
-        echo "- \`${agg}\`"
-      done
-    } >> "${GITHUB_STEP_SUMMARY}"
+    # Prereleases may advance an absent/prerelease aggregate. A currently stable
+    # aggregate instead advances to the highest successful stable candidate,
+    # which need not be the stable counterpart of the highest prerelease.
+    if is_prerelease "${target_v}" && [[ -n "${cur_sha}" ]]; then
+      current_v=$(git show "${cur_sha}:pin.nix" 2>/dev/null | sed -nE 's/^[[:space:]]*version = "([^"]+)";$/\1/p' | head -1 || true)
+      if ! is_prerelease "${current_v}"; then
+        stable_v="${highest_stable[${agg}]:-}"
+        current_branch="v${current_v}"
+        current_branch_sha=""
+        current_is_safe=false
+        if [[ -n "${current_v}" ]] && git rev-parse --verify --quiet "origin/${current_branch}" >/dev/null; then
+          current_branch_sha=$(git rev-parse --verify "origin/${current_branch}^{commit}")
+          if git merge-base --is-ancestor "${BASE_SHA}" "${current_branch_sha}"; then current_is_safe=true; fi
+        fi
+        if [[ -n "${stable_v}" ]] && { [[ "${current_is_safe}" == false ]] || version_lt "${current_v}" "${stable_v}"; }; then
+          target_v="${stable_v}"
+          target_branch="v${target_v}"
+          target_sha=$(git rev-parse --verify "origin/${target_branch}^{commit}")
+        elif [[ "${current_is_safe}" == true ]]; then
+          target_branch="${current_branch}"
+          target_sha="${current_branch_sha}"
+        elif [[ -z "${stable_v}" && -n "${current_branch_sha}" ]]; then
+          target_branch="${current_branch}"
+          target_sha="${current_branch_sha}"
+        else
+          echo "  ${agg} remains at its current stable target"
+          continue
+        fi
+      fi
+    fi
+    if [[ "${cur_sha}" == "${target_sha}" ]]; then
+      echo "  ${agg} already at ${target_branch}"
+      continue
+    fi
+    if ! git merge-base --is-ancestor "${BASE_SHA}" "${target_sha}"; then
+      blocked_aggregates+=("${agg}")
+      echo "::warning title=Aggregate ${agg} skipped::${target_branch} does not contain discovery base ${BASE_SHA}; retaining ${agg}."
+      continue
+    fi
+    echo "  ${agg} -> ${target_branch} (${target_sha:0:8})"
+    if [[ -n "${cur_sha}" ]]; then
+      if ! git push --force-with-lease="refs/heads/${agg}:${cur_sha}" --quiet origin "${target_sha}:refs/heads/${agg}"; then
+        echo "error: aggregate ${agg} changed concurrently; rerun publication" >&2
+        return 1
+      fi
+    else
+      if ! git push --force-with-lease="refs/heads/${agg}:" --quiet origin "${target_sha}:refs/heads/${agg}"; then
+        echo "error: aggregate ${agg} was created concurrently; rerun publication" >&2
+        return 1
+      fi
+    fi
+  done
+}
+
+write_failure_summary() {
+  local -n FAILED_REF="${1}" REASONS_REF="${2}"
+  local v agg
+  if (( ${#FAILED_REF[@]} > 0 )); then
+    echo "=== ${#FAILED_REF[@]} branch(es) failed: ${FAILED_REF[*]}"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+      {
+        echo "## :warning: ${#FAILED_REF[@]} branch(es) failed to update"
+        echo
+        echo "These upstream versions failed during input refresh or package update. Their exact branches were left unchanged; aggregate pointers were checked separately before publication."
+        echo
+        for v in "${FAILED_REF[@]}"; do echo "- \`v${v}\`: ${REASONS_REF[$v]}"; done
+        echo
+        echo "See the orchestrator log for the underlying error per version."
+      } >> "${GITHUB_STEP_SUMMARY}"
+    fi
   fi
-fi
+  if (( ${#blocked_aggregates[@]} > 0 )); then
+    echo "=== ${#blocked_aggregates[@]} aggregate pointer(s) retained: ${blocked_aggregates[*]}"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+      {
+        echo "## :warning: ${#blocked_aggregates[@]} aggregate pointer(s) retained"
+        echo
+        echo "Their selected exact branches do not contain discovery base \`${BASE_SHA}\`. Retaining these pointers prevents publication from discarding the current specification."
+        echo
+        for agg in "${blocked_aggregates[@]}"; do echo "- \`${agg}\`"; done
+      } >> "${GITHUB_STEP_SUMMARY}"
+    fi
+  fi
+}
 
-if (( ${#failed[@]} > 0 || ${#blocked_aggregates[@]} > 0 )); then
-  exit 1
-fi
+command_list() {
+  local JSON NEWEST_STABLE
+  capture_base_sha
+  discover_versions
+  JSON=$(versions_json)
+  NEWEST_STABLE=$(jq -c '[.[] | select(.stable)][0] // null' <<<"${JSON}")
+  jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" --argjson newestStable "${NEWEST_STABLE}" \
+    '{baseSha: $baseSha, versions: $versions, newestStable: $newestStable}'
+}
 
-echo "Done."
+command_refresh() {
+  local BASE="" VERSION="" UPSTREAM=""
+  shift
+  while (( $# > 0 )); do
+    case "${1}" in
+      --base-sha) [[ $# -ge 2 ]] || { usage; return 2; }; BASE="${2}"; shift 2 ;;
+      --version) [[ $# -ge 2 ]] || { usage; return 2; }; VERSION="${2}"; shift 2 ;;
+      --upstream-version) [[ $# -ge 2 ]] || { usage; return 2; }; UPSTREAM="${2}"; shift 2 ;;
+      *) usage; return 2 ;;
+    esac
+  done
+  if [[ -z "${BASE}" || -z "${VERSION}" || -z "${UPSTREAM}" ]]; then usage; return 2; fi
+  use_base_sha "${BASE}"
+  if ! refresh_version "${VERSION}" "${UPSTREAM}"; then
+    local -a failed=("${VERSION}")
+    local -A reasons=(["${VERSION}"]="${LAST_FAILURE_REASON}")
+    write_failure_summary failed reasons
+    return 1
+  fi
+  echo "Done."
+}
+
+command_publish() {
+  local BASE="" JSON=""
+  local -a failed=()
+  local -A reasons=()
+  shift
+  while (( $# > 0 )); do
+    case "${1}" in
+      --base-sha) [[ $# -ge 2 ]] || { usage; return 2; }; BASE="${2}"; shift 2 ;;
+      --versions-json) [[ $# -ge 2 ]] || { usage; return 2; }; JSON="${2}"; shift 2 ;;
+      *) usage; return 2 ;;
+    esac
+  done
+  if [[ -z "${BASE}" || -z "${JSON}" ]]; then usage; return 2; fi
+  use_base_sha "${BASE}"
+  load_versions_json "${JSON}"
+  publish_aggregates
+  write_failure_summary failed reasons
+  if (( ${#blocked_aggregates[@]} > 0 )); then return 1; fi
+  echo "Done."
+}
+
+command_all() {
+  local JSON v publish_exit=0
+  local -a failed=()
+  local -A failure_reason=()
+  capture_base_sha
+  discover_versions
+  if (( ${#tracked[@]} == 0 )); then
+    echo "Done."
+    return
+  fi
+  JSON=$(versions_json)
+  for v in "${tracked[@]}"; do
+    if ! refresh_version "${v}" "${orig_of[${v}]}"; then
+      failed+=("${v}")
+      failure_reason["${v}"]="${LAST_FAILURE_REASON}"
+    fi
+  done
+  load_versions_json "${JSON}"
+  publish_aggregates || publish_exit=$?
+  echo
+  write_failure_summary failed failure_reason
+  if (( ${#failed[@]} > 0 || ${#blocked_aggregates[@]} > 0 || publish_exit != 0 )); then return 1; fi
+  echo "Done."
+}
+
+case "${1:-}" in
+  "") command_all ;;
+  list) [[ $# == 1 ]] || { usage; exit 2; }; command_list ;;
+  refresh) command_refresh "$@" ;;
+  publish) command_publish "$@" ;;
+  *) usage; exit 2 ;;
+esac

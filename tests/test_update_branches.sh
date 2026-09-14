@@ -30,6 +30,61 @@ initialize_repository() {
   git -C "${CHECKOUT}" push -q -u origin main
 }
 
+install_push_wrapper() {
+  TEST_REAL_GIT=$(command -v git)
+  TEST_GIT_BIN="${CASE_ROOT}/git-bin"
+  TEST_PUSH_COUNT_FILE="${CASE_ROOT}/push-count"
+  mkdir -p "${TEST_GIT_BIN}"
+  printf '#!%s\n' "$(command -v bash)" > "${TEST_GIT_BIN}/git"
+  cat >> "${TEST_GIT_BIN}/git" <<'EOF'
+set -euo pipefail
+
+if [[ "${1:-}" == push && -n "${TEST_PUSH_REF:-}" ]]; then
+  refspec="${!#}"
+  if [[ "${refspec}" == *":refs/heads/${TEST_PUSH_REF}" ]]; then
+    count=$(cat "${TEST_PUSH_COUNT_FILE}" 2>/dev/null || printf '%s\n' 0)
+    count=$((count + 1))
+    printf '%s\n' "${count}" > "${TEST_PUSH_COUNT_FILE}"
+    case "${TEST_PUSH_MODE}" in
+      transient)
+        if (( count <= TEST_PUSH_FAILURES )); then
+          printf '%s\n' 'remote: Internal Server Error' >&2
+          exit 1
+        fi
+        ;;
+      applied)
+        if (( count == 1 )); then
+          desired=$("${TEST_REAL_GIT}" rev-parse --verify "${refspec%%:*}^{commit}")
+          "${TEST_REAL_GIT}" push --quiet origin "${desired}:refs/heads/__test-transfer"
+          "${TEST_REAL_GIT}" --git-dir="${TEST_REMOTE}" update-ref "refs/heads/${TEST_PUSH_REF}" "${desired}"
+          "${TEST_REAL_GIT}" --git-dir="${TEST_REMOTE}" update-ref -d refs/heads/__test-transfer
+          printf '%s\n' "remote: ref applied before the response failed" >&2
+          exit 1
+        fi
+        ;;
+      conflict)
+        if (( count == 1 )); then
+          "${TEST_REAL_GIT}" --git-dir="${TEST_REMOTE}" update-ref "refs/heads/${TEST_PUSH_REF}" "${TEST_PUSH_CONFLICT_SHA}"
+          printf '%s\n' 'remote: ref changed concurrently' >&2
+          exit 1
+        fi
+        ;;
+    esac
+  fi
+fi
+
+exec "${TEST_REAL_GIT}" "$@"
+EOF
+  chmod +x "${TEST_GIT_BIN}/git"
+  export TEST_REAL_GIT TEST_GIT_BIN TEST_PUSH_COUNT_FILE
+  export TEST_REMOTE="${REMOTE}"
+}
+
+clear_test_failures() {
+  unset TEST_GIT_BIN TEST_PUSH_COUNT_FILE TEST_PUSH_CONFLICT_SHA TEST_PUSH_FAILURES TEST_PUSH_MODE TEST_PUSH_REF TEST_REAL_GIT TEST_REMOTE
+  unset TEST_TRANSIENT_ATTEMPT_DIR TEST_TRANSIENT_UPDATE_VERSIONS
+}
+
 seed_exact_branch() {
   local VERSION="${1}"
   git -C "${CHECKOUT}" switch -q -C "v${VERSION}" main
@@ -63,6 +118,9 @@ invoke_update() {
     TEST_FAILED_VERSIONS="${FAILED_VERSIONS}" \
     TEST_FAILED_REFRESH_VERSIONS="${FAILED_REFRESH_VERSIONS}" \
     TEST_UPDATE_VERSION_LOG="${CASE_ROOT}/update-version.log" \
+    PATH="${TEST_GIT_BIN:+${TEST_GIT_BIN}:}${PATH}" \
+    PUSH_RETRY_DELAY_SECONDS=0 \
+    TRANSIENT_RETRY_DELAY_SECONDS=0 \
     VERSION_CANON='' \
     VERSION_OVERRIDES='{}' \
     bash "${UPDATE_BRANCHES_CORE}" "$@"
@@ -256,6 +314,7 @@ run_failed_update '1.2.0' '["v",""]' '1.2.0'
 assert_ref_sha main "${SPECIFICATION_SHA}"
 assert_ref_sha v1.2.0 "${OLD_EXACT_SHA}"
 assert_missing_ref v1
+[[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 1 ]]
 grep -Fqx -- "- \`v1.2.0\`: update-version failed (exit 1)" "${GITHUB_STEP_SUMMARY}"
 unset GITHUB_STEP_SUMMARY
 
@@ -371,3 +430,64 @@ initialize_repository
 PLAN=$(run_command $'1.2.3-ubuntu1\n1.2.3' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.3","1.2.3-ubuntu1"]' ]]
 jq -e '.newestStable.version == "1.2.3"' <<<"${PLAN}" >/dev/null
+
+# A temporary server-side push failure retries without rebuilding the branch.
+initialize_repository
+install_push_wrapper
+export TEST_PUSH_MODE=transient TEST_PUSH_REF=v1.2.0 TEST_PUSH_FAILURES=2
+run_update '1.2.0'
+assert_same_ref main v1.2.0
+[[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 3 ]]
+[[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 1 ]]
+clear_test_failures
+
+# The same bounded retry protects force-with-lease aggregate publication.
+initialize_repository
+install_push_wrapper
+export TEST_PUSH_MODE=transient TEST_PUSH_REF=main TEST_PUSH_FAILURES=2
+run_update '1.2.0'
+assert_same_ref main v1.2.0
+[[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 3 ]]
+clear_test_failures
+
+# If a push reports failure after the desired ref was applied, reconcile it as success.
+initialize_repository
+install_push_wrapper
+export TEST_PUSH_MODE=applied TEST_PUSH_REF=v1.2.0 TEST_PUSH_FAILURES=0
+run_update '1.2.0'
+assert_same_ref main v1.2.0
+[[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 1 ]]
+clear_test_failures
+
+# A genuinely different concurrent ref must fail immediately and remain untouched.
+initialize_repository
+seed_exact_branch 1.2.0
+EXPECTED_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/v1.2.0)
+commit_specification
+PLAN=$(run_command '1.2.0' list)
+BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
+install_push_wrapper
+export TEST_PUSH_MODE=conflict TEST_PUSH_REF=v1.2.0 TEST_PUSH_FAILURES=0
+export TEST_PUSH_CONFLICT_SHA="${SPECIFICATION_SHA}"
+REFRESH_EXIT=0
+set +e
+run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0 > "${CASE_ROOT}/conflict.log" 2>&1
+REFRESH_EXIT=$?
+set -e
+[[ "${REFRESH_EXIT}" == 1 ]]
+[[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 1 ]]
+assert_ref_sha v1.2.0 "${SPECIFICATION_SHA}"
+[[ "${SPECIFICATION_SHA}" != "${EXPECTED_SHA}" ]]
+grep -Fq 'changed concurrently' "${CASE_ROOT}/conflict.log"
+clear_test_failures
+
+# Retry one update-version invocation only when its output identifies a transient network failure.
+initialize_repository
+mkdir -p "${CASE_ROOT}/transient-attempts"
+export TEST_TRANSIENT_UPDATE_VERSIONS=1.2.0
+export TEST_TRANSIENT_ATTEMPT_DIR="${CASE_ROOT}/transient-attempts"
+run_update '1.2.0'
+assert_same_ref main v1.2.0
+[[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 2 ]]
+[[ "$(cat "${CASE_ROOT}/transient-attempts/update-version-1.2.0")" == 2 ]]
+clear_test_failures

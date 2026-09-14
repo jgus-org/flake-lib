@@ -1,4 +1,4 @@
-#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#curl nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#nix nixpkgs#coreutils --command bash
+#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#curl nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#nix nixpkgs#coreutils --command bash
 
 # Per-version branch orchestrator. It supports both a backwards-compatible
 # all-in-one invocation and job-splittable discovery, exact-refresh, and
@@ -35,6 +35,15 @@ mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
 cd "${FLAKE_ROOT}"
 
+PUSH_MAX_ATTEMPTS="${PUSH_MAX_ATTEMPTS:-5}"
+PUSH_RETRY_DELAY_SECONDS="${PUSH_RETRY_DELAY_SECONDS:-5}"
+TRANSIENT_MAX_ATTEMPTS="${TRANSIENT_MAX_ATTEMPTS:-2}"
+TRANSIENT_RETRY_DELAY_SECONDS="${TRANSIENT_RETRY_DELAY_SECONDS:-5}"
+if [[ ! "${PUSH_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${TRANSIENT_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: retry attempt counts must be positive integers" >&2
+  exit 2
+fi
+
 # Buffers output and emits it only on success, so a consumer never sees partial data from an attempt that died mid-stream (e.g. gh --paginate failing between pages).
 retry() {
   local attempt output
@@ -50,6 +59,86 @@ retry() {
   done
   echo "  ${1} failed after 5 attempts" >&2
   return 1
+}
+
+remote_ref_sha() {
+  local ref="${1}" output
+  if ! output=$(git ls-remote --heads origin "refs/heads/${ref}"); then
+    return 1
+  fi
+  printf '%s\n' "${output%%[[:space:]]*}"
+}
+
+# A failed push can be ambiguous: the server may have updated the ref before
+# returning an error. Re-read the remote before retrying. Treat the desired SHA
+# as success, retry only while the ref remains at the expected SHA, and never
+# overwrite a genuinely different concurrent update.
+push_ref() {
+  local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}"
+  local attempt desired_sha remote_sha="" query_exit=0
+  desired_sha=$(git rev-parse --verify "${source}^{commit}")
+
+  for ((attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++)); do
+    if [[ "${mode}" == lease ]]; then
+      if git push --force-with-lease="refs/heads/${ref}:${expected_sha}" --quiet origin "${desired_sha}:refs/heads/${ref}"; then
+        return 0
+      fi
+    elif git push --quiet origin "${desired_sha}:refs/heads/${ref}"; then
+      return 0
+    fi
+
+    query_exit=0
+    remote_sha=$(remote_ref_sha "${ref}") || query_exit=$?
+    if (( query_exit == 0 )); then
+      if [[ "${remote_sha}" == "${desired_sha}" ]]; then
+        echo "  ${ref} reached ${desired_sha:0:8} despite the push error; continuing."
+        return 0
+      fi
+      if [[ "${remote_sha}" != "${expected_sha}" ]]; then
+        echo "error: ${ref} changed concurrently (expected ${expected_sha:-absent}, found ${remote_sha:-absent}); refusing to overwrite it" >&2
+        return 1
+      fi
+    fi
+
+    if (( attempt < PUSH_MAX_ATTEMPTS )); then
+      echo "  push of ${ref} failed (attempt ${attempt}/${PUSH_MAX_ATTEMPTS}); retrying in ${PUSH_RETRY_DELAY_SECONDS}s..." >&2
+      sleep "${PUSH_RETRY_DELAY_SECONDS}"
+    fi
+  done
+  echo "error: push of ${ref} failed after ${PUSH_MAX_ATTEMPTS} attempts" >&2
+  return 1
+}
+
+is_transient_network_failure() {
+  local log="${1}"
+  grep -Eiq '(requested URL returned error: (429|5[0-9]{2})|HTTP[^[:space:]]* (429|5[0-9]{2})|Internal Server Error|Could not resolve host|Failed to connect|Connection reset by peer|Operation timed out|TLS connect error|Temporary failure in name resolution)' "${log}"
+}
+
+# Branch updates run in disposable worktrees, so retrying the whole command is
+# safe. Keep this deliberately narrow: only explicit transient network errors
+# receive one bounded retry; deterministic build/update failures return at once.
+run_with_transient_retry() {
+  local label="${1}" attempt=1 exit_code=0 log
+  shift
+  log=$(mktemp)
+  while (( attempt <= TRANSIENT_MAX_ATTEMPTS )); do
+    : > "${log}"
+    set +e
+    "$@" 2>&1 | tee "${log}"
+    exit_code=${PIPESTATUS[0]}
+    set -e
+    if (( exit_code == 0 )); then
+      rm -f "${log}"
+      return 0
+    fi
+    if (( attempt == TRANSIENT_MAX_ATTEMPTS )) || ! is_transient_network_failure "${log}"; then
+      rm -f "${log}"
+      return "${exit_code}"
+    fi
+    echo "  ${label} hit a transient network error (attempt ${attempt}/${TRANSIENT_MAX_ATTEMPTS}); retrying in ${TRANSIENT_RETRY_DELAY_SECONDS}s..." >&2
+    sleep "${TRANSIENT_RETRY_DELAY_SECONDS}"
+    attempt=$((attempt + 1))
+  done
 }
 
 list_upstream_versions() {
@@ -360,6 +449,7 @@ remove_worktree() {
 
 refresh_version() {
   local v="${1}" upstream="${2}" branch="v${1}" wt update_phase update_exit
+  local expected_remote_sha=""
   LAST_FAILURE_REASON=""
   if [[ ! "${v}" =~ ${safe_version_re} || ! "${upstream}" =~ ${safe_version_re} ]]; then
     LAST_FAILURE_REASON="unsafe version argument"
@@ -369,7 +459,12 @@ refresh_version() {
   if git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
     echo
     echo "=== Refreshing existing branch ${branch} from base ${BASE_SHA:0:8}"
-    git fetch --quiet origin "${branch}:refs/remotes/origin/${branch}" || true
+    if ! retry git fetch --quiet origin "${branch}:refs/remotes/origin/${branch}"; then
+      LAST_FAILURE_REASON="fetching ${branch} failed"
+      remove_worktree "${wt}"
+      return 1
+    fi
+    expected_remote_sha=$(git rev-parse --verify "origin/${branch}^{commit}")
     if ! git worktree add -B "${branch}" "${wt}" "origin/${branch}" >/dev/null; then
       LAST_FAILURE_REASON="git worktree add failed"
       remove_worktree "${wt}"
@@ -400,9 +495,9 @@ refresh_version() {
   pushd "${wt}" >/dev/null
   update_phase="nix flake update"
   update_exit=0
-  if nix flake update --option post-build-hook ""; then
+  if run_with_transient_retry "nix flake update for ${branch}" nix flake update --option post-build-hook ""; then
     update_phase="update-version"
-    FLAKE_ROOT="${wt}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
+    run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
   else
     update_exit=$?
   fi
@@ -417,8 +512,14 @@ refresh_version() {
   # shellcheck disable=SC2086
   if ! git diff --quiet -- ${BRANCH_OWNED_FILES} || [[ -n "$(git ls-files --others --exclude-standard -- ${BRANCH_OWNED_FILES})" ]]; then
     # shellcheck disable=SC2086
-    if ! git add ${BRANCH_OWNED_FILES} || ! git commit -q -m "auto: ${v} pin" || ! git push --quiet origin "HEAD:refs/heads/${branch}"; then
-      LAST_FAILURE_REASON="committing or pushing ${branch} failed"
+    if ! git add ${BRANCH_OWNED_FILES} || ! git commit -q -m "auto: ${v} pin"; then
+      LAST_FAILURE_REASON="committing ${branch} failed"
+      popd >/dev/null
+      remove_worktree "${wt}"
+      return 1
+    fi
+    if ! push_ref HEAD "${branch}" "${expected_remote_sha}" normal; then
+      LAST_FAILURE_REASON="pushing ${branch} failed"
       popd >/dev/null
       remove_worktree "${wt}"
       return 1
@@ -426,8 +527,8 @@ refresh_version() {
   else
     echo "  no change on ${branch}"
     # Merge may have advanced HEAD without touching the branch-owned files.
-    if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/${branch}")" ]]; then
-      if ! git push --quiet origin "HEAD:refs/heads/${branch}"; then
+    if [[ "$(git rev-parse HEAD)" != "${expected_remote_sha}" ]]; then
+      if ! push_ref HEAD "${branch}" "${expected_remote_sha}" normal; then
         LAST_FAILURE_REASON="pushing ${branch} failed"
         popd >/dev/null
         remove_worktree "${wt}"
@@ -532,16 +633,9 @@ publish_aggregates() {
       continue
     fi
     echo "  ${agg} -> ${target_branch} (${target_sha:0:8})"
-    if [[ -n "${cur_sha}" ]]; then
-      if ! git push --force-with-lease="refs/heads/${agg}:${cur_sha}" --quiet origin "${target_sha}:refs/heads/${agg}"; then
-        echo "error: aggregate ${agg} changed concurrently; rerun publication" >&2
-        return 1
-      fi
-    else
-      if ! git push --force-with-lease="refs/heads/${agg}:" --quiet origin "${target_sha}:refs/heads/${agg}"; then
-        echo "error: aggregate ${agg} was created concurrently; rerun publication" >&2
-        return 1
-      fi
+    if ! push_ref "${target_sha}" "${agg}" "${cur_sha}" lease; then
+      echo "error: aggregate ${agg} could not be published; rerun publication" >&2
+      return 1
     fi
   done
 }

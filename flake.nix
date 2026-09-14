@@ -115,6 +115,17 @@
             shift
             TARGET_VERSION="''${1}"
             printf '%s\n' "''${TARGET_VERSION}" >> "''${TEST_UPDATE_VERSION_LOG}"
+            for TRANSIENT_VERSION in ''${TEST_TRANSIENT_UPDATE_VERSIONS:-}; do
+              if [[ "''${TARGET_VERSION}" == "''${TRANSIENT_VERSION}" ]]; then
+                ATTEMPT_FILE="''${TEST_TRANSIENT_ATTEMPT_DIR}/update-version-''${TARGET_VERSION}"
+                ATTEMPT=$(cat "''${ATTEMPT_FILE}" 2>/dev/null || printf '%s\n' 0)
+                printf '%s\n' "$((ATTEMPT + 1))" > "''${ATTEMPT_FILE}"
+                if (( ATTEMPT == 0 )); then
+                  printf '%s\n' 'curl: (22) The requested URL returned error: 504' >&2
+                  exit 1
+                fi
+              fi
+            done
             for FAILED_VERSION in ''${TEST_FAILED_VERSIONS:-}; do
               if [[ "''${TARGET_VERSION}" == "''${FAILED_VERSION}" ]]; then
                 exit 1

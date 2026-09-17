@@ -121,7 +121,15 @@
                 ATTEMPT=$(cat "''${ATTEMPT_FILE}" 2>/dev/null || printf '%s\n' 0)
                 printf '%s\n' "$((ATTEMPT + 1))" > "''${ATTEMPT_FILE}"
                 if (( ATTEMPT == 0 )); then
-                  printf '%s\n' 'curl: (22) The requested URL returned error: 504' >&2
+                  case "''${TEST_TRANSIENT_FAILURE_MODE:-network}" in
+                    network)
+                      printf '%s\n' 'curl: (22) The requested URL returned error: 504' >&2
+                      ;;
+                    github-ref)
+                      printf '%s\n' "error: unable to download 'https://api.github.com/repos/example/example/commits/v1.2.0': HTTP error 422" >&2
+                      printf '%s\n' '"message": "No commit found for SHA: v1.2.0",' >&2
+                      ;;
+                  esac
                   exit 1
                 fi
               fi

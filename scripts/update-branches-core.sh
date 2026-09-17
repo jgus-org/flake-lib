@@ -39,7 +39,9 @@ PUSH_MAX_ATTEMPTS="${PUSH_MAX_ATTEMPTS:-5}"
 PUSH_RETRY_DELAY_SECONDS="${PUSH_RETRY_DELAY_SECONDS:-5}"
 TRANSIENT_MAX_ATTEMPTS="${TRANSIENT_MAX_ATTEMPTS:-2}"
 TRANSIENT_RETRY_DELAY_SECONDS="${TRANSIENT_RETRY_DELAY_SECONDS:-5}"
-if [[ ! "${PUSH_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${TRANSIENT_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+GITHUB_REF_MAX_ATTEMPTS="${GITHUB_REF_MAX_ATTEMPTS:-3}"
+GITHUB_REF_RETRY_DELAY_SECONDS="${GITHUB_REF_RETRY_DELAY_SECONDS:-30}"
+if [[ ! "${PUSH_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${TRANSIENT_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${GITHUB_REF_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: retry attempt counts must be positive integers" >&2
   exit 2
 fi
@@ -109,19 +111,31 @@ push_ref() {
   return 1
 }
 
-is_transient_network_failure() {
+transient_failure_kind() {
   local log="${1}"
-  grep -Eiq '(requested URL returned error: (429|5[0-9]{2})|HTTP[^[:space:]]* (429|5[0-9]{2})|Internal Server Error|Could not resolve host|Failed to connect|Connection reset by peer|Operation timed out|TLS connect error|Temporary failure in name resolution)' "${log}"
+  if grep -Fqi 'No commit found for SHA' "${log}"; then
+    echo github-ref
+    return 0
+  fi
+  if grep -Eiq '(requested URL returned error: (429|5[0-9]{2})|HTTP[^[:space:]]* (429|5[0-9]{2})|Internal Server Error|Could not resolve host|Failed to connect|Connection reset by peer|Operation timed out|TLS connect error|Temporary failure in name resolution)' "${log}"; then
+    echo network
+    return 0
+  fi
+  return 1
 }
 
 # Branch updates run in disposable worktrees, so retrying the whole command is
-# safe. Keep this deliberately narrow: only explicit transient network errors
-# receive one bounded retry; deterministic build/update failures return at once.
+# safe. Keep this deliberately narrow: explicit transient network errors get one
+# fast retry; GitHub's "No commit found for SHA" (the commits API lagging behind
+# a just-pushed ref) gets a longer bounded wait; deterministic build/update
+# failures return at once.
 run_with_transient_retry() {
-  local label="${1}" attempt=1 exit_code=0 log
+  local label="${1}" kind exit_code=0 log
+  local -i network_failures=0 github_ref_failures=0
+  local attempt_count attempt_limit delay_seconds failure_text
   shift
   log=$(mktemp)
-  while (( attempt <= TRANSIENT_MAX_ATTEMPTS )); do
+  while :; do
     : > "${log}"
     set +e
     "$@" 2>&1 | tee "${log}"
@@ -131,13 +145,32 @@ run_with_transient_retry() {
       rm -f "${log}"
       return 0
     fi
-    if (( attempt == TRANSIENT_MAX_ATTEMPTS )) || ! is_transient_network_failure "${log}"; then
+    if ! kind=$(transient_failure_kind "${log}"); then
       rm -f "${log}"
       return "${exit_code}"
     fi
-    echo "  ${label} hit a transient network error (attempt ${attempt}/${TRANSIENT_MAX_ATTEMPTS}); retrying in ${TRANSIENT_RETRY_DELAY_SECONDS}s..." >&2
-    sleep "${TRANSIENT_RETRY_DELAY_SECONDS}"
-    attempt=$((attempt + 1))
+    rm -f "${log}"
+    case "${kind}" in
+      network)
+        network_failures+=1
+        attempt_count="${network_failures}"
+        attempt_limit="${TRANSIENT_MAX_ATTEMPTS}"
+        delay_seconds="${TRANSIENT_RETRY_DELAY_SECONDS}"
+        failure_text="a transient network error"
+        ;;
+      github-ref)
+        github_ref_failures+=1
+        attempt_count="${github_ref_failures}"
+        attempt_limit="${GITHUB_REF_MAX_ATTEMPTS}"
+        delay_seconds="${GITHUB_REF_RETRY_DELAY_SECONDS}"
+        failure_text="a not-yet-visible GitHub ref"
+        ;;
+    esac
+    if (( attempt_count >= attempt_limit )); then
+      return "${exit_code}"
+    fi
+    echo "  ${label} hit ${failure_text} (attempt ${attempt_count}/${attempt_limit}); retrying in ${delay_seconds}s..." >&2
+    sleep "${delay_seconds}"
   done
 }
 

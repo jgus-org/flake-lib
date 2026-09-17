@@ -82,7 +82,7 @@ EOF
 
 clear_test_failures() {
   unset TEST_GIT_BIN TEST_PUSH_COUNT_FILE TEST_PUSH_CONFLICT_SHA TEST_PUSH_FAILURES TEST_PUSH_MODE TEST_PUSH_REF TEST_REAL_GIT TEST_REMOTE
-  unset TEST_TRANSIENT_ATTEMPT_DIR TEST_TRANSIENT_UPDATE_VERSIONS
+  unset TEST_TRANSIENT_ATTEMPT_DIR TEST_TRANSIENT_FAILURE_MODE TEST_TRANSIENT_UPDATE_VERSIONS
 }
 
 seed_exact_branch() {
@@ -120,6 +120,7 @@ invoke_update() {
     TEST_UPDATE_VERSION_LOG="${CASE_ROOT}/update-version.log" \
     PATH="${TEST_GIT_BIN:+${TEST_GIT_BIN}:}${PATH}" \
     PUSH_RETRY_DELAY_SECONDS=0 \
+    GITHUB_REF_RETRY_DELAY_SECONDS=0 \
     TRANSIENT_RETRY_DELAY_SECONDS=0 \
     VERSION_CANON='' \
     VERSION_OVERRIDES='{}' \
@@ -486,6 +487,18 @@ initialize_repository
 mkdir -p "${CASE_ROOT}/transient-attempts"
 export TEST_TRANSIENT_UPDATE_VERSIONS=1.2.0
 export TEST_TRANSIENT_ATTEMPT_DIR="${CASE_ROOT}/transient-attempts"
+run_update '1.2.0'
+assert_same_ref main v1.2.0
+[[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 2 ]]
+[[ "$(cat "${CASE_ROOT}/transient-attempts/update-version-1.2.0")" == 2 ]]
+clear_test_failures
+
+# The commits-API lag behind a just-pushed sibling ref ("No commit found for SHA") gets its own longer bounded retry.
+initialize_repository
+mkdir -p "${CASE_ROOT}/transient-attempts"
+export TEST_TRANSIENT_UPDATE_VERSIONS=1.2.0
+export TEST_TRANSIENT_ATTEMPT_DIR="${CASE_ROOT}/transient-attempts"
+export TEST_TRANSIENT_FAILURE_MODE=github-ref
 run_update '1.2.0'
 assert_same_ref main v1.2.0
 [[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 2 ]]

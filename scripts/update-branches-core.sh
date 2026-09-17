@@ -13,7 +13,8 @@
 # Each existing exact branch is `git merge`d with the immutable specification SHA captured by discovery before its update-version runs. Branch-owned files (pin.nix, flake.lock, flake.nix, ...) stay as-is via the `ours` merge driver declared in .gitattributes. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
 #
 # Failures: per-branch input-refresh or update-version failures and aggregate targets missing the discovery base commit are surfaced as GH Actions ::warning::
-# annotations + a step summary, and cause a non-zero exit at the end of the run.
+# annotations + a step summary, and cause a non-zero exit at the end of the run. An aggregate whose current tip is reachable from neither the new target nor
+# any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
 #   SOURCE_TYPE          pypi | github | github-release-asset  (gitlab leaves are single-branch, no orchestrator)
@@ -325,6 +326,7 @@ declare -A orig_of=()
 BASE_SHA=""
 LAST_FAILURE_REASON=""
 declare -a blocked_aggregates=()
+declare -A blocked_aggregate_reasons=()
 
 usage() {
   cat >&2 <<'EOF'
@@ -581,11 +583,23 @@ aggregate_keys_for_version() {
   if [[ -n "${p}" ]]; then printf 'v%s.%s\n' "${M}" "${m}"; fi
 }
 
+aggregate_tip_retained_elsewhere() {
+  local TIP_SHA="${1}" v
+  for v in "${tracked[@]}"; do
+    if git rev-parse --verify --quiet "origin/v${v}^{commit}" >/dev/null \
+      && git merge-base --is-ancestor "${TIP_SHA}" "origin/v${v}^{commit}"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 publish_aggregates() {
   local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v
   local -a keys=() aggregates=()
   local -A highest_any=() highest_stable=() aggregate_set=()
   blocked_aggregates=()
+  blocked_aggregate_reasons=()
 
   git fetch --prune --quiet origin || return
   for v in "${tracked[@]}"; do
@@ -618,6 +632,7 @@ publish_aggregates() {
   for agg in "${aggregates[@]}"; do
     if [[ -z "${highest_any[${agg}]+set}" ]]; then
       blocked_aggregates+=("${agg}")
+      blocked_aggregate_reasons["${agg}"]="no candidate for ${agg} contains discovery base ${BASE_SHA}"
       echo "::warning title=Aggregate ${agg} skipped::No candidate for ${agg} contains discovery base ${BASE_SHA}; retaining ${agg}."
       continue
     fi
@@ -662,7 +677,19 @@ publish_aggregates() {
     fi
     if ! git merge-base --is-ancestor "${BASE_SHA}" "${target_sha}"; then
       blocked_aggregates+=("${agg}")
+      blocked_aggregate_reasons["${agg}"]="${target_branch} does not contain discovery base ${BASE_SHA}"
       echo "::warning title=Aggregate ${agg} skipped::${target_branch} does not contain discovery base ${BASE_SHA}; retaining ${agg}."
+      continue
+    fi
+    # Advancing past a tip reachable from no tracked exact branch would discard
+    # commits that exist only on the aggregate (e.g. a specification merged to
+    # main after discovery captured its base).
+    if [[ -n "${cur_sha}" ]] \
+      && ! git merge-base --is-ancestor "${cur_sha}" "${target_sha}" \
+      && ! aggregate_tip_retained_elsewhere "${cur_sha}"; then
+      blocked_aggregates+=("${agg}")
+      blocked_aggregate_reasons["${agg}"]="current tip ${cur_sha:0:8} is reachable from neither ${target_branch} nor any tracked exact branch"
+      echo "::warning title=Aggregate ${agg} skipped::Advancing ${agg} to ${target_branch} would orphan its current tip ${cur_sha:0:8}; retaining ${agg}."
       continue
     fi
     echo "  ${agg} -> ${target_branch} (${target_sha:0:8})"
@@ -696,9 +723,9 @@ write_failure_summary() {
       {
         echo "## :warning: ${#blocked_aggregates[@]} aggregate pointer(s) retained"
         echo
-        echo "Their selected exact branches do not contain discovery base \`${BASE_SHA}\`. Retaining these pointers prevents publication from discarding the current specification."
+        echo "Their selected exact branches were not safe publication targets."
         echo
-        for agg in "${blocked_aggregates[@]}"; do echo "- \`${agg}\`"; done
+        for agg in "${blocked_aggregates[@]}"; do echo "- \`${agg}\`: ${blocked_aggregate_reasons[${agg}]:-unspecified reason}"; done
       } >> "${GITHUB_STEP_SUMMARY}"
     fi
   fi

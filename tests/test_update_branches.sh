@@ -357,6 +357,34 @@ PUBLISHED_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
 run_update '1.2.0'
 assert_ref_sha main "${PUBLISHED_SHA}"
 
+# A main-only commit that landed after discovery is not orphaned by publication.
+initialize_repository
+seed_exact_branch 1.2.0
+point_aggregate main 1.2.0
+PLAN=$(run_command '1.2.0' list)
+BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
+VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
+commit_specification
+run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0
+export GITHUB_STEP_SUMMARY="${CASE_ROOT}/summary.md"
+PUBLISH_EXIT=0
+set +e
+run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" > "${CASE_ROOT}/publish.log" 2>&1
+PUBLISH_EXIT=$?
+set -e
+cat "${CASE_ROOT}/publish.log"
+[[ "${PUBLISH_EXIT}" == 1 ]]
+assert_ref_sha main "${SPECIFICATION_SHA}"
+grep -Fq 'would orphan its current tip' "${CASE_ROOT}/publish.log"
+grep -Fq -- '- `main`: current tip' "${GITHUB_STEP_SUMMARY}"
+unset GITHUB_STEP_SUMMARY
+
+# The next run absorbs the retained main tip into the exact branch and republishes.
+run_update '1.2.0'
+assert_same_ref main v1.2.0
+assert_contains_specification main
+assert_contains_specification v1.2.0
+
 initialize_repository
 run_update $'V1.2.2\nv1.2.3'
 assert_same_ref v1.2 v1.2.3

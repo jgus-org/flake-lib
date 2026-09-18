@@ -8,6 +8,7 @@ let
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches; };
+  depsCore = ../scripts/deps_core.py;
 
   warnIfNewerMajor = { pkgs, name, lib ? pkgs.lib }:
     let
@@ -24,5 +25,5 @@ let
       pkgs.${name};
 in
 {
-  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkLeafFlake versionMatchesComparison evalMarkerTree warnIfNewerMajor;
+  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
 }

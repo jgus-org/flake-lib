@@ -26,6 +26,7 @@ flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
+flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.

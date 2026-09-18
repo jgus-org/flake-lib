@@ -3,6 +3,7 @@
 #   extraHashes  : extra pin field names whose values the artifactHook emits (e.g. [ "npmDepsHash" ])
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
 #   siblings     : sibling-cascade specs
+#   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
 { pkgs
 , source
 , buildAttr
@@ -13,12 +14,28 @@
 , buildFailureHash ? if hashMode == "build-failure" then "sourceHash" else null
 , artifactHook ? null
 , verification ? if buildFailureHash == null then "evaluate" else "build"
+, markerEnvironment ? { }
 }:
 assert builtins.elem verification [ "evaluate" "build" ];
 let
   hfManifest = source.manifest or null;
   hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
   effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
+  defaultMarkerEnvironment = {
+    implementation_name = "cpython";
+    implementation_version = pkgs.python3.version;
+    os_name = "posix";
+    platform_machine = "x86_64";
+    platform_release = "";
+    platform_system = "Linux";
+    platform_version = "";
+    platform_python_implementation = "CPython";
+    python_full_version = pkgs.python3.version;
+    python_version = pkgs.python3.pythonVersion;
+    sys_platform = "linux";
+    sys_version = "";
+    extra = "";
+  };
 in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
@@ -59,7 +76,9 @@ pkgs.writeShellApplication {
     VERIFICATION = verification;
     SIBLINGS = builtins.toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
+    MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
     CASCADE_PY = "${../scripts/cascade.py}";
+    DEPS_CORE = "${../scripts/deps_core.py}";
   };
   text = ''exec ${../scripts/update-version.sh} "$@"'';
 }

@@ -1,18 +1,24 @@
 import http.client
+import importlib.util
 import json
+import os
 import sys
 import time
-import tomllib
-import urllib.error
-import urllib.request
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
-from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
+
+DEPS_CORE = os.environ.get("DEPS_CORE") or str(Path(__file__).resolve().parent / "deps_core.py")
+_deps_core_spec = importlib.util.spec_from_file_location("deps_core", DEPS_CORE)
+assert _deps_core_spec is not None
+assert _deps_core_spec.loader is not None
+deps_core = importlib.util.module_from_spec(_deps_core_spec)
+_deps_core_spec.loader.exec_module(deps_core)
 
 RETRY_ATTEMPTS = 5
 RETRY_DELAY_S = 5
@@ -107,11 +113,9 @@ def resolve_ref(
 def requirements_specifiers(
     raw_requirements: Iterable[str],
     requirement_name: str,
-    environment: Mapping[str, str] | None = None,
+    environment: Mapping[str, str],
 ) -> SpecifierSet | None:
-    marker_environment = dict(
-        default_environment() if environment is None else environment
-    )
+    marker_environment = dict(environment)
     marker_environment.setdefault("extra", "")
     normalized_name = canonicalize_name(requirement_name)
     matched = []
@@ -127,10 +131,16 @@ def requirements_specifiers(
             continue
         if canonicalize_name(requirement.name) != normalized_name:
             continue
-        if requirement.marker is not None and not requirement.marker.evaluate(
-            marker_environment
-        ):
+        applicable = deps_core.applicability(
+            str(requirement.marker) if requirement.marker is not None else None,
+            marker_environment,
+        )
+        if applicable is False:
             continue
+        if applicable is not True:
+            raise ValueError(
+                f"marker for {requirement_name} has variables outside the environment: {raw_requirement}"
+            )
         matched.append(str(requirement.specifier))
 
     if not matched:
@@ -141,10 +151,10 @@ def requirements_specifiers(
 def requirement_specifiers(
     metadata: Mapping[str, Any],
     requirement_name: str,
-    environment: Mapping[str, str] | None = None,
+    environment: Mapping[str, str],
 ) -> SpecifierSet | None:
     return requirements_specifiers(
-        metadata.get("info", {}).get("requires_dist") or [],
+        deps_core.metadata_requires_dist(metadata),
         requirement_name,
         environment,
     )
@@ -154,14 +164,13 @@ def pyproject_requirement_specifiers(
     document: str,
     requirement_name: str,
     optional_groups: Iterable[str],
-    environment: Mapping[str, str] | None = None,
+    environment: Mapping[str, str],
 ) -> SpecifierSet | None:
-    project = tomllib.loads(document).get("project", {})
-    raw_requirements = list(project.get("dependencies") or [])
-    optional_dependencies = project.get("optional-dependencies") or {}
-    for group in optional_groups:
-        raw_requirements.extend(optional_dependencies.get(group) or [])
-    return requirements_specifiers(raw_requirements, requirement_name, environment)
+    return requirements_specifiers(
+        deps_core.pyproject_requirements(document, optional_groups),
+        requirement_name,
+        environment,
+    )
 
 
 def resolve_metadata_ref(
@@ -169,7 +178,7 @@ def resolve_metadata_ref(
     requirement_name: str,
     pypi_name: str,
     mode: str,
-    environment: Mapping[str, str] | None = None,
+    environment: Mapping[str, str],
 ) -> str | None:
     specifiers = requirement_specifiers(metadata, requirement_name, environment)
     if specifiers is None:
@@ -182,7 +191,7 @@ def resolve_requirements_ref(
     requirement_name: str,
     pypi_name: str,
     mode: str,
-    environment: Mapping[str, str] | None = None,
+    environment: Mapping[str, str],
 ) -> str | None:
     specifiers = requirements_specifiers(
         raw_requirements, requirement_name, environment
@@ -198,7 +207,7 @@ def resolve_pyproject_ref(
     pypi_name: str,
     mode: str,
     optional_groups: Iterable[str],
-    environment: Mapping[str, str] | None = None,
+    environment: Mapping[str, str],
 ) -> str | None:
     specifiers = pyproject_requirement_specifiers(
         document, requirement_name, optional_groups, environment
@@ -238,22 +247,30 @@ def is_prerelease(raw_version: str) -> bool:
 
 
 def main(arguments: list[str]) -> None:
+    marker_environment = None
+    if arguments[1] == "--marker-env":
+        if len(arguments) < 3:
+            raise ValueError("--marker-env requires a JSON environment")
+        marker_environment = json.loads(arguments[2])
+        arguments = arguments[1:2] + arguments[3:]
     command = arguments[1]
     if command in {"exact", "resolve"}:
         ref = resolve_ref(command, arguments[2], SpecifierSet(arguments[3]))
         if ref is not None:
             print(ref)
         return
+    if command in {"metadata", "requirements", "pyproject"} and marker_environment is None:
+        raise ValueError(f"command {command} requires --marker-env")
     if command == "metadata":
         ref = resolve_metadata_ref(
-            json.load(sys.stdin), arguments[2], arguments[3], arguments[4]
+            json.load(sys.stdin), arguments[2], arguments[3], arguments[4], marker_environment
         )
         if ref is not None:
             print(ref)
         return
     if command == "requirements":
         ref = resolve_requirements_ref(
-            sys.stdin, arguments[2], arguments[3], arguments[4]
+            sys.stdin, arguments[2], arguments[3], arguments[4], marker_environment
         )
         if ref is not None:
             print(ref)
@@ -265,6 +282,7 @@ def main(arguments: list[str]) -> None:
             arguments[3],
             arguments[4],
             json.loads(arguments[5]),
+            marker_environment,
         )
         if ref is not None:
             print(ref)

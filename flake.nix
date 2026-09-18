@@ -79,8 +79,17 @@
           {
             nativeBuildInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
             CASCADE_PY = ./scripts/cascade.py;
+            DEPS_CORE = ./scripts/deps_core.py;
           } ''
           python3 ${./tests/test_cascade.py}
+          touch $out
+        '';
+        deps-core-tests = pkgs.runCommand "deps-core-tests"
+          {
+            nativeBuildInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
+            DEPS_CORE = ./scripts/deps_core.py;
+          } ''
+          python3 ${./tests/test_deps_core.py}
           touch $out
         '';
         version-matches-comparison-tests =
@@ -89,6 +98,12 @@
           in
           pkgs.lib.throwIf (failures != [ ]) "versionMatchesComparison tests failed"
             (pkgs.runCommand "version-matches-comparison-tests" { } "touch $out");
+        eval-marker-tree-tests =
+          let
+            failures = pkgs.lib.runTests (import ./tests/eval-marker-tree.nix { inherit (lib) evalMarkerTree; });
+          in
+          pkgs.lib.throwIf (failures != [ ]) "evalMarkerTree tests failed"
+            (pkgs.runCommand "eval-marker-tree-tests" { } "touch $out");
         update-branches-test-gh = pkgs.writeShellApplication {
           name = "gh";
           text = ''printf '%s\n' "''${TEST_VERSIONS}"'';
@@ -208,6 +223,7 @@
               update-branches-test-nix
             ];
             CASCADE_PY = ./scripts/cascade.py;
+            DEPS_CORE = ./scripts/deps_core.py;
             UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
           } ''
           bash ${./tests/test_update_branches.sh}
@@ -222,7 +238,7 @@
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
-          inherit cascade-tests update-branches-tests version-matches-comparison-tests;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests;
           inherit update-version-tests;
         };
       });

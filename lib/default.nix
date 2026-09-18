@@ -6,6 +6,7 @@ let
   mkJsDepsHook = import ./mk-js-deps-hook.nix;
   mkComposedHook = import ./mk-composed-hook.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
+  evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches; };
 
   warnIfNewerMajor = { pkgs, name, lib ? pkgs.lib }:
@@ -23,5 +24,5 @@ let
       pkgs.${name};
 in
 {
-  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkLeafFlake versionMatchesComparison warnIfNewerMajor;
+  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkLeafFlake versionMatchesComparison evalMarkerTree warnIfNewerMajor;
 }

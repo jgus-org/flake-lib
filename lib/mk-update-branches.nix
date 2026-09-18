@@ -26,6 +26,7 @@ pkgs.writeShellApplication {
     VERSION_CANON = pkgs.lib.concatStringsSep "\n" versionCanon;
     MIN_VERSION_COMPONENTS = toString minVersionComponents;
     CASCADE_PY = "${../scripts/cascade.py}";
+    DEPS_CORE = "${../scripts/deps_core.py}";
   };
   text = ''exec ${../scripts/update-branches-core.sh} "$@"'';
 }

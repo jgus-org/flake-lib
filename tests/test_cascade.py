@@ -1,7 +1,10 @@
 import importlib.util
+import io
+import json
 import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from packaging.markers import default_environment
 from packaging.specifiers import SpecifierSet
@@ -31,6 +34,18 @@ class CascadeTests(unittest.TestCase):
             ),
             "v1.8",
         )
+
+    def test_bounded_range_fetches_pypi_releases_when_not_supplied(self) -> None:
+        releases_payload = json.dumps(
+            {"releases": {"1.2.0": [], "1.8.4": [], "2.0.0": []}}
+        ).encode()
+        response = io.BytesIO(releases_payload)
+        with mock.patch("urllib.request.urlopen", return_value=response) as urlopen:
+            self.assertEqual(
+                CASCADE.resolve_ref("resolve", "sibling-package", SpecifierSet(">=1.2,<2")),
+                "v1.8",
+            )
+            urlopen.assert_called_once()
 
     def test_patch_cap_uses_exact_branch(self) -> None:
         self.assertEqual(

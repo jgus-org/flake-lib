@@ -4,6 +4,8 @@ import json
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any

@@ -49,6 +49,7 @@ ARTIFACT_HOOK="${ARTIFACT_HOOK:-}"        # consumer script: regenerate vendored
 VERIFICATION="${VERIFICATION:-evaluate}"
 SIBLINGS="${SIBLINGS:-[]}"
 SIBLING_REFS_IN_PIN="${SIBLING_REFS_IN_PIN:-}"
+MARKER_ENV="${MARKER_ENV:-}"
 CASCADE_PY="${CASCADE_PY:-}"
 GH_TRACK="${GH_TRACK:-release}"
 GH_BRANCH="${GH_BRANCH:-}"
@@ -234,7 +235,7 @@ update_flake_lock() {
 }
 
 resolve_siblings_from_source() {
-  local REV="${1}" COUNT INDEX REQUIREMENT_NAME INPUT_NAME PYPI_NAME FLAKE_REPO MODE REQUIREMENT_FILE REQUIREMENT_FORMAT REQUIREMENT_GROUPS REF REQUIREMENT_TEXT
+  local REV="${1}" COUNT INDEX REQUIREMENT_NAME INPUT_NAME PYPI_NAME FLAKE_REPO MODE REQUIREMENT_FILE REQUIREMENT_FORMAT REQUIREMENT_GROUPS REF REQUIREMENT_TEXT MARKER_ARGS
   COUNT=$(jq 'length' <<<"${SIBLINGS}")
   for (( INDEX = 0; INDEX < COUNT; INDEX++ )); do
     REQUIREMENT_NAME=$(jq -r ".[${INDEX}].reqName" <<<"${SIBLINGS}")
@@ -254,7 +255,9 @@ resolve_siblings_from_source() {
       echo "warning: could not fetch ${REQUIREMENT_FILE} at ${REV}; ${FLAKE_REPO} URL left unchanged." >&2
       continue
     fi
-    REF=$(python3 "${CASCADE_PY}" "${REQUIREMENT_FORMAT}" "${REQUIREMENT_NAME}" "${PYPI_NAME}" "${MODE}" "${REQUIREMENT_GROUPS}" <<<"${REQUIREMENT_TEXT}" || true)
+    MARKER_ARGS=()
+    [[ -n "${MARKER_ENV}" ]] && MARKER_ARGS+=(--marker-env "${MARKER_ENV}")
+    REF=$(python3 "${CASCADE_PY}" "${MARKER_ARGS[@]}" "${REQUIREMENT_FORMAT}" "${REQUIREMENT_NAME}" "${PYPI_NAME}" "${MODE}" "${REQUIREMENT_GROUPS}" <<<"${REQUIREMENT_TEXT}" || true)
     if [[ -z "${REF}" ]]; then
       if [[ -n "${SIBLING_REFS_IN_PIN}" ]]; then
         echo "error: ${REQUIREMENT_FILE} does not resolve ${REQUIREMENT_NAME}" >&2
@@ -269,7 +272,7 @@ resolve_siblings_from_source() {
 }
 
 resolve_siblings_from_metadata() {
-  local METADATA="${1}" COUNT INDEX REQUIREMENT_NAME INPUT_NAME PYPI_NAME FLAKE_REPO MODE REF
+  local METADATA="${1}" COUNT INDEX REQUIREMENT_NAME INPUT_NAME PYPI_NAME FLAKE_REPO MODE REF MARKER_ARGS
   COUNT=$(jq 'length' <<<"${SIBLINGS}")
   for (( INDEX = 0; INDEX < COUNT; INDEX++ )); do
     REQUIREMENT_NAME=$(jq -r ".[${INDEX}].reqName" <<<"${SIBLINGS}")
@@ -277,7 +280,9 @@ resolve_siblings_from_metadata() {
     PYPI_NAME=$(jq -r ".[${INDEX}].pypiName // \"\"" <<<"${SIBLINGS}")
     FLAKE_REPO=$(jq -r ".[${INDEX}].flakeRepo" <<<"${SIBLINGS}")
     MODE=$(jq -r ".[${INDEX}].mode // \"resolve\"" <<<"${SIBLINGS}")
-    REF=$(python3 "${CASCADE_PY}" metadata "${REQUIREMENT_NAME}" "${PYPI_NAME}" "${MODE}" <<<"${METADATA}" || true)
+    MARKER_ARGS=()
+    [[ -n "${MARKER_ENV}" ]] && MARKER_ARGS+=(--marker-env "${MARKER_ENV}")
+    REF=$(python3 "${CASCADE_PY}" "${MARKER_ARGS[@]}" metadata "${REQUIREMENT_NAME}" "${PYPI_NAME}" "${MODE}" <<<"${METADATA}" || true)
     if [[ -z "${REF}" ]]; then
       if [[ -n "${SIBLING_REFS_IN_PIN}" ]]; then
         echo "error: release metadata does not resolve ${REQUIREMENT_NAME}" >&2

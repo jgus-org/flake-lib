@@ -26,7 +26,7 @@ in
     expected = false;
   };
   pythonVersionTrailingZeroEquivalence = {
-    expr = bound { kind = "cmp"; variable = "python_version"; operator = "=="; literal = "3.13"; };
+    expr = bound { kind = "cmp"; variable = "python_full_version"; operator = "=="; literal = "3.13.5.0"; };
     expected = true;
   };
   platformMachineEquality = {

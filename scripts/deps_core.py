@@ -16,7 +16,8 @@ TOKEN_PATTERN = re.compile(
     re.VERBOSE,
 )
 
-ORDERED_OPERATORS = {"<", "<=", ">", ">="}
+VERSION_VARIABLES = {"python_version", "python_full_version", "implementation_version"}
+
 MIRRORED_OPERATORS = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}
 
 Tree = bool | tuple
@@ -48,18 +49,28 @@ def metadata_requires_dist(metadata: Mapping[str, Any]) -> list[str]:
     return list(metadata.get("info", {}).get("requires_dist") or [])
 
 
-def compare_values(observed: str, operator: str, literal: str) -> bool:
-    if operator in {"==", "==="}:
+def compare_values(variable: str, observed: str, operator: str, literal: str) -> bool:
+    if variable not in VERSION_VARIABLES:
+        if operator in {"==", "==="}:
+            return observed == literal
+        if operator == "!=":
+            return observed != literal
+        raise ValueError(
+            f"unsupported ordered comparison on non-version marker variable: {variable}"
+        )
+    if operator == "===":
         return observed == literal
-    if operator == "!=":
-        return observed != literal
-    if operator not in ORDERED_OPERATORS:
-        raise ValueError(f"unsupported marker operator: {operator}")
     try:
         left = Version(observed)
         right = Version(literal)
     except InvalidVersion:
-        left, right = observed, literal
+        if operator == "==":
+            return observed == literal
+        if operator == "!=":
+            return observed != literal
+        raise ValueError(
+            f"uncomparable values for marker variable {variable}: {observed} {operator} {literal}"
+        )
     difference = (left > right) - (left < right)
     return {
         "<": difference < 0,
@@ -123,12 +134,10 @@ def applicability(marker: str | None, bound: Mapping[str, str]) -> Tree:
         if left_kind == "literal" and right_kind == "literal":
             raise ValueError(f"unsupported environment marker: {marker}")
         if left_kind == "literal":
-            if operator not in MIRRORED_OPERATORS and operator not in {"==", "!=", "==="}:
-                raise ValueError(f"unsupported environment marker: {marker}")
             operator = MIRRORED_OPERATORS.get(operator, operator)
             left, right = right, left
         if left in bound:
-            return compare_values(bound[left], operator, right)
+            return compare_values(left, bound[left], operator, right)
         return ("cmp", left, operator, right)
 
     def parse_atom() -> Tree:

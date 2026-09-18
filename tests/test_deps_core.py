@@ -156,9 +156,37 @@ class ApplicabilityTests(unittest.TestCase):
             DEPS.applicability('python_version > "3.9"', {"python_version": "3.9.1"}), True
         )
 
-    def test_uncomparable_values_fall_back_to_string_ordering(self) -> None:
+    def test_version_variable_equality_ignores_trailing_zeros(self) -> None:
         self.assertIs(
-            DEPS.applicability('sys_platform < "win32"', {"sys_platform": "linux"}), True
+            DEPS.applicability('python_full_version == "3.13"', {"python_full_version": "3.13.0"}),
+            True,
+        )
+        self.assertIs(
+            DEPS.applicability('python_full_version != "3.13"', {"python_full_version": "3.13.0"}),
+            False,
+        )
+
+    def test_arbitrary_equality_is_exact_string_match(self) -> None:
+        self.assertIs(
+            DEPS.applicability('python_full_version === "3.13"', {"python_full_version": "3.13.0"}),
+            False,
+        )
+        self.assertIs(
+            DEPS.applicability('python_full_version === "3.13.0"', {"python_full_version": "3.13.0"}),
+            True,
+        )
+
+    def test_ordered_non_version_variable_is_unsupported(self) -> None:
+        with self.assertRaises(ValueError):
+            DEPS.applicability('sys_platform < "win32"', {"sys_platform": "linux"})
+
+    def test_unparseable_version_literal_in_ordering_is_unsupported(self) -> None:
+        with self.assertRaises(ValueError):
+            DEPS.applicability('python_version < "3.x"', {"python_version": "3.13"})
+
+    def test_equality_falls_back_to_string_match_on_invalid_versions(self) -> None:
+        self.assertIs(
+            DEPS.applicability('python_version == "3.x"', {"python_version": "3.x"}), True
         )
 
     def test_in_and_not_in_are_unsupported(self) -> None:

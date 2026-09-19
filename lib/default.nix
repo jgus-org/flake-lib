@@ -1,3 +1,4 @@
+{ pythonPolicy }:
 let
   mkPypiPackage = import ./mk-pypi-package.nix;
   mkUpdateVersion = import ./mk-update-version.nix;
@@ -8,6 +9,7 @@ let
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches; };
+  pythonWheelhouse = import ./python-wheelhouse.nix { inherit pythonPolicy; };
   depsCore = ../scripts/deps_core.py;
 
   warnIfNewerMajor = { pkgs, name, lib ? pkgs.lib }:
@@ -26,4 +28,5 @@ let
 in
 {
   inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
+  inherit (pythonWheelhouse) pythonPolicy platformTags mkPythonWheelhouse mkWheelhouse installWheelhouse;
 }

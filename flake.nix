@@ -7,8 +7,14 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    let
+      pythonPolicy = {
+        pythonVersions = [ "3.13" "3.14" ];
+        platform = "x86_64-manylinux_2_28";
+      };
+    in
     {
-      lib = import ./lib;
+      lib = import ./lib { inherit pythonPolicy; };
     }
     //
     flake-utils.lib.eachDefaultSystem (system:
@@ -104,6 +110,37 @@
           in
           pkgs.lib.throwIf (failures != [ ]) "evalMarkerTree tests failed"
             (pkgs.runCommand "eval-marker-tree-tests" { } "touch $out");
+        wheelhouse-tags-tests =
+          let
+            failures = pkgs.lib.runTests (import ./tests/wheelhouse-tags.nix { inherit (lib) platformTags; });
+          in
+          pkgs.lib.throwIf (failures != [ ]) "platformTags tests failed"
+            (pkgs.runCommand "wheelhouse-tags-tests" { } "touch $out");
+        python-wheelhouse-tests = pkgs.runCommand "python-wheelhouse-tests"
+          {
+            nativeBuildInputs = [ pkgs.bash (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
+            TEST_BASH = pkgs.bash;
+            WHEELHOUSE_PY = ./scripts/python-wheelhouse.py;
+            DEPS_CORE = ./scripts/deps_core.py;
+          } ''
+          python3 ${./tests/test_python_wheelhouse.py}
+          touch $out
+        '';
+        python-wheelhouse-integration =
+          let
+            wheelhouse = (lib.mkWheelhouse { inherit pkgs; wheels = ./tests/fixtures/mini-wheels.json; }).wheelhouse;
+            python = pkgs.python313;
+          in
+          pkgs.runCommand "python-wheelhouse-integration"
+            {
+              nativeBuildInputs = [ pkgs.uv pkgs.autoPatchelfHook ];
+              buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.zlib ];
+            } ''
+            export HOME=$TMPDIR
+            mkdir "$out"
+            ${lib.installWheelhouse { inherit python; target = "$out"; inherit wheelhouse; }}
+            PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig, msgpack'
+          '';
         update-branches-test-gh = pkgs.writeShellApplication {
           name = "gh";
           text = ''printf '%s\n' "''${TEST_VERSIONS}"'';
@@ -238,7 +275,7 @@
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests python-wheelhouse-tests python-wheelhouse-integration;
           inherit update-version-tests;
         };
       });

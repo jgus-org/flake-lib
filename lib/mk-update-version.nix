@@ -15,6 +15,7 @@
 , artifactHook ? null
 , verification ? if buildFailureHash == null then "evaluate" else "build"
 , markerEnvironment ? { }
+, environmentFingerprint ? ""
 }:
 assert builtins.elem verification [ "evaluate" "build" ];
 let
@@ -77,6 +78,7 @@ pkgs.writeShellApplication {
     SIBLINGS = builtins.toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
+    ENV_FINGERPRINT = environmentFingerprint;
     CASCADE_PY = "${../scripts/cascade.py}";
     DEPS_CORE = "${../scripts/deps_core.py}";
   };

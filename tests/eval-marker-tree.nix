@@ -9,39 +9,39 @@ let
   bound = evalMarkerTree bindings;
 in
 {
-  nullMarkerIsApplicable = {
+  testNullMarkerIsApplicable = {
     expr = bound null;
     expected = true;
   };
-  falseMarkerIsNotApplicable = {
+  testFalseMarkerIsNotApplicable = {
     expr = bound false;
     expected = false;
   };
-  pythonVersionComparison = {
+  testPythonVersionComparison = {
     expr = bound { kind = "cmp"; variable = "python_version"; operator = ">="; literal = "3.10"; };
     expected = true;
   };
-  pythonVersionBelowFails = {
+  testPythonVersionBelowFails = {
     expr = bound { kind = "cmp"; variable = "python_version"; operator = "<"; literal = "3.10"; };
     expected = false;
   };
-  pythonVersionTrailingZeroEquivalence = {
+  testPythonVersionTrailingZeroEquivalence = {
     expr = bound { kind = "cmp"; variable = "python_full_version"; operator = "=="; literal = "3.13.5.0"; };
     expected = true;
   };
-  platformMachineEquality = {
+  testPlatformMachineEquality = {
     expr = bound { kind = "cmp"; variable = "platform_machine"; operator = "=="; literal = "x86_64"; };
     expected = true;
   };
-  platformMachineInequality = {
+  testPlatformMachineInequality = {
     expr = bound { kind = "cmp"; variable = "platform_machine"; operator = "!="; literal = "ARM64"; };
     expected = true;
   };
-  exactOperatorMatches = {
+  testExactOperatorMatches = {
     expr = bound { kind = "cmp"; variable = "python_version"; operator = "==="; literal = "3.13"; };
     expected = true;
   };
-  allConditions = {
+  testAllConditions = {
     expr = bound {
       kind = "all";
       conditions = [
@@ -51,7 +51,7 @@ in
     };
     expected = true;
   };
-  allConditionFails = {
+  testAllConditionFails = {
     expr = bound {
       kind = "all";
       conditions = [
@@ -61,7 +61,7 @@ in
     };
     expected = false;
   };
-  anyCondition = {
+  testAnyCondition = {
     expr = bound {
       kind = "any";
       conditions = [
@@ -71,7 +71,7 @@ in
     };
     expected = true;
   };
-  anyConditionFails = {
+  testAnyConditionFails = {
     expr = bound {
       kind = "any";
       conditions = [
@@ -81,7 +81,7 @@ in
     };
     expected = false;
   };
-  nestedGroups = {
+  testNestedGroups = {
     expr = bound {
       kind = "any";
       conditions = [
@@ -97,15 +97,15 @@ in
     };
     expected = true;
   };
-  orderedNonVersionVariableThrows = {
+  testOrderedNonVersionVariableThrows = {
     expr = builtins.tryEval (bound { kind = "cmp"; variable = "sys_platform"; operator = "<"; literal = "win32"; });
     expected = { success = false; value = false; };
   };
-  unknownVariableThrows = {
+  testUnknownVariableThrows = {
     expr = builtins.tryEval (bound { kind = "cmp"; variable = "platform_release"; operator = "=="; literal = ""; });
     expected = { success = false; value = false; };
   };
-  unknownKindThrows = {
+  testUnknownKindThrows = {
     expr = builtins.tryEval (bound { kind = "bogus"; });
     expected = { success = false; value = false; };
   };

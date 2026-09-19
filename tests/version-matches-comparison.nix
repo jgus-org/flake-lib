@@ -12,6 +12,22 @@
     expr = versionMatchesComparison "1.0" { operator = "=="; version = "1.00"; };
     expected = true;
   };
+  testTrailingZeroEquality = {
+    expr = versionMatchesComparison "3.13.5" { operator = "=="; version = "3.13.5.0"; };
+    expected = true;
+  };
+  testTrailingZeroInequality = {
+    expr = versionMatchesComparison "3.13.5.0" { operator = "!="; version = "3.13.5"; };
+    expected = false;
+  };
+  testTrailingZeroGreaterEqual = {
+    expr = versionMatchesComparison "3.13.5" { operator = ">="; version = "3.13.5.0"; };
+    expected = true;
+  };
+  testNonZeroSuffixPreserved = {
+    expr = versionMatchesComparison "3.13.50" { operator = "=="; version = "3.13.5"; };
+    expected = false;
+  };
   testDifferent = {
     expr = versionMatchesComparison "1.0" { operator = "!="; version = "2.0"; };
     expected = true;

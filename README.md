@@ -27,6 +27,10 @@ flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
+flake-lib.lib.platformTags     { pythonVersion; platform; }              # "3.13" + "x86_64-manylinux_2_28" -> uv/pip tag attrs
+flake-lib.lib.mkPythonWheelhouse { pkgs; pythonVersion; platform; sources; extraRequirements ? []; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }
+flake-lib.lib.mkWheelhouse     { pkgs; wheels; }                         # wheels.json path or list -> { files; wheelhouse; }
+flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.
@@ -93,7 +97,57 @@ new version branches include it in their placeholder pins.
 Use `pinSchema = "github-pnpm"` for the corresponding `{ version, sourceRev,
 sourceHash, pnpmDepsHash }` branch placeholders.
 
+### Python wheel closures
+
+`mkPythonWheelhouse` is an `artifactHook` that pins a consumer's complete python
+dependency closure as hash-pinned wheels instead of per-package flakes or
+floating nixpkgs pythonPackages. The client declares only its requirements
+source and one target environment (a CPython `<major>.<minor>` version and a
+`<arch>-<vendor>` platform such as `x86_64-manylinux_2_28`); markers resolve at
+update time for that environment:
+
+```nix
+artifactHook = lib.getExe (flake-lib.lib.mkPythonWheelhouse {
+  inherit pkgs;
+  pythonVersion = "3.13";
+  platform = "x86_64-manylinux_2_28";
+  sources = [
+    { kind = "source-pyproject"; groups = [ "studio" ]; buildSystem = false; }
+    { kind = "source-file"; path = "backend/requirements/studio.txt"; }
+    { kind = "repo-file"; path = "requirements.in"; }
+  ];
+});
+# extraHashes = [ "requirementsHash" "wheelManifestHash" ];
+```
+
+`source-pyproject` and `source-file` read the pinned upstream source (cloned at
+`NEW_REV`; `buildSystem` appends the pyproject's build-system requires);
+`repo-file` reads the consumer's own repository. Requirements are merged in
+order, deduplicated, and written to `requirements.in` (with provenance header);
+`uv pip compile --generate-hashes` writes `requirements.lock`; `pip download
+--require-hashes --only-binary :all:` fetches the environment-matched wheels and
+the hook writes `wheels.json` (`name`, `version`, `filename`, `url`, `sha256`,
+`size` per wheel). All four files land in `FLAKE_ROOT` and belong in
+`branchOwnedFiles`; the hook prints the `requirementsHash` and
+`wheelManifestHash` pin fields.
+
+At eval time `mkWheelhouse` turns `wheels.json` into a hash-pinned wheelhouse,
+and `installWheelhouse` installs it into an application derivation:
+
+```nix
+nativeBuildInputs = [ pkgs.uv pkgs.autoPatchelfHook ];
+installPhase = ''
+  mkdir -p "$out/lib/site-packages"
+  ${flake-lib.lib.installWheelhouse { inherit python; target = "$out/lib/site-packages"; wheelhouse = wheelhouse.wheelhouse; }}
+'';
+```
+
+Native manylinux wheels need `autoPatchelfHook` (plus their native library
+dependencies in `buildInputs`) so the installed site-packages links against
+nix's libraries instead of runtime `LD_LIBRARY_PATH` assembly.
+
 `templates/` holds `gitattributes` and `workflow.yml`, which a consuming repo installs as `.gitattributes` and `.github/workflows/update.yml`.
+
 
 ### Split update-branches jobs
 

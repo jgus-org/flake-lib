@@ -73,6 +73,8 @@ def compare_values(variable: str, observed: str, operator: str, literal: str) ->
         )
     difference = (left > right) - (left < right)
     return {
+        "==": difference == 0,
+        "!=": difference != 0,
         "<": difference < 0,
         "<=": difference <= 0,
         ">": difference > 0,

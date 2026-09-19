@@ -7,8 +7,14 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    let
+      pythonPolicy = {
+        pythonVersions = [ "3.13" "3.14" "3.15" ];
+        platform = "x86_64-manylinux_2_28";
+      };
+    in
     {
-      lib = import ./lib;
+      lib = import ./lib { inherit pythonPolicy; };
     }
     //
     flake-utils.lib.eachDefaultSystem (system:

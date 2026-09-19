@@ -1,9 +1,5 @@
+{ pythonPolicy }:
 let
-  pythonPolicy = {
-    pythonVersions = [ "3.13" "3.14" "3.15" ];
-    platform = "x86_64-manylinux_2_28";
-  };
-
   platformTags =
     { pythonVersion
     , platform

@@ -107,7 +107,7 @@ pass `hook` through `mkComposedHook` (or directly) as the `artifactHook`, and
 `currentEnvironment.fingerprint` to `mkUpdateVersion`'s `environmentFingerprint`
 so a policy promotion re-runs the hook even at an unchanged version.
 
-Environments come from fleet policy in flake-lib:
+Environments come from fleet policy, declared in flake-lib's `flake.nix`:
 
 ```nix
 flake-lib.lib.pythonPolicy

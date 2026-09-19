@@ -1,4 +1,28 @@
 let
+  pipPlatformLadder =
+    arch: vendor:
+    let
+      numeric = builtins.match "manylinux_2_([0-9]+)" vendor;
+      aliases = {
+        manylinux1 = 5;
+        manylinux2010 = 12;
+        manylinux2014 = 17;
+      };
+      aliasNames = if arch == "x86_64" then [ "manylinux2014" "manylinux2010" "manylinux1" ] else [ "manylinux2014" ];
+      glibcFloor = 5;
+    in
+    if vendor == "linux" then
+      [ "linux_${arch}" ]
+    else if numeric != null then
+      let
+        minor = builtins.toInt (builtins.elemAt numeric 0);
+        descending = map (step: "manylinux_2_${toString (minor - step)}_${arch}") (builtins.genList (step: step + 1) (minor - glibcFloor + 1));
+        usableAliases = map (name: "${name}_${arch}") (builtins.filter (name: aliases.${name} <= minor) aliasNames);
+      in
+      descending ++ usableAliases ++ [ "linux_${arch}" ]
+    else
+      throw "python-wheelhouse: unsupported pip platform vendor \"${vendor}\" (expected manylinux_<glibc> or linux)";
+
   platformTags =
     { pythonVersion
     , platform
@@ -22,7 +46,7 @@ let
         uvPythonVersion = pythonVersion;
         uvPythonPlatform = platform;
         pipPythonVersion = pythonMajor + pythonMinor;
-        pipPlatform = platformVendor + "_" + platformArch;
+        pipPlatforms = pipPlatformLadder platformArch platformVendor;
         pipAbi = "cp" + pythonMajor + pythonMinor;
       };
 

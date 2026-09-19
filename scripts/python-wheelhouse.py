@@ -121,12 +121,13 @@ def main() -> None:
 
         wheelhouse = work / "wheelhouse"
         wheelhouse.mkdir()
+        platform_args = [tag for platform in spec["pipPlatforms"] for tag in ("--platform", platform)]
         run(
             "pip", "download",
             "--require-hashes",
             "--only-binary", ":all:",
             "--dest", str(wheelhouse),
-            "--platform", spec["pipPlatform"],
+            *platform_args,
             "--python-version", spec["pipPythonVersion"],
             "--implementation", "cp",
             "--abi", spec["pipAbi"],

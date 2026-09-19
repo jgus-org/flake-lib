@@ -153,7 +153,7 @@ class PythonWheelhouseTests(unittest.TestCase):
             "uvPythonVersion": "3.13",
             "uvPythonPlatform": "x86_64-manylinux_2_28",
             "pipPythonVersion": "313",
-            "pipPlatform": "manylinux_2_28_x86_64",
+            "pipPlatforms": ["manylinux_2_28_x86_64", "manylinux_2_17_x86_64", "linux_x86_64"],
             "pipAbi": "cp313",
             "sources": [
                 {"kind": "source-pyproject", "groups": ["studio"]},
@@ -176,6 +176,7 @@ class PythonWheelhouseTests(unittest.TestCase):
         self.assertIn("--generate-hashes", commands)
         self.assertIn("--python-platform x86_64-manylinux_2_28", commands)
         self.assertIn("--platform manylinux_2_28_x86_64", commands)
+        self.assertIn("--platform linux_x86_64", commands)
         self.assertIn("--abi cp313", commands)
         self.assertIn("--require-hashes", commands)
         self.assertIn("--only-binary :all:", commands)
@@ -200,7 +201,7 @@ class PythonWheelhouseTests(unittest.TestCase):
             "uvPythonVersion": "3.13",
             "uvPythonPlatform": "x86_64-linux",
             "pipPythonVersion": "313",
-            "pipPlatform": "linux_x86_64",
+            "pipPlatforms": ["linux_x86_64"],
             "pipAbi": "cp313",
             "sources": [{"kind": "repo-file", "path": "requirements.in"}],
         }

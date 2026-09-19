@@ -1,8 +1,9 @@
 { platformTags }:
 {
-  manylinux = {
+  testManylinux = {
     expr = platformTags { pythonVersion = "3.13"; platform = "x86_64-manylinux_2_28"; };
     expected = {
+      python = "3.13";
       uvPythonVersion = "3.13";
       uvPythonPlatform = "x86_64-manylinux_2_28";
       pipPythonVersion = "313";
@@ -39,9 +40,10 @@
       pipAbi = "cp313";
     };
   };
-  manylinux-aarch64 = {
+  testManylinuxAarch64 = {
     expr = platformTags { pythonVersion = "3.12"; platform = "aarch64-manylinux_2_17"; };
     expected = {
+      python = "3.12";
       uvPythonVersion = "3.12";
       uvPythonPlatform = "aarch64-manylinux_2_17";
       pipPythonVersion = "312";
@@ -65,9 +67,10 @@
       pipAbi = "cp312";
     };
   };
-  plain-linux = {
+  testPlainLinux = {
     expr = platformTags { pythonVersion = "3.12"; platform = "x86_64-linux"; };
     expected = {
+      python = "3.12";
       uvPythonVersion = "3.12";
       uvPythonPlatform = "x86_64-linux";
       pipPythonVersion = "312";
@@ -75,15 +78,15 @@
       pipAbi = "cp312";
     };
   };
-  bad-python-version = {
+  testBadPythonVersion = {
     expr = builtins.tryEval (platformTags { pythonVersion = "three"; platform = "x86_64-linux"; });
     expected = { success = false; value = false; };
   };
-  bad-platform = {
+  testBadPlatform = {
     expr = builtins.tryEval (platformTags { pythonVersion = "3.13"; platform = "x86_64 manylinux"; });
     expected = { success = false; value = false; };
   };
-  bad-vendor = {
+  testBadVendor = {
     expr = builtins.tryEval (platformTags { pythonVersion = "3.13"; platform = "x86_64-darwin"; });
     expected = { success = false; value = false; };
   };

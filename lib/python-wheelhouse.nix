@@ -12,6 +12,8 @@ let
       throw "python-wheelhouse: pythonVersion must be <major>.<minor>, got \"${pythonVersion}\""
     else if platformParts == null then
       throw "python-wheelhouse: platform must be <arch>-<vendor>, got \"${platform}\""
+    else if !(builtins.elemAt platformParts 1 == "linux" || builtins.match "manylinux_2_[0-9]+" (builtins.elemAt platformParts 1) != null) then
+      throw "python-wheelhouse: unsupported platform vendor \"${builtins.elemAt platformParts 1}\" (expected manylinux_<glibc> or linux)"
     else
       let
         pythonMajor = builtins.head pythonParts;
@@ -45,7 +47,7 @@ let
     else if numeric != null then
       let
         minor = builtins.fromJSON (builtins.elemAt numeric 0);
-        descending = map (step: "manylinux_2_${toString (minor - step)}_${arch}") (builtins.genList (step: step + 1) (minor - glibcFloor + 1));
+        descending = map (step: "manylinux_2_${toString (minor - step)}_${arch}") (builtins.genList (step: step) (minor - glibcFloor + 1));
         usableAliases = map (name: "${name}_${arch}") (builtins.filter (name: aliases.${name} <= minor) aliasNames);
       in
       descending ++ usableAliases ++ [ "linux_${arch}" ]
@@ -79,6 +81,7 @@ let
       {
         hook = pkgs.writeShellApplication {
           name = "python-wheelhouse";
+          excludeShellChecks = [ "SC2089" "SC2090" ];
           runtimeInputs = with pkgs; [ cacert coreutils git uv artifactPython ];
           runtimeEnv = {
             WHEELHOUSE_SPEC = builtins.toJSON {

@@ -77,6 +77,10 @@
           buildAttr = "model";
         };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
+        wheelhouse-example-hook = (lib.mkPythonWheelhouse {
+          inherit pkgs;
+          sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+        }).hook;
         npm-generated-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; source = "generated"; };
         yarn-hook = lib.mkJsDepsHook { inherit pkgs; manager = "yarn"; };
         composed-hook = lib.mkComposedHook { inherit pkgs; hooks = [ npm-generated-hook yarn-hook ]; };
@@ -275,6 +279,7 @@
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
+          wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
           inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests python-wheelhouse-tests python-wheelhouse-integration;
           inherit update-version-tests;
         };

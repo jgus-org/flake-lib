@@ -15,7 +15,7 @@ let
       [ "linux_${arch}" ]
     else if numeric != null then
       let
-        minor = builtins.toInt (builtins.elemAt numeric 0);
+        minor = builtins.fromJSON (builtins.elemAt numeric 0);
         descending = map (step: "manylinux_2_${toString (minor - step)}_${arch}") (builtins.genList (step: step + 1) (minor - glibcFloor + 1));
         usableAliases = map (name: "${name}_${arch}") (builtins.filter (name: aliases.${name} <= minor) aliasNames);
       in

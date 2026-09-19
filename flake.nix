@@ -9,7 +9,7 @@
   outputs = { self, nixpkgs, flake-utils }:
     let
       pythonPolicy = {
-        pythonVersions = [ "3.13" "3.14" ];
+        pythonVersions = [ "3.14" "3.15" ];
         platform = "x86_64-manylinux_2_28";
       };
     in

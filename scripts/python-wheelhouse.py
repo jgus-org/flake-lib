@@ -1,4 +1,4 @@
-"""flake-lib artifact hook: resolve a pinned python wheel closure for one declared environment."""
+"""flake-lib artifact hook: resolve a pinned python wheel closure per declared environment, current plus readiness."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -30,7 +31,13 @@ deps_core = load_deps_core()
 
 
 def run(*args: str, cwd: Path | None = None) -> None:
-    subprocess.run(args, cwd=cwd, check=True)
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        if result.stdout:
+            print(result.stdout, end="", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
 
 
 def sha256(path: Path) -> str:
@@ -79,6 +86,69 @@ def wheel_url(index_url: str, name: str, filename: str, digest: str) -> str:
     raise RuntimeError(f"the index did not report {filename} with {digest}")
 
 
+def blocked_reason(error: subprocess.CalledProcessError) -> str:
+    output = (error.stderr or "") + (error.stdout or "")
+    lines = [line for line in output.splitlines() if line.strip()]
+    error_lines = [line for line in lines if "error" in line.lower()]
+    return (error_lines[-1] if error_lines else lines[-1] if lines else f"exit {error.returncode}")[:240]
+
+
+def resolve_environment(environment: dict[str, Any], work: Path, requirements_in: Path, index_url: str) -> dict[str, Any]:
+    env_work = work / f"env-{environment['python']}"
+    env_work.mkdir()
+    shutil.copy2(requirements_in, env_work / "requirements.in")
+
+    requirements_lock = env_work / "requirements.lock"
+    run(
+        "uv", "pip", "compile", "requirements.in",
+        "--python-version", environment["uvPythonVersion"],
+        "--python-platform", environment["uvPythonPlatform"],
+        "--generate-hashes",
+        "--index-url", index_url,
+        "--output-file", requirements_lock.name,
+        "--no-header",
+        cwd=env_work,
+    )
+
+    wheelhouse = env_work / "wheelhouse"
+    wheelhouse.mkdir()
+    platform_args = [tag for platform in environment["pipPlatforms"] for tag in ("--platform", platform)]
+    run(
+        "pip", "download",
+        "--require-hashes",
+        "--only-binary", ":all:",
+        "--dest", str(wheelhouse),
+        *platform_args,
+        "--python-version", environment["pipPythonVersion"],
+        "--implementation", "cp",
+        "--abi", environment["pipAbi"],
+        "--index-url", index_url,
+        "--requirement", str(requirements_lock),
+    )
+
+    manifest = []
+    for artifact in sorted(wheelhouse.glob("*.whl"), key=lambda path: path.name.lower()):
+        name, version, _build, _tags = parse_wheel_filename(artifact.name)
+        digest = sha256(artifact)
+        manifest.append({
+            "name": canonicalize_name(name),
+            "version": str(version),
+            "filename": artifact.name,
+            "url": wheel_url(index_url, str(name), artifact.name, digest),
+            "sha256": digest,
+            "size": artifact.stat().st_size,
+        })
+    if not manifest:
+        raise RuntimeError("pip download produced no wheels")
+
+    wheel_manifest = env_work / "wheels.json"
+    wheel_manifest.write_text(json.dumps(manifest, indent=2) + "\n")
+    return {
+        "requirements_lock": requirements_lock,
+        "wheel_manifest": wheel_manifest,
+    }
+
+
 def main() -> None:
     flake_root = Path(os.environ["FLAKE_ROOT"])
     revision = os.environ["NEW_REV"]
@@ -86,6 +156,9 @@ def main() -> None:
     index_url = os.environ["INDEX_URL"]
     owner = os.environ["GH_OWNER"]
     repo = os.environ["GH_REPO"]
+    environments = spec["environments"]
+    current = environments[0]
+    readiness = [environment for environment in environments if environment["readiness"]]
 
     needs_checkout = any(source["kind"] != "repo-file" for source in spec["sources"])
 
@@ -107,58 +180,34 @@ def main() -> None:
         requirements_in = work / "requirements.in"
         requirements_in.write_text(f"{header}\n" + "\n".join(deduplicated) + "\n")
 
-        requirements_lock = work / "requirements.lock"
-        run(
-            "uv", "pip", "compile", requirements_in.name,
-            "--python-version", spec["uvPythonVersion"],
-            "--python-platform", spec["uvPythonPlatform"],
-            "--generate-hashes",
-            "--index-url", index_url,
-            "--output-file", requirements_lock.name,
-            "--no-header",
-            cwd=work,
-        )
-
-        wheelhouse = work / "wheelhouse"
-        wheelhouse.mkdir()
-        platform_args = [tag for platform in spec["pipPlatforms"] for tag in ("--platform", platform)]
-        run(
-            "pip", "download",
-            "--require-hashes",
-            "--only-binary", ":all:",
-            "--dest", str(wheelhouse),
-            *platform_args,
-            "--python-version", spec["pipPythonVersion"],
-            "--implementation", "cp",
-            "--abi", spec["pipAbi"],
-            "--index-url", index_url,
-            "--requirement", str(requirements_lock),
-        )
-
-        manifest = []
-        for artifact in sorted(wheelhouse.glob("*.whl"), key=lambda path: path.name.lower()):
-            name, version, _build, _tags = parse_wheel_filename(artifact.name)
-            digest = sha256(artifact)
-            manifest.append({
-                "name": canonicalize_name(name),
-                "version": str(version),
-                "filename": artifact.name,
-                "url": wheel_url(index_url, str(name), artifact.name, digest),
-                "sha256": digest,
-                "size": artifact.stat().st_size,
-            })
-        if not manifest:
-            raise RuntimeError("pip download produced no wheels")
-
-        wheel_manifest = work / "wheels.json"
-        wheel_manifest.write_text(json.dumps(manifest, indent=2) + "\n")
-
+        current_artifacts = resolve_environment(current, work, requirements_in, index_url)
         shutil.copy2(requirements_in, flake_root / "requirements.in")
-        shutil.copy2(requirements_lock, flake_root / "requirements.lock")
-        shutil.copy2(wheel_manifest, flake_root / "wheels.json")
+        shutil.copy2(current_artifacts["requirements_lock"], flake_root / "requirements.lock")
+        shutil.copy2(current_artifacts["wheel_manifest"], flake_root / "wheels.json")
 
-        print(f"requirementsHash={sha256(requirements_lock)}")
-        print(f"wheelManifestHash={sha256(wheel_manifest)}")
+        statuses = {}
+        for environment in readiness:
+            python = environment["python"]
+            stale = [flake_root / f"requirements-{python}.lock", flake_root / f"wheels-{python}.json"]
+            try:
+                artifacts = resolve_environment(environment, work, requirements_in, index_url)
+            except subprocess.CalledProcessError as error:
+                for path in stale:
+                    path.unlink(missing_ok=True)
+                statuses[python] = {"status": "blocked", "reason": blocked_reason(error)}
+                print(f"readiness {python}: blocked — {statuses[python]['reason']}", file=sys.stderr)
+                continue
+            shutil.copy2(artifacts["requirements_lock"], flake_root / f"requirements-{python}.lock")
+            shutil.copy2(artifacts["wheel_manifest"], flake_root / f"wheels-{python}.json")
+            statuses[python] = {"status": "ok"}
+            print(f"readiness {python}: ok", file=sys.stderr)
+
+        if readiness:
+            (flake_root / "python-readiness.json").write_text(json.dumps(statuses, indent=2, sort_keys=True) + "\n")
+
+        print(f"pythonEnvironment={current['python']}")
+        print(f"requirementsHash={sha256(current_artifacts['requirements_lock'])}")
+        print(f"wheelManifestHash={sha256(current_artifacts['wheel_manifest'])}")
 
 
 if __name__ == "__main__":

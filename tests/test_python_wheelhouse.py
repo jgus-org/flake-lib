@@ -1,5 +1,3 @@
-import functools
-import importlib.util
 import hashlib
 import json
 import os
@@ -9,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+import functools
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -29,6 +28,48 @@ def write_executable(path: Path, body: str) -> None:
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+class IndexHandler(SimpleHTTPRequestHandler):
+    def do_GET(self) -> None:
+        parts = self.path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] == "simple":
+            self.path = f"/simple/{parts[1]}/index.json"
+        super().do_GET()
+
+    def log_message(self, format: str, *args) -> None:
+        pass
+
+
+def serve_index(directory: Path) -> object:
+    handler = functools.partial(IndexHandler, directory=str(directory))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def current_env() -> dict:
+    return {
+        "python": "3.13",
+        "uvPythonVersion": "3.13",
+        "uvPythonPlatform": "x86_64-manylinux_2_28",
+        "pipPythonVersion": "313",
+        "pipPlatforms": ["manylinux_2_28_x86_64", "manylinux_2_17_x86_64", "linux_x86_64"],
+        "pipAbi": "cp313",
+        "readiness": False,
+    }
+
+
+def readiness_env(python: str) -> dict:
+    return {
+        "python": python,
+        "uvPythonVersion": python,
+        "uvPythonPlatform": "x86_64-manylinux_2_28",
+        "pipPythonVersion": python.replace(".", ""),
+        "pipPlatforms": ["manylinux_2_28_x86_64", "linux_x86_64"],
+        "pipAbi": "cp" + python.replace(".", ""),
+        "readiness": True,
+    }
 
 
 def run_hook(work: Path, index_url: str, spec: dict, extra_env: dict[str, str]) -> tuple[str, Path]:
@@ -52,24 +93,6 @@ def run_hook(work: Path, index_url: str, spec: dict, extra_env: dict[str, str]) 
     )
     assert result.returncode == 0, result.stderr
     return result.stdout, work / "flake-root"
-
-
-class IndexHandler(SimpleHTTPRequestHandler):
-    def do_GET(self) -> None:
-        parts = self.path.strip("/").split("/")
-        if len(parts) == 2 and parts[0] == "simple":
-            self.path = f"/simple/{parts[1]}/index.json"
-        super().do_GET()
-
-    def log_message(self, format: str, *args) -> None:
-        pass
-
-
-def serve_index(directory: Path) -> str:
-    handler = functools.partial(IndexHandler, directory=str(directory))
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
 
 
 class PythonWheelhouseTests(unittest.TestCase):
@@ -102,15 +125,22 @@ class PythonWheelhouseTests(unittest.TestCase):
             'echo "uv $*" >> ' + str(log) + '\n'
             'if [[ "$1 $2" == "pip compile" ]]; then\n'
             '  ARGS=("$@")\n'
+            '  PY=""; OUT=""\n'
             '  for ((i = 0; i < ${#ARGS[@]}; i++)); do\n'
+            '    if [[ "${ARGS[i]}" == "--python-version" ]]; then PY="${ARGS[i + 1]}"; fi\n'
             '    if [[ "${ARGS[i]}" == "--output-file" ]]; then OUT="${ARGS[i + 1]}"; fi\n'
             '  done\n'
+            '  if [[ -n "${FAKE_UV_FAIL:-}" && "${PY}" == "${FAKE_UV_FAIL}" ]]; then\n'
+            '    echo "error: no version satisfies fakenative for python ${PY}" >&2\n'
+            '    exit 1\n'
+            '  fi\n'
             '  cp "$FIXTURE_LOCK" "$OUT"\n'
             'fi\n'
         ))
         write_executable(self.work / "bin" / "pip", (
             'echo "pip $*" >> ' + str(log) + '\n'
             'ARGS=("$@")\n'
+            'DEST=""\n'
             'for ((i = 0; i < ${#ARGS[@]}; i++)); do\n'
             '  if [[ "${ARGS[i]}" == "--dest" ]]; then DEST="${ARGS[i + 1]}"; fi\n'
             'done\n'
@@ -148,20 +178,20 @@ class PythonWheelhouseTests(unittest.TestCase):
             "FAKE_WHEELS_DIR": str(wheelhouse_dir),
         }
 
-    def test_source_and_repo_mix(self) -> None:
-        spec = {
-            "uvPythonVersion": "3.13",
-            "uvPythonPlatform": "x86_64-manylinux_2_28",
-            "pipPythonVersion": "313",
-            "pipPlatforms": ["manylinux_2_28_x86_64", "manylinux_2_17_x86_64", "linux_x86_64"],
-            "pipAbi": "cp313",
+    def spec_with(self, environments: list[dict]) -> dict:
+        return {
             "sources": [
                 {"kind": "source-pyproject", "groups": ["studio"]},
                 {"kind": "source-file", "path": "reqs/studio.txt"},
             ],
             "extraRequirements": ["ninja", "fakepkg>=1.0"],
+            "environments": environments,
         }
-        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
+
+    def test_source_and_repo_mix(self) -> None:
+        (self.work / "flake-root" / "wheels-3.14.json").write_text("stale")
+        spec = self.spec_with([current_env(), readiness_env("3.14")])
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": "3.14"})
 
         requirements_in = (root / "requirements.in").read_text()
         self.assertIn("acme/widget@abc123", requirements_in)
@@ -184,30 +214,44 @@ class PythonWheelhouseTests(unittest.TestCase):
         manifest = json.loads((root / "wheels.json").read_text())
         self.assertEqual([entry["name"] for entry in manifest], ["fakenative", "fakepkg"])
         self.assertEqual(manifest[1]["version"], "1.0.0")
-        self.assertEqual(manifest[0]["version"], "2.1.0")
-        self.assertEqual(manifest[1]["url"], "https://files.example.test/fakepkg-1.0.0-py3-none-any.whl")
+        self.assertEqual(manifest[0]["url"], "https://files.example.test/fakenative-2.1.0-cp313-cp313-manylinux_2_28_x86_64.whl")
         self.assertEqual(manifest[1]["sha256"], sha256(FAKE_WHEELS["fakepkg-1.0.0-py3-none-any.whl"]))
         self.assertEqual(manifest[1]["size"], len(FAKE_WHEELS["fakepkg-1.0.0-py3-none-any.whl"]))
 
+        self.assertIn("pythonEnvironment=3.13", stdout)
         self.assertIn("requirementsHash=" + hashlib.sha256(FIXTURE_LOCK.encode()).hexdigest(), stdout)
         wheels_hash = hashlib.sha256((root / "wheels.json").read_bytes()).hexdigest()
         self.assertIn("wheelManifestHash=" + wheels_hash, stdout)
+
+        readiness = json.loads((root / "python-readiness.json").read_text())
+        self.assertEqual(readiness["3.14"]["status"], "blocked")
+        self.assertIn("fakenative", readiness["3.14"]["reason"])
+        self.assertFalse((root / "wheels-3.14.json").exists())
+        self.assertFalse((root / "requirements-3.14.lock").exists())
+
+    def test_readiness_env_vendored(self) -> None:
+        spec = self.spec_with([current_env(), readiness_env("3.14")])
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
+
+        readiness = json.loads((root / "python-readiness.json").read_text())
+        self.assertEqual(readiness, {"3.14": {"status": "ok"}})
+        vendored = json.loads((root / "wheels-3.14.json").read_text())
+        self.assertEqual([entry["name"] for entry in vendored], ["fakenative", "fakepkg"])
+        self.assertTrue((root / "requirements-3.14.lock").exists())
 
     def test_repo_file_only_skips_checkout(self) -> None:
         (self.work / "flake-root" / "requirements.in").write_text(
             "# hand-maintained\nfakepkg>=1.0\n"
         )
         spec = {
-            "uvPythonVersion": "3.13",
-            "uvPythonPlatform": "x86_64-linux",
-            "pipPythonVersion": "313",
-            "pipPlatforms": ["linux_x86_64"],
-            "pipAbi": "cp313",
             "sources": [{"kind": "repo-file", "path": "requirements.in"}],
+            "extraRequirements": [],
+            "environments": [current_env()],
         }
         stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
         self.assertNotIn("git ", self.log.read_text())
         self.assertNotIn("@abc123", (root / "requirements.in").read_text())
+        self.assertFalse((root / "python-readiness.json").exists())
 
 
 if __name__ == "__main__":

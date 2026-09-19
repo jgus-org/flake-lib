@@ -120,6 +120,7 @@ pypi_pin_current() {
     VALUE=$(nix eval --raw --file "${pin}" "${NAME}" 2>/dev/null || echo "")
     [[ -n "${VALUE}" ]] || return 1
   done
+  environment_pin_current
   sibling_refs_current
 }
 
@@ -352,6 +353,7 @@ huggingface_pin_current() {
     CURRENT_EXTRA=$(nix eval --raw --file "${pin}" "${NAME}" 2>/dev/null || echo "")
     [[ -n "${CURRENT_EXTRA}" && "${CURRENT_EXTRA}" == "${extra[${NAME}]:-}" ]] || return 1
   done
+  environment_pin_current
   return 0
 }
 
@@ -432,6 +434,14 @@ revalidate_hash() {
   sed -i -E "s|^([[:space:]]*${field}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${new}\\2|" "${pin}"
 }
 
+environment_pin_current() {
+  # True (0) when no environment fingerprint is declared, or the pin's recorded pythonEnvironment matches it. The fingerprint comes from the wheelhouse environment policy; a mismatch means the vendored artifacts were resolved for a superseded environment and the artifact hook must regenerate them even at an unchanged version and rev.
+  local current
+  [[ -z "${ENV_FINGERPRINT:-}" ]] && return 0
+  current=$(nix eval --raw --file "${pin}" pythonEnvironment 2>/dev/null || echo "")
+  [[ -n "${current}" && "${current}" == "${ENV_FINGERPRINT}" ]]
+}
+
 source_pin_current() {
   # $1 version, $2 rev. True (0) when pin.nix already matches at this version+rev with sourceHash and every EXTRA_HASHES field populated. Lets a no-op run skip the artifactHook + cascade regeneration (which can be non-deterministic, e.g. npm lockfiles) instead of churning the pin on every run. A placeholder pin (empty hash) returns false, so the populate path still runs; callers skip this in build-failure mode, where the hash can drift without a rev change.
   local v="$1" rev="$2" cv crev csh name val
@@ -443,6 +453,7 @@ source_pin_current() {
     val=$(nix eval --raw --file "${pin}" "${name}" 2>/dev/null || echo "")
     [[ -n "${val}" ]] || return 1
   done
+  environment_pin_current
   sibling_refs_current
 }
 

@@ -30,7 +30,7 @@ flake-lib.lib.depsCore                                                   # store
 flake-lib.lib.pythonPolicy                                               # fleet wheelhouse policy: pythonVersions (first = current, rest = readiness) + platform
 flake-lib.lib.platformTags     { pythonVersion; platform; }              # "3.13" + "x86_64-manylinux_2_28" -> uv/pip tag attrs
 flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; pythonVersions ? pythonPolicy.pythonVersions; platform ? pythonPolicy.platform; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; currentEnvironment; }
-flake-lib.lib.mkWheelhouse     { pkgs; wheels; }                         # wheels.json path or list -> { files; wheelhouse; }
+flake-lib.lib.mkWheelhouse     { pkgs; wheels; }                         # wheels-<py>.json path or list -> { files; wheelhouse; }
 flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
@@ -114,11 +114,12 @@ flake-lib.lib.pythonPolicy
 # { pythonVersions = [ "3.13" "3.14" "3.15" ]; platform = "x86_64-manylinux_2_28"; }
 ```
 
-The first `pythonVersions` entry is **current** — the environment the flake
-builds and pins (`requirements.in`, `requirements.lock`, `wheels.json` at the
-flake root, `pythonEnvironment`/`requirementsHash`/`wheelManifestHash` pin
-fields). Later entries are **readiness** environments: resolved best-effort on
-every run, committed as `requirements-<py>.lock` + `wheels-<py>.json` when they
+The first `pythonVersions` entry is **current** — the environment the pin
+records (`pythonEnvironment`/`requirementsHash`/`wheelManifestHash` pin
+fields hash its artifacts). Every environment — current and readiness
+alike — commits `requirements-<py>.lock` + `wheels-<py>.json`, and the shared
+env-independent manifest lands in `requirements.in`. Readiness environments
+resolve best-effort on every run, committed as `requirements-<py>.lock` + `wheels-<py>.json` for every environment when they
 resolve and their wheels exist, and recorded — with the blocking error, when
 they don't — in `python-readiness.json`. Readiness failures never block the
 current environment's update; the committed file's red→green transition is the

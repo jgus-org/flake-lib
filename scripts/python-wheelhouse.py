@@ -180,10 +180,11 @@ def main() -> None:
         requirements_in = work / "requirements.in"
         requirements_in.write_text(f"{header}\n" + "\n".join(deduplicated) + "\n")
 
+        current_python = current["python"]
         current_artifacts = resolve_environment(current, work, requirements_in, index_url)
         shutil.copy2(requirements_in, flake_root / "requirements.in")
-        shutil.copy2(current_artifacts["requirements_lock"], flake_root / "requirements.lock")
-        shutil.copy2(current_artifacts["wheel_manifest"], flake_root / "wheels.json")
+        shutil.copy2(current_artifacts["requirements_lock"], flake_root / f"requirements-{current_python}.lock")
+        shutil.copy2(current_artifacts["wheel_manifest"], flake_root / f"wheels-{current_python}.json")
 
         statuses = {}
         for environment in readiness:

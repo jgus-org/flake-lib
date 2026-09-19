@@ -211,7 +211,7 @@ class PythonWheelhouseTests(unittest.TestCase):
         self.assertIn("--require-hashes", commands)
         self.assertIn("--only-binary :all:", commands)
 
-        manifest = json.loads((root / "wheels.json").read_text())
+        manifest = json.loads((root / "wheels-3.13.json").read_text())
         self.assertEqual([entry["name"] for entry in manifest], ["fakenative", "fakepkg"])
         self.assertEqual(manifest[1]["version"], "1.0.0")
         self.assertEqual(manifest[0]["url"], "https://files.example.test/fakenative-2.1.0-cp313-cp313-manylinux_2_28_x86_64.whl")
@@ -220,7 +220,7 @@ class PythonWheelhouseTests(unittest.TestCase):
 
         self.assertIn("pythonEnvironment=3.13", stdout)
         self.assertIn("requirementsHash=" + hashlib.sha256(FIXTURE_LOCK.encode()).hexdigest(), stdout)
-        wheels_hash = hashlib.sha256((root / "wheels.json").read_bytes()).hexdigest()
+        wheels_hash = hashlib.sha256((root / "wheels-3.13.json").read_bytes()).hexdigest()
         self.assertIn("wheelManifestHash=" + wheels_hash, stdout)
 
         readiness = json.loads((root / "python-readiness.json").read_text())

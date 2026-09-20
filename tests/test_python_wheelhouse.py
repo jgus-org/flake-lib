@@ -95,6 +95,12 @@ def run_hook(work: Path, index_url: str, spec: dict, extra_env: dict[str, str]) 
     return result.stdout, work / "flake-root"
 
 
+CURRENT = current_env()
+READINESS = readiness_env("3.14")
+CURRENT_PY = CURRENT["python"]
+READINESS_PY = READINESS["python"]
+
+
 class PythonWheelhouseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.work = Path(tempfile.mkdtemp(prefix="wheelhouse-test-"))
@@ -189,9 +195,9 @@ class PythonWheelhouseTests(unittest.TestCase):
         }
 
     def test_source_and_repo_mix(self) -> None:
-        (self.work / "flake-root" / "wheels-3.14.json").write_text("stale")
-        spec = self.spec_with([current_env(), readiness_env("3.14")])
-        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": "3.14"})
+        (self.work / "flake-root" / f"wheels-{READINESS_PY}.json").write_text("stale")
+        spec = self.spec_with([CURRENT, READINESS])
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": READINESS_PY})
 
         requirements_in = (root / "requirements.in").read_text()
         self.assertIn("acme/widget@abc123", requirements_in)
@@ -211,33 +217,33 @@ class PythonWheelhouseTests(unittest.TestCase):
         self.assertIn("--require-hashes", commands)
         self.assertIn("--only-binary :all:", commands)
 
-        manifest = json.loads((root / "wheels.json").read_text())
+        manifest = json.loads((root / f"wheels-{CURRENT_PY}.json").read_text())
         self.assertEqual([entry["name"] for entry in manifest], ["fakenative", "fakepkg"])
         self.assertEqual(manifest[1]["version"], "1.0.0")
         self.assertEqual(manifest[0]["url"], "https://files.example.test/fakenative-2.1.0-cp313-cp313-manylinux_2_28_x86_64.whl")
         self.assertEqual(manifest[1]["sha256"], sha256(FAKE_WHEELS["fakepkg-1.0.0-py3-none-any.whl"]))
         self.assertEqual(manifest[1]["size"], len(FAKE_WHEELS["fakepkg-1.0.0-py3-none-any.whl"]))
 
-        self.assertIn("pythonEnvironment=3.13", stdout)
+        self.assertIn(f"pythonEnvironment={CURRENT_PY}", stdout)
         self.assertIn("requirementsHash=" + hashlib.sha256(FIXTURE_LOCK.encode()).hexdigest(), stdout)
-        wheels_hash = hashlib.sha256((root / "wheels.json").read_bytes()).hexdigest()
+        wheels_hash = hashlib.sha256((root / f"wheels-{CURRENT_PY}.json").read_bytes()).hexdigest()
         self.assertIn("wheelManifestHash=" + wheels_hash, stdout)
 
         readiness = json.loads((root / "python-readiness.json").read_text())
-        self.assertEqual(readiness["3.14"]["status"], "blocked")
-        self.assertIn("fakenative", readiness["3.14"]["reason"])
-        self.assertFalse((root / "wheels-3.14.json").exists())
-        self.assertFalse((root / "requirements-3.14.lock").exists())
+        self.assertEqual(readiness[READINESS_PY]["status"], "blocked")
+        self.assertIn("fakenative", readiness[READINESS_PY]["reason"])
+        self.assertFalse((root / f"wheels-{READINESS_PY}.json").exists())
+        self.assertFalse((root / f"requirements-{READINESS_PY}.lock").exists())
 
     def test_readiness_env_vendored(self) -> None:
-        spec = self.spec_with([current_env(), readiness_env("3.14")])
+        spec = self.spec_with([CURRENT, READINESS])
         stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
 
         readiness = json.loads((root / "python-readiness.json").read_text())
-        self.assertEqual(readiness, {"3.14": {"status": "ok"}})
-        vendored = json.loads((root / "wheels-3.14.json").read_text())
+        self.assertEqual(readiness, {READINESS_PY: {"status": "ok"}})
+        vendored = json.loads((root / f"wheels-{READINESS_PY}.json").read_text())
         self.assertEqual([entry["name"] for entry in vendored], ["fakenative", "fakepkg"])
-        self.assertTrue((root / "requirements-3.14.lock").exists())
+        self.assertTrue((root / f"requirements-{READINESS_PY}.lock").exists())
 
     def test_repo_file_only_skips_checkout(self) -> None:
         (self.work / "flake-root" / "requirements.in").write_text(
@@ -246,7 +252,7 @@ class PythonWheelhouseTests(unittest.TestCase):
         spec = {
             "sources": [{"kind": "repo-file", "path": "requirements.in"}],
             "extraRequirements": [],
-            "environments": [current_env()],
+            "environments": [CURRENT],
         }
         stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
         self.assertNotIn("git ", self.log.read_text())

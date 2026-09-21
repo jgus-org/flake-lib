@@ -28,7 +28,19 @@ let
         pipPythonVersion = pythonMajor + pythonMinor;
         pipPlatforms = pipPlatformLadder platformArch platformVendor;
         pipAbi = "cp" + pythonMajor + pythonMinor;
+        pipAbiLadder = pipAbiLadder pythonMajor pythonMinor;
       };
+
+  # Descending interpreter ladder (plus abi3/none) so abi3 wheels tagged for older
+  # interpreters (e.g. cryptography's cp311-abi3) still satisfy `pip download --abi`.
+  pipAbiLadder =
+    pythonMajor: pythonMinor:
+    let
+      minor = builtins.fromJSON pythonMinor;
+      floor = 8;
+    in
+    map (step: "cp" + pythonMajor + toString (minor - step)) (builtins.genList (step: step) (minor - floor + 1))
+    ++ [ "abi3" "none" ];
 
   pipPlatformLadder =
     arch: vendor:

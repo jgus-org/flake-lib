@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,9 +50,10 @@ def sha256(path: Path) -> str:
 
 
 def checkout_source(work: Path, owner: str, repo: str, revision: str) -> Path:
+    forge = "gitlab.com" if os.environ.get("SOURCE_TYPE") == "gitlab" else "github.com"
     source = work / "source"
     run("git", "clone", "--quiet", "--filter=blob:none", "--no-checkout",
-        f"https://github.com/{owner}/{repo}.git", str(source))
+        f"https://{forge}/{owner}/{repo}.git", str(source))
     run("git", "checkout", "--quiet", revision, cwd=source)
     return source
 
@@ -64,13 +66,33 @@ def source_requirements(source: dict[str, Any], flake_root: Path, checkout: Path
         requirements = deps_core.pyproject_requirements(document, source.get("groups", []))
         if source.get("buildSystem", False):
             requirements.extend(tomllib.loads(document)["build-system"]["requires"])
-        return requirements
+        return filtered(source, requirements)
     if kind == "source-file":
         assert checkout is not None
-        return deps_core.requirements_file_requirements((checkout / source["path"]).read_text())
+        return filtered(source, deps_core.requirements_file_requirements((checkout / source["path"]).read_text()))
     if kind == "repo-file":
-        return deps_core.requirements_file_requirements((flake_root / source["path"]).read_text())
+        return filtered(source, deps_core.requirements_file_requirements((flake_root / source["path"]).read_text()))
     raise ValueError(f"unknown wheelhouse source kind: {kind}")
+
+
+def filtered(source: dict[str, Any], requirements: list[str]) -> list[str]:
+    only = source.get("only")
+    except_ = source.get("except")
+    if only:
+        wanted = {canonicalize_name(name) for name in only}
+        selected = [requirement for requirement in requirements if canonicalize_name(requirement_name(requirement)) in wanted]
+        missing = wanted - {canonicalize_name(requirement_name(requirement)) for requirement in selected}
+        if missing:
+            raise ValueError(f"wheelhouse source filter 'only' matched nothing for: {', '.join(sorted(missing))}")
+        return selected
+    if except_:
+        excluded = {canonicalize_name(name) for name in except_}
+        return [requirement for requirement in requirements if canonicalize_name(requirement_name(requirement)) not in excluded]
+    return requirements
+
+
+def requirement_name(requirement: str) -> str:
+    return re.split("[^A-Za-z0-9._-]", requirement.strip(), maxsplit=1)[0]
 
 
 def wheel_url(index_url: str, name: str, filename: str, digest: str) -> str:
@@ -113,6 +135,7 @@ def resolve_environment(environment: dict[str, Any], work: Path, requirements_in
     wheelhouse = env_work / "wheelhouse"
     wheelhouse.mkdir()
     platform_args = [tag for platform in environment["pipPlatforms"] for tag in ("--platform", platform)]
+    abi_args = [tag for tag in environment.get("pipAbiLadder", [environment["pipAbi"]]) for tag in ("--abi", tag)]
     run(
         "pip", "download",
         "--require-hashes",
@@ -121,7 +144,7 @@ def resolve_environment(environment: dict[str, Any], work: Path, requirements_in
         *platform_args,
         "--python-version", environment["pipPythonVersion"],
         "--implementation", "cp",
-        "--abi", environment["pipAbi"],
+        *abi_args,
         "--index-url", index_url,
         "--requirement", str(requirements_lock),
     )

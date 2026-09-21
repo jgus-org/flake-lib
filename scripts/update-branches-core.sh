@@ -10,7 +10,7 @@
 #
 # Single knob: $MINIMUM_TRACKING_VERSION. Permanent pins are done via git tags (which the action never touches); there is no in-band freeze list.
 #
-# Each existing exact branch is `git merge`d with the immutable specification SHA captured by discovery before its update-version runs. Branch-owned files (pin.nix, flake.lock, flake.nix, ...) stay as-is via the `ours` merge driver declared in .gitattributes. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
+# Each existing exact branch is `git merge`d with the immutable specification SHA captured by discovery before its update-version runs. Branch-owned files (pin.nix, flake.lock, the wheelhouse artifacts, ...) stay as-is: ensure_owned_merge_attributes keeps their `merge=ours` declarations in .gitattributes in step with BRANCH_OWNED_FILES. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
 #
 # Failures: per-branch input-refresh or update-version failures and aggregate targets missing the discovery base commit are surfaced as GH Actions ::warning::
 # annotations + a step summary, and cause a non-zero exit at the end of the run. An aggregate whose current tip is reachable from neither the new target nor
@@ -316,6 +316,36 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 # Define the `ours` merge driver so .gitattributes' `merge=ours` rules take effect: `true` exits 0 without touching the file, leaving the branch's version.
 git config merge.ours.driver true
 
+matching_owned_paths() {
+  # Owned patterns that match something in the current worktree. Unmatched
+  # patterns must not reach git: they are fatal pathspec errors there.
+  local pattern
+  local matches=()
+  # shellcheck disable=SC2086
+  for pattern in ${BRANCH_OWNED_FILES}; do
+    if compgen -G "${pattern}" >/dev/null; then
+      matches+=("${pattern}")
+    fi
+  done
+  if [[ ${#matches[@]} -gt 0 ]]; then
+    printf '%s\n' "${matches[@]}"
+  fi
+}
+
+ensure_owned_merge_attributes() {
+  # The ours driver configured above only applies to patterns declared in
+  # .gitattributes; keep the declarations in step with the owned files so
+  # merges of the discovery base cannot clobber branch-owned artifacts.
+  local pattern
+  touch .gitattributes
+  # shellcheck disable=SC2086
+  for pattern in ${BRANCH_OWNED_FILES}; do
+    if [[ "$(git check-attr merge -- "${pattern}")" != *"merge: ours"* ]]; then
+      printf '%s\tmerge=ours\n' "${pattern}" >> .gitattributes
+    fi
+  done
+}
+
 VERSION_OVERRIDES="${VERSION_OVERRIDES:-}"
 [[ -n "${VERSION_OVERRIDES}" ]] || VERSION_OVERRIDES='{}'
 VERSION_CANON="${VERSION_CANON:-}"
@@ -507,7 +537,7 @@ refresh_version() {
     fi
     # Never merge a live aggregate: every exact job uses the specification SHA
     # captured by discovery, even if an earlier publisher has advanced main.
-    if ! (cd "${wt}" && git merge --no-edit "${BASE_SHA}"); then
+    if ! (cd "${wt}" && ensure_owned_merge_attributes && git merge --no-edit "${BASE_SHA}"); then
       LAST_FAILURE_REASON="merge of discovery base ${BASE_SHA} failed"
       remove_worktree "${wt}"
       return 1
@@ -520,7 +550,7 @@ refresh_version() {
       remove_worktree "${wt}"
       return 1
     fi
-    if ! (cd "${wt}" && prepare_new_branch_pin "${v}"); then
+    if ! (cd "${wt}" && ensure_owned_merge_attributes && prepare_new_branch_pin "${v}"); then
       LAST_FAILURE_REASON="preparing the new branch pin failed"
       remove_worktree "${wt}"
       return 1
@@ -544,10 +574,14 @@ refresh_version() {
     remove_worktree "${wt}"
     return 1
   fi
+  owned_paths="$(matching_owned_paths || true)"
+  if ! git diff --quiet -- .gitattributes || [[ -n "$(git ls-files --others --exclude-standard -- .gitattributes)" ]]; then
+    owned_paths="${owned_paths:+${owned_paths} }.gitattributes"
+  fi
   # shellcheck disable=SC2086
-  if ! git diff --quiet -- ${BRANCH_OWNED_FILES} || [[ -n "$(git ls-files --others --exclude-standard -- ${BRANCH_OWNED_FILES})" ]]; then
+  if [[ -n "${owned_paths}" ]] && { ! git diff --quiet -- ${owned_paths} || [[ -n "$(git ls-files --others --exclude-standard -- ${owned_paths})" ]]; }; then
     # shellcheck disable=SC2086
-    if ! git add ${BRANCH_OWNED_FILES} || ! git commit -q -m "auto: ${v} pin"; then
+    if ! git add ${owned_paths} || ! git commit -q -m "auto: ${v} pin"; then
       LAST_FAILURE_REASON="committing ${branch} failed"
       popd >/dev/null
       remove_worktree "${wt}"

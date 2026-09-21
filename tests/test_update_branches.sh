@@ -106,7 +106,7 @@ invoke_update() {
   shift 4
   (
     cd "${CHECKOUT}"
-    BRANCH_OWNED_FILES='pin.nix flake.lock' \
+    BRANCH_OWNED_FILES="${BRANCH_OWNED_FILES_OVERRIDE:-pin.nix flake.lock}" \
     GH_OWNER=example \
     GH_REPO=example \
     GH_TAG_PREFIXES="${TAG_PREFIXES}" \
@@ -131,7 +131,7 @@ invoke_update() {
 run_update() {
   local VERSIONS="${1}" TAG_PREFIXES="${2:-[\"v\",\"V\",\"\"]}" FAILED_VERSIONS="${3:-}"
   local FAILED_REFRESH_VERSIONS="${4:-}"
-  invoke_update "${VERSIONS}" "${TAG_PREFIXES}" "${FAILED_VERSIONS}" "${FAILED_REFRESH_VERSIONS}"
+  invoke_update "${VERSIONS}" "${TAG_PREFIXES}" "${FAILED_VERSIONS}" "${FAILED_REFRESH_VERSIONS}" "${@:5}"
 }
 
 run_command() {
@@ -532,3 +532,18 @@ assert_same_ref main v1.2.0
 [[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 2 ]]
 [[ "$(cat "${CASE_ROOT}/transient-attempts/update-version-1.2.0")" == 2 ]]
 clear_test_failures
+
+# Owned patterns matching nothing must not fail the publish, and the orchestrator keeps .gitattributes' merge=ours declarations in step with the owned files on published branches.
+initialize_repository
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json missing.txt' run_update '1.2.3-rc1'
+assert_ref_version v1.2.3-rc1 1.2.3-rc1
+git --git-dir="${REMOTE}" show 'refs/heads/v1.2.3-rc1:.gitattributes' | grep -Fqx $'wheels-*.json\tmerge=ours'
+git --git-dir="${REMOTE}" show 'refs/heads/v1.2.3-rc1:.gitattributes' | grep -Fqx $'missing.txt\tmerge=ours'
+
+# Refreshing an existing branch re-asserts the declarations before merging the discovery base, so branch-owned artifacts survive the merge.
+initialize_repository
+seed_exact_branch 1.2.3-rc1
+point_aggregate main 1.2.3-rc1
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json' run_update '1.2.4-rc1'
+git --git-dir="${REMOTE}" show 'refs/heads/v1.2.4-rc1:.gitattributes' | grep -Fqx $'wheels-*.json\tmerge=ours'
+assert_ref_version v1.2.4-rc1 1.2.4-rc1

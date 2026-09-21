@@ -10,8 +10,6 @@
 #
 # Single knob: $MINIMUM_TRACKING_VERSION. Permanent pins are done via git tags (which the action never touches); there is no in-band freeze list.
 #
-# Each existing exact branch is `git merge`d with the immutable specification SHA captured by discovery before its update-version runs. Branch-owned files (pin.nix, flake.lock, the wheelhouse artifacts, ...) stay as-is: ensure_owned_merge_attributes keeps their `merge=ours` declarations in .gitattributes in step with BRANCH_OWNED_FILES. The shared scripts come from the flake-lib input, so the per-branch `nix flake update` below picks up their improvements automatically.
-#
 # Failures: per-branch input-refresh or update-version failures and aggregate targets missing the discovery base commit are surfaced as GH Actions ::warning::
 # annotations + a step summary, and cause a non-zero exit at the end of the run. An aggregate whose current tip is reachable from neither the new target nor
 # any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate.
@@ -323,13 +321,60 @@ matching_owned_paths() {
   local matches=()
   # shellcheck disable=SC2086
   for pattern in ${BRANCH_OWNED_FILES}; do
-    if compgen -G "${pattern}" >/dev/null; then
+    if compgen -G "${pattern}" >/dev/null || git ls-files --error-unmatch -- "${pattern}" >/dev/null 2>&1; then
       matches+=("${pattern}")
     fi
   done
   if [[ ${#matches[@]} -gt 0 ]]; then
     printf '%s\n' "${matches[@]}"
   fi
+}
+
+merge_preserving_owned() {
+  local base="${1}" branch_tree temp_index tree synthetic pattern candidate metadata
+  local -a owned_patterns=() paths=()
+  if git merge-base --is-ancestor "${base}" HEAD; then
+    return 0
+  fi
+  if ! branch_tree=$(git rev-parse HEAD); then
+    return 1
+  fi
+  if ! temp_index=$(mktemp); then
+    return 1
+  fi
+  rm -f "${temp_index}"
+  if ! GIT_INDEX_FILE="${temp_index}" git read-tree "${base}"; then
+    rm -f "${temp_index}"
+    return 1
+  fi
+  read -r -a owned_patterns <<<"${BRANCH_OWNED_FILES}"
+  for pattern in "${owned_patterns[@]}"; do
+    mapfile -t paths < <(GIT_INDEX_FILE="${temp_index}" git ls-files -- "${pattern}")
+    if (( ${#paths[@]} > 0 )); then
+      if ! GIT_INDEX_FILE="${temp_index}" git update-index --force-remove -- "${paths[@]}"; then
+        rm -f "${temp_index}"
+        return 1
+      fi
+    fi
+    if ! while IFS=$'\t' read -r metadata candidate; do
+      if [[ "${candidate}" == ${pattern} ]]; then
+        printf '%s\t%s\n' "${metadata}" "${candidate}"
+      fi
+    done < <(git ls-tree -r "${branch_tree}") | GIT_INDEX_FILE="${temp_index}" git update-index --index-info; then
+      rm -f "${temp_index}"
+      return 1
+    fi
+  done
+  if ! tree=$(GIT_INDEX_FILE="${temp_index}" git write-tree); then
+    rm -f "${temp_index}"
+    return 1
+  fi
+  if ! synthetic=$(printf '%s\n' "overlay owned files from ${branch_tree}" | git commit-tree "${tree}" -p "${base}"); then
+    rm -f "${temp_index}"
+    return 1
+  fi
+  rm -f "${temp_index}"
+  git merge --no-edit "${synthetic}"
 }
 
 ensure_owned_merge_attributes() {
@@ -537,7 +582,7 @@ refresh_version() {
     fi
     # Never merge a live aggregate: every exact job uses the specification SHA
     # captured by discovery, even if an earlier publisher has advanced main.
-    if ! (cd "${wt}" && ensure_owned_merge_attributes && git merge --no-edit "${BASE_SHA}"); then
+    if ! (cd "${wt}" && merge_preserving_owned "${BASE_SHA}" && ensure_owned_merge_attributes); then
       LAST_FAILURE_REASON="merge of discovery base ${BASE_SHA} failed"
       remove_worktree "${wt}"
       return 1
@@ -581,7 +626,7 @@ refresh_version() {
   # shellcheck disable=SC2086
   if [[ -n "${owned_paths}" ]] && { ! git diff --quiet -- ${owned_paths} || [[ -n "$(git ls-files --others --exclude-standard -- ${owned_paths})" ]]; }; then
     # shellcheck disable=SC2086
-    if ! git add ${owned_paths} || ! git commit -q -m "auto: ${v} pin"; then
+    if ! git add -A -- ${owned_paths} || ! git commit -q -m "auto: ${v} pin"; then
       LAST_FAILURE_REASON="committing ${branch} failed"
       popd >/dev/null
       remove_worktree "${wt}"

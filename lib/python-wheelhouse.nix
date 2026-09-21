@@ -80,15 +80,27 @@ let
       validKinds = [ "repo-file" "source-file" "source-pyproject" ];
       invalidSources = lib.filter (source: !(lib.elem source.kind validKinds)) sources;
       artifactPython = pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging pythonPackages.pip ]);
-      environments = lib.imap0
-        (index: env: env // { readiness = index != 0; })
-        (map (pythonVersion: platformTags { inherit pythonVersion platform; }) pythonVersions);
-      current = builtins.head environments;
+      environments = map (pythonVersion: platformTags { inherit pythonVersion platform; }) pythonVersions;
+      generationSpec = {
+        inherit sources extraRequirements environments;
+        generator = {
+          script = builtins.hashFile "sha256" ../scripts/python-wheelhouse.py;
+          depsCore = builtins.hashFile "sha256" depsCore;
+          uv = pkgs.uv.version;
+          python = pkgs.python3.version;
+          pip = pkgs.python3Packages.pip.version;
+          packaging = pkgs.python3Packages.packaging.version;
+        };
+        indexUrl = index;
+      };
+      fingerprint = builtins.hashString "sha256" (builtins.toJSON generationSpec);
     in
     if invalidSources != [ ] then
       throw "python-wheelhouse: unknown source kinds [${lib.concatStringsSep ", " (map (source: source.kind) invalidSources)}], expected one of [${lib.concatStringsSep ", " validKinds}]"
     else if environments == [ ] then
-      throw "python-wheelhouse: pythonVersions must name at least the current environment"
+      throw "python-wheelhouse: pythonVersions must name at least one prepared environment"
+    else if lib.length (lib.unique pythonVersions) != lib.length pythonVersions then
+      throw "python-wheelhouse: pythonVersions must not contain duplicates"
     else
       {
         hook = pkgs.writeShellApplication {
@@ -96,19 +108,12 @@ let
           excludeShellChecks = [ "SC2089" "SC2090" ];
           runtimeInputs = with pkgs; [ cacert coreutils git uv artifactPython ];
           runtimeEnv = {
-            WHEELHOUSE_SPEC = builtins.toJSON {
-              inherit sources extraRequirements environments;
-            };
+            WHEELHOUSE_SPEC = builtins.toJSON (generationSpec // { inherit fingerprint; });
             DEPS_CORE = "${depsCore}";
-            INDEX_URL = index;
           };
           text = ''exec ${artifactPython}/bin/python ${../scripts/python-wheelhouse.py}'';
         };
-        pinnedEnvironment = {
-          python = current.python;
-          inherit platform;
-          fingerprint = "${current.python}-${platform}";
-        };
+        inherit fingerprint;
       };
 
   manifestFromWheels = wheels:

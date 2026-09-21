@@ -29,14 +29,13 @@ LINUX_BOUND = {
 
 
 class ReaderTests(unittest.TestCase):
-    def test_requirements_file_strips_comments_and_options(self) -> None:
+    def test_requirements_file_strips_comments(self) -> None:
         text = "\n".join(
             [
                 "requests>=2.0",
                 "# full-line comment",
                 "rich # trailing comment",
                 "",
-                "-r other.txt",
                 "  typer==0.27.1  ",
             ]
         )
@@ -44,6 +43,12 @@ class ReaderTests(unittest.TestCase):
             DEPS.requirements_file_requirements(text),
             ["requests>=2.0", "rich", "typer==0.27.1"],
         )
+
+    def test_requirements_file_rejects_directives(self) -> None:
+        for directive in ("-r other.txt", "--requirement other.txt", "-c constraints.txt", "--constraint constraints.txt"):
+            with self.subTest(directive=directive):
+                with self.assertRaisesRegex(ValueError, "unsupported requirements-file directive"):
+                    DEPS.requirements_file_requirements(directive)
 
     def test_pyproject_reads_dependencies_and_selected_groups(self) -> None:
         document = """

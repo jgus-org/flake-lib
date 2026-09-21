@@ -27,7 +27,9 @@ def clean_requirement_lines(lines: Iterable[str]) -> list[str]:
     cleaned = []
     for line in lines:
         value = line.split(" #", 1)[0].strip()
-        if value and not value.startswith(("#", "-")):
+        if value.startswith("-"):
+            raise ValueError(f"unsupported requirements-file directive: {value}")
+        if value and not value.startswith("#"):
             cleaned.append(value)
     return cleaned
 

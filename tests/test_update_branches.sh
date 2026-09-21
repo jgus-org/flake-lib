@@ -83,6 +83,7 @@ EOF
 clear_test_failures() {
   unset TEST_GIT_BIN TEST_PUSH_COUNT_FILE TEST_PUSH_CONFLICT_SHA TEST_PUSH_FAILURES TEST_PUSH_MODE TEST_PUSH_REF TEST_REAL_GIT TEST_REMOTE
   unset TEST_TRANSIENT_ATTEMPT_DIR TEST_TRANSIENT_FAILURE_MODE TEST_TRANSIENT_UPDATE_VERSIONS
+  unset TEST_DELETE_OWNED
 }
 
 seed_exact_branch() {
@@ -547,3 +548,41 @@ point_aggregate main 1.2.3-rc1
 BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json' run_update '1.2.4-rc1'
 git --git-dir="${REMOTE}" show 'refs/heads/v1.2.4-rc1:.gitattributes' | grep -Fqx $'wheels-*.json\tmerge=ours'
 assert_ref_version v1.2.4-rc1 1.2.4-rc1
+
+initialize_repository
+printf '%s\n' ancestor > "${CHECKOUT}/owned-modified.txt"
+printf '%s\n' ancestor > "${CHECKOUT}/owned-deleted.txt"
+git -C "${CHECKOUT}" add owned-modified.txt owned-deleted.txt
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'common owned files'
+git -C "${CHECKOUT}" push -q origin main
+seed_exact_branch 1.2.0
+git -C "${CHECKOUT}" switch -q v1.2.0
+printf '%s\n' branch > "${CHECKOUT}/owned-modified.txt"
+git -C "${CHECKOUT}" rm -q owned-deleted.txt
+git -C "${CHECKOUT}" add owned-modified.txt
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'branch owned state'
+git -C "${CHECKOUT}" push -q origin v1.2.0
+git -C "${CHECKOUT}" switch -q main
+printf '%s\n' base > "${CHECKOUT}/owned-modified.txt"
+printf '%s\n' base > "${CHECKOUT}/owned-deleted.txt"
+printf '%s\n' base > "${CHECKOUT}/owned-absent.txt"
+git -C "${CHECKOUT}" add owned-modified.txt owned-deleted.txt owned-absent.txt
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'base owned changes'
+git -C "${CHECKOUT}" push -q origin main
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock owned-*.txt' run_update '1.2.0'
+[[ "$(git --git-dir="${REMOTE}" show 'refs/heads/v1.2.0:owned-modified.txt')" == branch ]]
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-deleted.txt'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-absent.txt'
+
+initialize_repository
+seed_exact_branch 1.2.0
+git -C "${CHECKOUT}" switch -q v1.2.0
+printf '%s\n' obsolete > "${CHECKOUT}/removed-by-update.txt"
+git -C "${CHECKOUT}" add removed-by-update.txt
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'add removable artifact'
+git -C "${CHECKOUT}" push -q origin v1.2.0
+git -C "${CHECKOUT}" switch -q main
+export TEST_DELETE_OWNED=removed-by-update.txt
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock removed-by-update.txt never-existed.txt' run_update '1.2.0'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:removed-by-update.txt'
+clear_test_failures

@@ -77,10 +77,11 @@
           buildAttr = "model";
         };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
-        wheelhouse-example-hook = (lib.mkPythonWheelhouse {
+        wheelhouse-example = lib.mkPythonWheelhouse {
           inherit pkgs;
           sources = [{ kind = "repo-file"; path = "requirements.in"; }];
-        }).hook;
+        };
+        wheelhouse-example-hook = wheelhouse-example.hook;
         npm-generated-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; source = "generated"; };
         yarn-hook = lib.mkJsDepsHook { inherit pkgs; manager = "yarn"; };
         composed-hook = lib.mkComposedHook { inherit pkgs; hooks = [ npm-generated-hook yarn-hook ]; };
@@ -120,6 +121,44 @@
           in
           pkgs.lib.throwIf (failures != [ ]) "platformTags tests failed"
             (pkgs.runCommand "wheelhouse-tags-tests" { } "touch $out");
+        wheelhouse-fingerprint-tests =
+          let
+            changedMenu = lib.mkPythonWheelhouse {
+              inherit pkgs;
+              pythonVersions = [ "3.13" ];
+              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+            };
+            changedSource = lib.mkPythonWheelhouse {
+              inherit pkgs;
+              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              extraRequirements = [ "example" ];
+            };
+            changedIndex = lib.mkPythonWheelhouse {
+              inherit pkgs;
+              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              index = "https://index.example.test/simple";
+            };
+            reordered = lib.mkPythonWheelhouse {
+              inherit pkgs;
+              pythonVersions = [ "3.14" "3.13" ];
+              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+            };
+          in
+          assert wheelhouse-example.fingerprint != changedMenu.fingerprint;
+          assert wheelhouse-example.fingerprint != changedSource.fingerprint;
+          assert wheelhouse-example.fingerprint != changedIndex.fingerprint;
+          assert wheelhouse-example.fingerprint != reordered.fingerprint;
+          pkgs.runCommand "wheelhouse-fingerprint-tests" { } "touch $out";
+        wheelhouse-consumer-selection-tests =
+          let
+            python = pkgs.python313;
+            manifests = {
+              "3.13" = "wheels-3.13.json";
+              "3.14" = "wheels-3.14.json";
+            };
+          in
+          assert manifests.${python.pythonVersion} == "wheels-3.13.json";
+          pkgs.runCommand "wheelhouse-consumer-selection-tests" { } "touch $out";
         python-wheelhouse-tests = pkgs.runCommand "python-wheelhouse-tests"
           {
             nativeBuildInputs = [ pkgs.bash (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
@@ -195,6 +234,9 @@
                 exit 1
               fi
             done
+            if [[ -n "''${TEST_DELETE_OWNED:-}" ]]; then
+              rm -f "''${FLAKE_ROOT}/''${TEST_DELETE_OWNED}"
+            fi
             printf '%s\n' \
               '{' \
               "  version = \"''${TARGET_VERSION}\";" \
@@ -216,23 +258,36 @@
         update-version-test-curl = pkgs.writeShellApplication {
           name = "curl";
           text = ''
-            [[ "''${*}" == *'huggingface.co/api/models/'*'?blobs=true'* ]]
-            printf '%s\n' "''${TEST_HF_METADATA}"
+            case "''${*}" in
+              *'pypi.org/pypi/'*) printf '%s\n' "''${TEST_PYPI_METADATA}" ;;
+              *'huggingface.co/api/models/'*) printf '%s\n' "''${TEST_HF_METADATA}" ;;
+              *) exit 1 ;;
+            esac
           '';
         };
         update-version-test-nix = pkgs.writeShellApplication {
           name = "nix";
+          runtimeInputs = [ pkgs.gnused ];
           text = ''
             case "''${1}" in
-              eval) ;;
+              eval)
+                if [[ "''${*}" == *'--file '* ]]; then
+                  FIELD="''${*: -1}"
+                  sed -nE "s/^[[:space:]]*''${FIELD}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "''${FLAKE_ROOT}/pin.nix"
+                fi
+                ;;
               flake) printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock" ;;
+              store) printf '%s\n' '{"hash":"sha256-pypi"}' ;;
               *) exit 1 ;;
             esac
           '';
         };
         update-version-test-prefetch = pkgs.writeShellApplication {
           name = "nix-prefetch-github";
-          text = ''printf '%s\n' '{"hash":"sha256-source"}' '';
+          text = ''
+            [[ "''${NIX_PATH:-}" == 'nixpkgs=${pkgs.path}' ]]
+            printf '%s\n' '{"hash":"sha256-source"}'
+          '';
         };
         update-version-tests = pkgs.runCommand "update-version-tests"
           {
@@ -246,8 +301,11 @@
               update-version-test-nix
               update-version-test-prefetch
             ];
+            TEST_BASH = pkgs.bash;
             UPDATE_VERSION = ./scripts/update-version.sh;
+            NIX_PATH = "nixpkgs=${pkgs.path}";
           } ''
+            grep -Fqx "NIX_PATH='nixpkgs=${pkgs.path}'" ${update-version}/bin/update-version
             bash ${./tests/test_update_version.sh}
             touch "''${out}"
           '';
@@ -280,7 +338,7 @@
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests python-wheelhouse-tests python-wheelhouse-integration;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration;
           inherit update-version-tests;
         };
       });

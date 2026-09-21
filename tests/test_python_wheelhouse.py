@@ -57,11 +57,10 @@ def current_env() -> dict:
         "pipPlatforms": ["manylinux_2_28_x86_64", "manylinux_2_17_x86_64", "linux_x86_64"],
         "pipAbi": "cp313",
         "pipAbiLadder": ["cp313", "cp312", "cp311", "cp310", "cp39", "cp38", "abi3", "none"],
-        "readiness": False,
     }
 
 
-def readiness_env(python: str) -> dict:
+def prepared_env(python: str) -> dict:
     return {
         "python": python,
         "uvPythonVersion": python,
@@ -70,19 +69,18 @@ def readiness_env(python: str) -> dict:
         "pipPlatforms": ["manylinux_2_28_x86_64", "linux_x86_64"],
         "pipAbi": "cp" + python.replace(".", ""),
         "pipAbiLadder": ["cp" + python.replace(".", ""), "abi3", "none"],
-        "readiness": True,
     }
 
 
-def run_hook(work: Path, index_url: str, spec: dict, extra_env: dict[str, str]) -> tuple[str, Path]:
-    result = subprocess.run(
+def invoke_hook(work: Path, index_url: str, spec: dict, extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    spec = spec | {"indexUrl": index_url, "fingerprint": spec.get("fingerprint", "test-fingerprint")}
+    return subprocess.run(
         ["python3", str(SCRIPT)],
         cwd=work,
         env={
             "PATH": f"{work / 'bin'}:{os.environ['PATH']}",
             "WHEELHOUSE_SPEC": json.dumps(spec),
             "DEPS_CORE": str(DEPS_CORE),
-            "INDEX_URL": index_url,
             "FLAKE_ROOT": str(work / "flake-root"),
             "NEW_REV": "abc123",
             "GH_OWNER": "acme",
@@ -93,14 +91,27 @@ def run_hook(work: Path, index_url: str, spec: dict, extra_env: dict[str, str]) 
         capture_output=True,
         text=True,
     )
+
+
+def run_hook(work: Path, index_url: str, spec: dict, extra_env: dict[str, str]) -> tuple[str, Path]:
+    result = invoke_hook(work, index_url, spec, extra_env)
     assert result.returncode == 0, result.stderr
     return result.stdout, work / "flake-root"
 
 
+def aggregate_sha(environments: list[dict], root: Path, pattern: str) -> str:
+    entries = [
+        {"python": environment["python"], "sha256": sha256((root / pattern.format(python=environment["python"])).read_bytes())}
+        for environment in environments
+    ]
+    encoded = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 CURRENT = current_env()
-READINESS = readiness_env("3.14")
+SECOND = prepared_env("3.14")
 CURRENT_PY = CURRENT["python"]
-READINESS_PY = READINESS["python"]
+SECOND_PY = SECOND["python"]
 
 
 class PythonWheelhouseTests(unittest.TestCase):
@@ -117,7 +128,7 @@ class PythonWheelhouseTests(unittest.TestCase):
             "[project.optional-dependencies]\nstudio = ['fakenative==2.1.0']\n"
         )
         (source / "reqs" / "studio.txt").write_text(
-            "fakepkg==1.0.0 # pinned\n-r other.txt\n"
+            "fakepkg==1.0.0 # pinned\n"
         )
         lock = source / "lock.txt"
         lock.write_text(FIXTURE_LOCK)
@@ -148,11 +159,15 @@ class PythonWheelhouseTests(unittest.TestCase):
         write_executable(self.work / "bin" / "pip", (
             'echo "pip $*" >> ' + str(log) + '\n'
             'ARGS=("$@")\n'
-            'DEST=""\n'
+            'DEST=""; PY=""\n'
             'for ((i = 0; i < ${#ARGS[@]}; i++)); do\n'
             '  if [[ "${ARGS[i]}" == "--dest" ]]; then DEST="${ARGS[i + 1]}"; fi\n'
+            '  if [[ "${ARGS[i]}" == "--python-version" ]]; then PY="${ARGS[i + 1]}"; fi\n'
             'done\n'
             'for wheel in "$FAKE_WHEELS_DIR"/*.whl; do cp "$wheel" "$DEST"; done\n'
+            'if [[ -n "${FAKE_PIP_INDEX_FAIL:-}" && "${PY}" == "${FAKE_PIP_INDEX_FAIL}" ]]; then\n'
+            '  cp "$FAKE_WHEELS_DIR/fakepkg-1.0.0-py3-none-any.whl" "$DEST/absentpkg-1.0.0-py3-none-any.whl"\n'
+            'fi\n'
         ))
 
         wheelhouse_dir = self.work / "fake-wheels"
@@ -197,9 +212,8 @@ class PythonWheelhouseTests(unittest.TestCase):
         }
 
     def test_source_and_repo_mix(self) -> None:
-        (self.work / "flake-root" / f"wheels-{READINESS_PY}.json").write_text("stale")
-        spec = self.spec_with([CURRENT, READINESS])
-        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": READINESS_PY})
+        spec = self.spec_with([CURRENT, SECOND])
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
 
         requirements_in = (root / "requirements.in").read_text()
         self.assertIn("acme/widget@abc123", requirements_in)
@@ -229,26 +243,66 @@ class PythonWheelhouseTests(unittest.TestCase):
         self.assertEqual(manifest[1]["sha256"], sha256(FAKE_WHEELS["fakepkg-1.0.0-py3-none-any.whl"]))
         self.assertEqual(manifest[1]["size"], len(FAKE_WHEELS["fakepkg-1.0.0-py3-none-any.whl"]))
 
-        self.assertIn(f"pythonEnvironment={CURRENT_PY}", stdout)
-        self.assertIn("requirementsHash=" + hashlib.sha256(FIXTURE_LOCK.encode()).hexdigest(), stdout)
-        wheels_hash = hashlib.sha256((root / f"wheels-{CURRENT_PY}.json").read_bytes()).hexdigest()
-        self.assertIn("wheelManifestHash=" + wheels_hash, stdout)
+        self.assertIn("artifactFingerprint=test-fingerprint", stdout)
+        self.assertIn("requirementsHash=" + aggregate_sha([CURRENT, SECOND], root, "requirements-{python}.lock"), stdout)
+        self.assertIn("wheelManifestHash=" + aggregate_sha([CURRENT, SECOND], root, "wheels-{python}.json"), stdout)
+        self.assertTrue((root / f"requirements-{SECOND_PY}.lock").exists())
+        self.assertTrue((root / f"wheels-{SECOND_PY}.json").exists())
+        self.assertFalse((root / "python-readiness.json").exists())
 
-        readiness = json.loads((root / "python-readiness.json").read_text())
-        self.assertEqual(readiness[READINESS_PY]["status"], "blocked")
-        self.assertIn("fakenative", readiness[READINESS_PY]["reason"])
-        self.assertFalse((root / f"wheels-{READINESS_PY}.json").exists())
-        self.assertFalse((root / f"requirements-{READINESS_PY}.lock").exists())
-
-    def test_readiness_env_vendored(self) -> None:
-        spec = self.spec_with([CURRENT, READINESS])
+    def test_two_environment_set_is_vendored(self) -> None:
+        spec = self.spec_with([CURRENT, SECOND])
         stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
 
-        readiness = json.loads((root / "python-readiness.json").read_text())
-        self.assertEqual(readiness, {READINESS_PY: {"status": "ok"}})
-        vendored = json.loads((root / f"wheels-{READINESS_PY}.json").read_text())
+        vendored = json.loads((root / f"wheels-{SECOND_PY}.json").read_text())
         self.assertEqual([entry["name"] for entry in vendored], ["fakenative", "fakepkg"])
-        self.assertTrue((root / f"requirements-{READINESS_PY}.lock").exists())
+        self.assertTrue((root / f"requirements-{SECOND_PY}.lock").exists())
+
+    def test_environment_failure_preserves_last_known_good_set(self) -> None:
+        root = self.work / "flake-root"
+        preserved = {
+            "requirements.in": "old input",
+            f"requirements-{CURRENT_PY}.lock": "old current lock",
+            f"wheels-{CURRENT_PY}.json": "old current manifest",
+            f"requirements-{SECOND_PY}.lock": "old second lock",
+            f"wheels-{SECOND_PY}.json": "old second manifest",
+            "python-readiness.json": "old readiness",
+        }
+        for name, content in preserved.items():
+            (root / name).write_text(content)
+        spec = self.spec_with([CURRENT, SECOND])
+        result = invoke_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": SECOND_PY})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no version satisfies", result.stderr)
+        for name, content in preserved.items():
+            self.assertEqual((root / name).read_text(), content)
+
+    def test_aggregate_hashes_cover_the_ordered_environment_set(self) -> None:
+        one_stdout, root = run_hook(self.work, self.index_url, self.spec_with([CURRENT]), self.common_env)
+        one_requirements = next(line for line in one_stdout.splitlines() if line.startswith("requirementsHash="))
+        one_manifests = next(line for line in one_stdout.splitlines() if line.startswith("wheelManifestHash="))
+        two_stdout, root = run_hook(self.work, self.index_url, self.spec_with([CURRENT, SECOND]), self.common_env)
+        two_requirements = next(line for line in two_stdout.splitlines() if line.startswith("requirementsHash="))
+        two_manifests = next(line for line in two_stdout.splitlines() if line.startswith("wheelManifestHash="))
+        self.assertNotEqual(one_requirements, two_requirements)
+        self.assertNotEqual(one_manifests, two_manifests)
+
+    def test_index_failure_is_fatal(self) -> None:
+        spec = self.spec_with([CURRENT, SECOND])
+        result = invoke_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_PIP_INDEX_FAIL": SECOND["pipPythonVersion"]})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("absentpkg", result.stderr)
+
+    def test_removed_environment_artifacts_are_pruned(self) -> None:
+        root = self.work / "flake-root"
+        (root / "requirements-3.12.lock").write_text("stale")
+        (root / "wheels-3.12.json").write_text("stale")
+        (root / "python-readiness.json").write_text("{}")
+        spec = self.spec_with([CURRENT])
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
+        self.assertFalse((root / "requirements-3.12.lock").exists())
+        self.assertFalse((root / "wheels-3.12.json").exists())
+        self.assertFalse((root / "python-readiness.json").exists())
 
     def test_source_file_except_filter(self) -> None:
         spec = self.spec_with([CURRENT])
@@ -257,7 +311,7 @@ class PythonWheelhouseTests(unittest.TestCase):
             {"kind": "source-file", "path": "reqs/studio.txt", "except": ["fakepkg"]},
         ]
         spec["extraRequirements"] = []
-        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": READINESS_PY})
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
 
         requirements_in = (root / "requirements.in").read_text()
         self.assertIn("fakenative==2.1.0", requirements_in)
@@ -270,7 +324,7 @@ class PythonWheelhouseTests(unittest.TestCase):
             {"kind": "source-file", "path": "reqs/studio.txt", "only": ["FAKEPKG"]},
         ]
         spec["extraRequirements"] = []
-        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": READINESS_PY})
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
 
         requirements_in = (root / "requirements.in").read_text()
         self.assertIn("fakenative==2.1.0", requirements_in)
@@ -286,6 +340,7 @@ class PythonWheelhouseTests(unittest.TestCase):
     def test_source_file_only_filter_without_match(self) -> None:
         spec = self.spec_with([CURRENT])
         spec["sources"] = [{"kind": "source-file", "path": "reqs/studio.txt", "only": ["absent"]}]
+        spec |= {"indexUrl": self.index_url, "fingerprint": "test-fingerprint"}
         result = subprocess.run(
             ["python3", str(SCRIPT)],
             cwd=self.work,
@@ -293,7 +348,6 @@ class PythonWheelhouseTests(unittest.TestCase):
                 "PATH": f"{self.work / 'bin'}:{os.environ['PATH']}",
                 "WHEELHOUSE_SPEC": json.dumps(spec),
                 "DEPS_CORE": str(DEPS_CORE),
-                "INDEX_URL": self.index_url,
                 "FLAKE_ROOT": str(self.work / "flake-root"),
                 "NEW_REV": "abc123",
                 "GH_OWNER": "acme",
@@ -306,6 +360,29 @@ class PythonWheelhouseTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("matched nothing for: absent", result.stderr)
+
+    def test_source_file_directive_is_rejected(self) -> None:
+        (self.work / "source-fixture" / "reqs" / "studio.txt").write_text("-r other.txt\n")
+        spec = self.spec_with([CURRENT]) | {"indexUrl": self.index_url, "fingerprint": "test-fingerprint"}
+        result = subprocess.run(
+            ["python3", str(SCRIPT)],
+            cwd=self.work,
+            env={
+                "PATH": f"{self.work / 'bin'}:{os.environ['PATH']}",
+                "WHEELHOUSE_SPEC": json.dumps(spec),
+                "DEPS_CORE": str(DEPS_CORE),
+                "FLAKE_ROOT": str(self.work / "flake-root"),
+                "NEW_REV": "abc123",
+                "GH_OWNER": "acme",
+                "GH_REPO": "widget",
+                "HOME": str(self.work),
+            }
+            | self.common_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsupported requirements-file directive", result.stderr)
 
     def test_repo_file_only_skips_checkout(self) -> None:
         (self.work / "flake-root" / "requirements.in").write_text(

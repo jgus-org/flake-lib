@@ -1,4 +1,0 @@
-# flake.nix is branch-owned only when update-version rewrites it (sibling cascades); drop that line for leaves with no siblings.
-pin.nix     merge=ours
-flake.lock  merge=ours
-flake.nix   merge=ours

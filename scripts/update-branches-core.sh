@@ -311,8 +311,6 @@ github_version_from_tag() {
 
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-# Define the `ours` merge driver so .gitattributes' `merge=ours` rules take effect: `true` exits 0 without touching the file, leaving the branch's version.
-git config merge.ours.driver true
 
 matching_owned_paths() {
   # Owned patterns that match something in the current worktree. Unmatched
@@ -357,7 +355,7 @@ merge_preserving_owned() {
       fi
     fi
     if ! while IFS=$'\t' read -r metadata candidate; do
-      if [[ "${candidate}" == ${pattern} ]]; then
+      if [[ "${candidate}" == ${pattern} || "${candidate}" == ${pattern%/}/* ]]; then
         printf '%s\t%s\n' "${metadata}" "${candidate}"
       fi
     done < <(git ls-tree -r "${branch_tree}") | GIT_INDEX_FILE="${temp_index}" git update-index --index-info; then
@@ -375,20 +373,6 @@ merge_preserving_owned() {
   fi
   rm -f "${temp_index}"
   git merge --no-edit "${synthetic}"
-}
-
-ensure_owned_merge_attributes() {
-  # The ours driver configured above only applies to patterns declared in
-  # .gitattributes; keep the declarations in step with the owned files so
-  # merges of the discovery base cannot clobber branch-owned artifacts.
-  local pattern
-  touch .gitattributes
-  # shellcheck disable=SC2086
-  for pattern in ${BRANCH_OWNED_FILES}; do
-    if [[ "$(git check-attr merge -- "${pattern}")" != *"merge: ours"* ]]; then
-      printf '%s\tmerge=ours\n' "${pattern}" >> .gitattributes
-    fi
-  done
 }
 
 VERSION_OVERRIDES="${VERSION_OVERRIDES:-}"
@@ -582,7 +566,7 @@ refresh_version() {
     fi
     # Never merge a live aggregate: every exact job uses the specification SHA
     # captured by discovery, even if an earlier publisher has advanced main.
-    if ! (cd "${wt}" && merge_preserving_owned "${BASE_SHA}" && ensure_owned_merge_attributes); then
+    if ! (cd "${wt}" && merge_preserving_owned "${BASE_SHA}"); then
       LAST_FAILURE_REASON="merge of discovery base ${BASE_SHA} failed"
       remove_worktree "${wt}"
       return 1
@@ -595,7 +579,7 @@ refresh_version() {
       remove_worktree "${wt}"
       return 1
     fi
-    if ! (cd "${wt}" && ensure_owned_merge_attributes && prepare_new_branch_pin "${v}"); then
+    if ! (cd "${wt}" && prepare_new_branch_pin "${v}"); then
       LAST_FAILURE_REASON="preparing the new branch pin failed"
       remove_worktree "${wt}"
       return 1
@@ -620,9 +604,6 @@ refresh_version() {
     return 1
   fi
   owned_paths="$(matching_owned_paths || true)"
-  if ! git diff --quiet -- .gitattributes || [[ -n "$(git ls-files --others --exclude-standard -- .gitattributes)" ]]; then
-    owned_paths="${owned_paths:+${owned_paths} }.gitattributes"
-  fi
   # shellcheck disable=SC2086
   if [[ -n "${owned_paths}" ]] && { ! git diff --quiet -- ${owned_paths} || [[ -n "$(git ls-files --others --exclude-standard -- ${owned_paths})" ]]; }; then
     # shellcheck disable=SC2086

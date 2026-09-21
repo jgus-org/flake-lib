@@ -1,4 +1,4 @@
-{ pythonPolicy }:
+{ pythonEnvironments }:
 let
   platformTags =
     { pythonVersion
@@ -70,8 +70,8 @@ let
     { pkgs
     , sources
     , extraRequirements ? [ ]
-    , pythonVersions ? pythonPolicy.pythonVersions
-    , platform ? pythonPolicy.platform
+    , pythonVersions ? pythonEnvironments.pythonVersions
+    , platform ? pythonEnvironments.platform
     , index ? "https://pypi.org/simple"
     , depsCore ? ../scripts/deps_core.py
     }:
@@ -104,7 +104,7 @@ let
           };
           text = ''exec ${artifactPython}/bin/python ${../scripts/python-wheelhouse.py}'';
         };
-        currentEnvironment = {
+        pinnedEnvironment = {
           python = current.python;
           inherit platform;
           fingerprint = "${current.python}-${platform}";
@@ -133,5 +133,5 @@ let
     ''uv pip install --python ${python}/bin/python --target ${target} --no-index --no-deps "${wheelhouse}"/*.whl'';
 in
 {
-  inherit pythonPolicy platformTags mkPythonWheelhouse mkWheelhouse installWheelhouse;
+  inherit pythonEnvironments platformTags mkPythonWheelhouse mkWheelhouse installWheelhouse;
 }

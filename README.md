@@ -27,9 +27,9 @@ flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
-flake-lib.lib.pythonPolicy                                               # fleet wheelhouse policy: pythonVersions (first = current, rest = readiness) + platform
+flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + platform
 flake-lib.lib.platformTags     { pythonVersion; platform; }              # "3.13" + "x86_64-manylinux_2_28" -> uv/pip tag attrs
-flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; pythonVersions ? pythonPolicy.pythonVersions; platform ? pythonPolicy.platform; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; currentEnvironment; }
+flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; pythonVersions ? pythonEnvironments.pythonVersions; platform ? pythonEnvironments.platform; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; pinnedEnvironment; }
 flake-lib.lib.mkWheelhouse     { pkgs; wheels; }                         # wheels-<py>.json path or list -> { files; wheelhouse; }
 flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
 
@@ -102,28 +102,30 @@ sourceHash, pnpmDepsHash }` branch placeholders.
 
 `mkPythonWheelhouse` is an `artifactHook` that pins a consumer's complete python
 dependency closure as hash-pinned wheels instead of per-package flakes or
-floating nixpkgs pythonPackages. It returns `{ hook; currentEnvironment; }`:
+floating nixpkgs pythonPackages. It returns `{ hook; pinnedEnvironment; }`:
 pass `hook` through `mkComposedHook` (or directly) as the `artifactHook`, and
-`currentEnvironment.fingerprint` to `mkUpdateVersion`'s `environmentFingerprint`
-so a policy promotion re-runs the hook even at an unchanged version.
+`pinnedEnvironment.fingerprint` to `mkUpdateVersion`'s `environmentFingerprint`
+so the hook re-runs when the prepared environment list moves, even at an
+unchanged version and rev.
 
-Environments come from fleet policy, declared in flake-lib's `flake.nix`:
+flake-lib pre-prepares wheel sets for these environments:
 
 ```nix
-flake-lib.lib.pythonPolicy
+flake-lib.lib.pythonEnvironments
 # { pythonVersions = [ "3.13" "3.14" "3.15" ]; platform = "x86_64-manylinux_2_28"; }
 ```
 
-The first `pythonVersions` entry is **current** — the environment the pin
-records (`pythonEnvironment`/`requirementsHash`/`wheelManifestHash` pin
-fields hash its artifacts). Every environment — current and readiness
-alike — commits `requirements-<py>.lock` + `wheels-<py>.json`, and the shared
-env-independent manifest lands in `requirements.in`. Readiness environments
-resolve best-effort on every run, committed as `requirements-<py>.lock` + `wheels-<py>.json` for every environment when they
-resolve and their wheels exist, and recorded — with the blocking error, when
-they don't — in `python-readiness.json`. Readiness failures never block the
-current environment's update; the committed file's red→green transition is the
-signal that the fleet can promote (promote by advancing the policy list).
+The list is a menu of prepared options, not a directive. Clients pick a python
+however they like — typically nixpkgs' default `python3` — and select the
+committed `wheels-<py>.json` matching the interpreter's version. The first
+entry anchors the update tooling: the `pythonEnvironment`/`requirementsHash`/
+`wheelManifestHash` pin fields hash its artifacts, and only its resolution
+failure fails an update. Every other entry resolves best-effort on every run,
+committed as `requirements-<py>.lock` + `wheels-<py>.json` when they resolve
+and their wheels exist, and recorded — with the blocking error, when they
+don't — in `python-readiness.json`; those failures never block the first
+entry's update. A client needing an interpreter without a committed
+`wheels-<py>.json` is a missing menu entry: add it to `pythonVersions`.
 Override per flake by passing `pythonVersions` (e.g. `[ "3.12" "3.13" ]`).
 
 The client declares only its requirements source:
@@ -137,7 +139,7 @@ wheelhouse = flake-lib.lib.mkPythonWheelhouse {
     { kind = "repo-file"; path = "requirements.in"; }
   ];
 };
-# mkUpdateVersion { ...; artifactHook = lib.getExe wheelhouse.hook; environmentFingerprint = wheelhouse.currentEnvironment.fingerprint; extraHashes = [ "pythonEnvironment" "requirementsHash" "wheelManifestHash" ]; }
+# mkUpdateVersion { ...; artifactHook = lib.getExe wheelhouse.hook; environmentFingerprint = wheelhouse.pinnedEnvironment.fingerprint; extraHashes = [ "pythonEnvironment" "requirementsHash" "wheelManifestHash" ]; }
 ```
 
 `source-pyproject` and `source-file` read the pinned upstream source (cloned at

@@ -9,7 +9,14 @@
 , siblings ? [ ]
 , siblingRefsInPin ? false
 , verification ? "evaluate"
-, branchOwnedFiles ? [ "pin.nix" "flake.lock" ]
+, branchOwnedFiles ? [
+    "pin.nix"
+    "flake.lock"
+    "requirements.in"
+    "requirements-*.lock"
+    "wheels-*.json"
+    "python-readiness.json"
+  ]
 }:
 flake-utils.lib.eachDefaultSystem (system:
   let

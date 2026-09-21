@@ -15,13 +15,14 @@
 , artifactHook ? null
 , verification ? if buildFailureHash == null then "evaluate" else "build"
 , markerEnvironment ? { }
-, environmentFingerprint ? ""
+, artifactFingerprint ? ""
 }:
 assert builtins.elem verification [ "evaluate" "build" ];
+assert artifactFingerprint == "" || artifactHook != null;
 let
   hfManifest = source.manifest or null;
   hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
-  effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
+  effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (artifactFingerprint != "") "artifactFingerprint" ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
   defaultMarkerEnvironment = {
     implementation_name = "cpython";
     implementation_version = pkgs.python3.version;
@@ -78,7 +79,8 @@ pkgs.writeShellApplication {
     SIBLINGS = builtins.toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
-    ENV_FINGERPRINT = environmentFingerprint;
+    ARTIFACT_FINGERPRINT = artifactFingerprint;
+    NIX_PATH = "nixpkgs=${pkgs.path}";
     CASCADE_PY = "${../scripts/cascade.py}";
     DEPS_CORE = "${../scripts/deps_core.py}";
   };

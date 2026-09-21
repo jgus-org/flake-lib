@@ -120,7 +120,7 @@ pypi_pin_current() {
     VALUE=$(nix eval --raw --file "${pin}" "${NAME}" 2>/dev/null || echo "")
     [[ -n "${VALUE}" ]] || return 1
   done
-  environment_pin_current
+  artifact_pin_current || return 1
   sibling_refs_current
 }
 
@@ -353,7 +353,7 @@ huggingface_pin_current() {
     CURRENT_EXTRA=$(nix eval --raw --file "${pin}" "${NAME}" 2>/dev/null || echo "")
     [[ -n "${CURRENT_EXTRA}" && "${CURRENT_EXTRA}" == "${extra[${NAME}]:-}" ]] || return 1
   done
-  environment_pin_current
+  artifact_pin_current || return 1
   return 0
 }
 
@@ -412,6 +412,10 @@ run_artifact_hook() {
     k="${line%%=*}"
     [[ -n "${k}" ]] && extra["${k}"]="${line#*=}"
   done <<<"${hook_out}"
+  if [[ -n "${ARTIFACT_FINGERPRINT:-}" && "${extra[artifactFingerprint]:-}" != "${ARTIFACT_FINGERPRINT}" ]]; then
+    echo "error: artifact hook did not emit the declared artifactFingerprint" >&2
+    return 1
+  fi
   return 0 # the loop's status is its last body command — a falsy `[[ -n ]]` on an empty/keyless line — which would trip the caller's set -e; this function has no meaningful return
 }
 
@@ -434,12 +438,11 @@ revalidate_hash() {
   sed -i -E "s|^([[:space:]]*${field}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${new}\\2|" "${pin}"
 }
 
-environment_pin_current() {
-  # True (0) when no environment fingerprint is declared, or the pin's recorded pythonEnvironment matches it. The fingerprint comes from the wheelhouse environment policy; a mismatch means the vendored artifacts were resolved for a superseded environment and the artifact hook must regenerate them even at an unchanged version and rev.
+artifact_pin_current() {
   local current
-  [[ -z "${ENV_FINGERPRINT:-}" ]] && return 0
-  current=$(nix eval --raw --file "${pin}" pythonEnvironment 2>/dev/null || echo "")
-  [[ -n "${current}" && "${current}" == "${ENV_FINGERPRINT}" ]]
+  [[ -z "${ARTIFACT_FINGERPRINT:-}" ]] && return 0
+  current=$(nix eval --raw --file "${pin}" artifactFingerprint 2>/dev/null || echo "")
+  [[ -n "${current}" && "${current}" == "${ARTIFACT_FINGERPRINT}" ]]
 }
 
 source_pin_current() {
@@ -453,7 +456,7 @@ source_pin_current() {
     val=$(nix eval --raw --file "${pin}" "${name}" 2>/dev/null || echo "")
     [[ -n "${val}" ]] || return 1
   done
-  environment_pin_current
+  artifact_pin_current || return 1
   sibling_refs_current
 }
 
@@ -488,6 +491,7 @@ case "${SOURCE_TYPE}" in
       fi
       echo "Source pin already up to date (${cur_version})."
     else
+      run_artifact_hook "" "${new_version}"
       echo "Writing pin.nix (${cur_version:-<none>} -> ${new_version})..."
       write_pypi_pin "${new_version}" "${new_hash}"
       pin_changed=1

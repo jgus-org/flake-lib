@@ -1,4 +1,4 @@
-"""flake-lib artifact hook: resolve a pinned python wheel closure per declared environment, current plus readiness."""
+"""flake-lib artifact hook: resolve a pinned python wheel closure for every declared environment."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
@@ -29,6 +30,10 @@ def load_deps_core():
 
 
 deps_core = load_deps_core()
+
+
+class ResolutionError(RuntimeError):
+    pass
 
 
 def run(*args: str, cwd: Path | None = None) -> None:
@@ -100,19 +105,24 @@ def wheel_url(index_url: str, name: str, filename: str, digest: str) -> str:
         f"{index_url.rstrip('/')}/{canonicalize_name(name)}/",
         headers={"Accept": "application/vnd.pypi.simple.v1+json"},
     )
-    with urlopen(request) as response:
-        files = json.load(response)["files"]
+    try:
+        with urlopen(request) as response:
+            document = json.load(response)
+        files = document["files"]
+        if not isinstance(files, list):
+            raise TypeError("files is not a list")
+    except (HTTPError, URLError, TimeoutError, UnicodeError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise ResolutionError(f"the index response for {name} is unavailable or invalid: {error}") from error
     for item in files:
-        if item["filename"] == filename and item.get("hashes", {}).get("sha256") == digest:
-            return item["url"]
-    raise RuntimeError(f"the index did not report {filename} with {digest}")
-
-
-def blocked_reason(error: subprocess.CalledProcessError) -> str:
-    output = (error.stderr or "") + (error.stdout or "")
-    lines = [line for line in output.splitlines() if line.strip()]
-    error_lines = [line for line in lines if "error" in line.lower()]
-    return (error_lines[-1] if error_lines else lines[-1] if lines else f"exit {error.returncode}")[:240]
+        try:
+            if item["filename"] == filename and item.get("hashes", {}).get("sha256") == digest:
+                url = item["url"]
+                if not isinstance(url, str):
+                    raise TypeError("url is not a string")
+                return url
+        except (AttributeError, KeyError, TypeError) as error:
+            raise ResolutionError(f"the index response for {name} contains an invalid file entry: {error}") from error
+    raise ResolutionError(f"the index did not report {filename} with {digest}")
 
 
 def resolve_environment(environment: dict[str, Any], work: Path, requirements_in: Path, index_url: str) -> dict[str, Any]:
@@ -172,16 +182,23 @@ def resolve_environment(environment: dict[str, Any], work: Path, requirements_in
     }
 
 
+def aggregate_hash(environments: list[dict[str, Any]], resolved: dict[str, dict[str, Any]], artifact: str) -> str:
+    entries = [
+        {"python": environment["python"], "sha256": sha256(resolved[environment["python"]][artifact])}
+        for environment in environments
+    ]
+    encoded = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def main() -> None:
     flake_root = Path(os.environ["FLAKE_ROOT"])
     revision = os.environ["NEW_REV"]
     spec = json.loads(os.environ["WHEELHOUSE_SPEC"])
-    index_url = os.environ["INDEX_URL"]
+    index_url = spec["indexUrl"]
     owner = os.environ["GH_OWNER"]
     repo = os.environ["GH_REPO"]
     environments = spec["environments"]
-    current = environments[0]
-    readiness = [environment for environment in environments if environment["readiness"]]
 
     needs_checkout = any(source["kind"] != "repo-file" for source in spec["sources"])
 
@@ -203,35 +220,27 @@ def main() -> None:
         requirements_in = work / "requirements.in"
         requirements_in.write_text(f"{header}\n" + "\n".join(deduplicated) + "\n")
 
-        current_python = current["python"]
-        current_artifacts = resolve_environment(current, work, requirements_in, index_url)
-        shutil.copy2(requirements_in, flake_root / "requirements.in")
-        shutil.copy2(current_artifacts["requirements_lock"], flake_root / f"requirements-{current_python}.lock")
-        shutil.copy2(current_artifacts["wheel_manifest"], flake_root / f"wheels-{current_python}.json")
+        resolved = {
+            environment["python"]: resolve_environment(environment, work, requirements_in, index_url)
+            for environment in environments
+        }
 
-        statuses = {}
-        for environment in readiness:
-            python = environment["python"]
-            stale = [flake_root / f"requirements-{python}.lock", flake_root / f"wheels-{python}.json"]
-            try:
-                artifacts = resolve_environment(environment, work, requirements_in, index_url)
-            except subprocess.CalledProcessError as error:
-                for path in stale:
-                    path.unlink(missing_ok=True)
-                statuses[python] = {"status": "blocked", "reason": blocked_reason(error)}
-                print(f"readiness {python}: blocked — {statuses[python]['reason']}", file=sys.stderr)
-                continue
+        declared = {environment["python"] for environment in environments}
+        for pattern in ("requirements-*.lock", "wheels-*.json"):
+            for path in flake_root.glob(pattern):
+                match = re.fullmatch(r"requirements-(.+)\.lock", path.name) or re.fullmatch(r"wheels-(.+)\.json", path.name)
+                if match and match.group(1) not in declared:
+                    path.unlink()
+
+        shutil.copy2(requirements_in, flake_root / "requirements.in")
+        for python, artifacts in resolved.items():
             shutil.copy2(artifacts["requirements_lock"], flake_root / f"requirements-{python}.lock")
             shutil.copy2(artifacts["wheel_manifest"], flake_root / f"wheels-{python}.json")
-            statuses[python] = {"status": "ok"}
-            print(f"readiness {python}: ok", file=sys.stderr)
+        (flake_root / "python-readiness.json").unlink(missing_ok=True)
 
-        if readiness:
-            (flake_root / "python-readiness.json").write_text(json.dumps(statuses, indent=2, sort_keys=True) + "\n")
-
-        print(f"pythonEnvironment={current['python']}")
-        print(f"requirementsHash={sha256(current_artifacts['requirements_lock'])}")
-        print(f"wheelManifestHash={sha256(current_artifacts['wheel_manifest'])}")
+        print(f"artifactFingerprint={spec['fingerprint']}")
+        print(f"requirementsHash={aggregate_hash(environments, resolved, 'requirements_lock')}")
+        print(f"wheelManifestHash={aggregate_hash(environments, resolved, 'wheel_manifest')}")
 
 
 if __name__ == "__main__":

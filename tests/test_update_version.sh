@@ -47,6 +47,16 @@ assert_pin() {
   grep -Fq 'sourceHash = "sha256-source";' "${TEST_ROOT}/pin.nix"
 }
 
+ARTIFACT_HOOK="${TEST_ROOT}/artifact-hook"
+ARTIFACT_LOG="${TEST_ROOT}/artifact-hook.log"
+printf '%s\n' \
+  "#!${TEST_BASH}/bin/bash" \
+  'printf "%s\n" "${SOURCE_TYPE}" >> "${TEST_ARTIFACT_LOG}"' \
+  'printf "%s\n" "artifactFingerprint=${TEST_ARTIFACT_FINGERPRINT}"' \
+  'printf "%s\n" "requirementsHash=requirements-hash"' \
+  'printf "%s\n" "wheelManifestHash=manifest-hash"' > "${ARTIFACT_HOOK}"
+chmod +x "${ARTIFACT_HOOK}"
+
 write_empty_pin
 run_update release '["rust-v"]' rust-v1.2.3 ''
 assert_pin
@@ -66,6 +76,86 @@ assert_pin
 write_empty_pin
 run_update release '["rust-v"]' '' '' 1.2.3 1.2.3
 assert_pin
+
+cat > "${TEST_ROOT}/pin.nix" <<'EOF'
+{
+  version = "1.2.3";
+  sourceRev = "source-revision";
+  sourceHash = "sha256-source";
+  artifactFingerprint = "exact-fingerprint";
+  requirementsHash = "requirements-hash";
+  wheelManifestHash = "manifest-hash";
+}
+EOF
+NOOP_OUTPUT=$(FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  TEST_TAGS='' \
+  BUILD_ATTR=codex \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  ARTIFACT_FINGERPRINT=exact-fingerprint \
+  ARTIFACT_HOOK=/must-not-run \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}" 1.2.3)
+grep -Fq 'Already up to date (1.2.3).' <<<"${NOOP_OUTPUT}"
+
+sed -i 's/artifactFingerprint = "exact-fingerprint";/pythonEnvironment = "3.13";/' "${TEST_ROOT}/pin.nix"
+: > "${ARTIFACT_LOG}"
+TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
+TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
+FLAKE_ROOT="${TEST_ROOT}" \
+SOURCE_TYPE=github \
+GH_OWNER=openai \
+GH_REPO=codex \
+GITLAB_OWNER='' \
+GITLAB_REPO='' \
+GH_TAG_PREFIXES='["v","V",""]' \
+GH_TRACK=release \
+TEST_RELEASE_TAG=v1.2.3 \
+TEST_TAGS='' \
+BUILD_ATTR=codex \
+HASH_MODE=prefetch \
+EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+ARTIFACT_FINGERPRINT=exact-fingerprint \
+ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
+VERIFICATION=evaluate \
+SIBLINGS='[]' \
+bash "${UPDATE_VERSION}" 1.2.3
+grep -Fqx github "${ARTIFACT_LOG}"
+grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
+
+sed -i -e 's/sourceRev = "source-revision";/hash = "sha256-pypi";/' -e 's/sourceHash = "sha256-source";//' -e 's/artifactFingerprint = "exact-fingerprint";/pythonEnvironment = "3.13";/' "${TEST_ROOT}/pin.nix"
+: > "${ARTIFACT_LOG}"
+TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
+TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
+TEST_PYPI_METADATA='{"info":{"version":"1.2.3"},"urls":[{"packagetype":"sdist","url":"https://files.example.test/example-1.2.3.tar.gz"}]}' \
+FLAKE_ROOT="${TEST_ROOT}" \
+SOURCE_TYPE=pypi \
+PYPI_NAME=example \
+PYPI_FORMAT=sdist \
+GH_OWNER='' \
+GH_REPO='' \
+GITLAB_OWNER='' \
+GITLAB_REPO='' \
+BUILD_ATTR=example \
+HASH_MODE=prefetch \
+EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+ARTIFACT_FINGERPRINT=exact-fingerprint \
+ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
+VERIFICATION=evaluate \
+SIBLINGS='[]' \
+bash "${UPDATE_VERSION}" 1.2.3
+grep -Fqx pypi "${ARTIFACT_LOG}"
+grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
 
 cat > "${TEST_ROOT}/pin.nix" <<'EOF'
 {
@@ -114,3 +204,39 @@ jq -e '
   and .files[0].git_blob == "config-blob"
   and .files[1].sha256 == "large-sha256"
 ' "${TEST_ROOT}/model-manifest.json" >/dev/null
+
+cat > "${TEST_ROOT}/pin.nix" <<'EOF'
+{
+  version = "0-unstable-2026-08-26";
+  sourceRev = "model-revision";
+  pythonEnvironment = "3.13";
+  requirementsHash = "requirements-hash";
+  wheelManifestHash = "manifest-hash";
+}
+EOF
+: > "${ARTIFACT_LOG}"
+HF_MISMATCH_OUTPUT=$(TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
+  TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
+  TEST_HF_METADATA='{"sha":"model-revision","lastModified":"2026-08-26T12:34:56.000Z","siblings":[]}' \
+  FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=huggingface \
+  GH_OWNER='' \
+  GH_REPO='' \
+  GITLAB_OWNER='' \
+  GITLAB_REPO='' \
+  HF_REPO=example/model \
+  HF_REVISION=main \
+  HF_FILES='[]' \
+  HF_MANIFEST_PATH='' \
+  BUILD_ATTR=model \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  ARTIFACT_FINGERPRINT=exact-fingerprint \
+  ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}")
+grep -Fqx huggingface "${ARTIFACT_LOG}"
+grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'Updated model to 0-unstable-2026-08-26.' <<<"${HF_MISMATCH_OUTPUT}"

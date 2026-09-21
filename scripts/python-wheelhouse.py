@@ -77,14 +77,18 @@ def source_requirements(source: dict[str, Any], flake_root: Path, checkout: Path
 
 def filtered(source: dict[str, Any], requirements: list[str]) -> list[str]:
     only = source.get("only")
-    if not only:
-        return requirements
-    wanted = {canonicalize_name(name) for name in only}
-    selected = [requirement for requirement in requirements if canonicalize_name(requirement_name(requirement)) in wanted]
-    missing = wanted - {canonicalize_name(requirement_name(requirement)) for requirement in selected}
-    if missing:
-        raise ValueError(f"wheelhouse source filter 'only' matched nothing for: {', '.join(sorted(missing))}")
-    return selected
+    except_ = source.get("except")
+    if only:
+        wanted = {canonicalize_name(name) for name in only}
+        selected = [requirement for requirement in requirements if canonicalize_name(requirement_name(requirement)) in wanted]
+        missing = wanted - {canonicalize_name(requirement_name(requirement)) for requirement in selected}
+        if missing:
+            raise ValueError(f"wheelhouse source filter 'only' matched nothing for: {', '.join(sorted(missing))}")
+        return selected
+    if except_:
+        excluded = {canonicalize_name(name) for name in except_}
+        return [requirement for requirement in requirements if canonicalize_name(requirement_name(requirement)) not in excluded]
+    return requirements
 
 
 def requirement_name(requirement: str) -> str:
@@ -131,6 +135,7 @@ def resolve_environment(environment: dict[str, Any], work: Path, requirements_in
     wheelhouse = env_work / "wheelhouse"
     wheelhouse.mkdir()
     platform_args = [tag for platform in environment["pipPlatforms"] for tag in ("--platform", platform)]
+    abi_args = [tag for tag in environment.get("pipAbiLadder", [environment["pipAbi"]]) for tag in ("--abi", tag)]
     run(
         "pip", "download",
         "--require-hashes",
@@ -139,7 +144,7 @@ def resolve_environment(environment: dict[str, Any], work: Path, requirements_in
         *platform_args,
         "--python-version", environment["pipPythonVersion"],
         "--implementation", "cp",
-        "--abi", environment["pipAbi"],
+        *abi_args,
         "--index-url", index_url,
         "--requirement", str(requirements_lock),
     )

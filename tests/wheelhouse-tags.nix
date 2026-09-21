@@ -38,6 +38,16 @@
         "linux_x86_64"
       ];
       pipAbi = "cp313";
+      pipAbiLadder = [
+        "cp313"
+        "cp312"
+        "cp311"
+        "cp310"
+        "cp39"
+        "cp38"
+        "abi3"
+        "none"
+      ];
     };
   };
   testManylinuxAarch64 = {
@@ -65,6 +75,15 @@
         "linux_aarch64"
       ];
       pipAbi = "cp312";
+      pipAbiLadder = [
+        "cp312"
+        "cp311"
+        "cp310"
+        "cp39"
+        "cp38"
+        "abi3"
+        "none"
+      ];
     };
   };
   testPlainLinux = {
@@ -76,6 +95,15 @@
       pipPythonVersion = "312";
       pipPlatforms = [ "linux_x86_64" ];
       pipAbi = "cp312";
+      pipAbiLadder = [
+        "cp312"
+        "cp311"
+        "cp310"
+        "cp39"
+        "cp38"
+        "abi3"
+        "none"
+      ];
     };
   };
   testBadPythonVersion = {

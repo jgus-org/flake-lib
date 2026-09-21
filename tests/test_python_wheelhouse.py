@@ -245,6 +245,50 @@ class PythonWheelhouseTests(unittest.TestCase):
         self.assertEqual([entry["name"] for entry in vendored], ["fakenative", "fakepkg"])
         self.assertTrue((root / f"requirements-{READINESS_PY}.lock").exists())
 
+    def test_source_file_only_filter(self) -> None:
+        spec = self.spec_with([CURRENT])
+        spec["sources"] = [
+            {"kind": "source-pyproject", "groups": ["studio"], "only": ["fakenative"]},
+            {"kind": "source-file", "path": "reqs/studio.txt", "only": ["FAKEPKG"]},
+        ]
+        spec["extraRequirements"] = []
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"FAKE_UV_FAIL": READINESS_PY})
+
+        requirements_in = (root / "requirements.in").read_text()
+        self.assertIn("fakenative==2.1.0", requirements_in)
+        self.assertEqual(requirements_in.count("fakepkg==1.0.0"), 1)
+        self.assertNotIn("fakepkg>=1.0", requirements_in)
+
+    def test_gitlab_checkout(self) -> None:
+        spec = self.spec_with([CURRENT])
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env | {"SOURCE_TYPE": "gitlab"})
+        self.assertIn("git clone", self.log.read_text())
+        self.assertIn("https://gitlab.com/acme/widget.git", self.log.read_text())
+
+    def test_source_file_only_filter_without_match(self) -> None:
+        spec = self.spec_with([CURRENT])
+        spec["sources"] = [{"kind": "source-file", "path": "reqs/studio.txt", "only": ["absent"]}]
+        result = subprocess.run(
+            ["python3", str(SCRIPT)],
+            cwd=self.work,
+            env={
+                "PATH": f"{self.work / 'bin'}:{os.environ['PATH']}",
+                "WHEELHOUSE_SPEC": json.dumps(spec),
+                "DEPS_CORE": str(DEPS_CORE),
+                "INDEX_URL": self.index_url,
+                "FLAKE_ROOT": str(self.work / "flake-root"),
+                "NEW_REV": "abc123",
+                "GH_OWNER": "acme",
+                "GH_REPO": "widget",
+                "HOME": str(self.work),
+            }
+            | self.common_env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("matched nothing for: absent", result.stderr)
+
     def test_repo_file_only_skips_checkout(self) -> None:
         (self.work / "flake-root" / "requirements.in").write_text(
             "# hand-maintained\nfakepkg>=1.0\n"

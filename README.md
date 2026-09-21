@@ -171,7 +171,7 @@ nix's libraries instead of runtime `LD_LIBRARY_PATH` assembly. Application
 flakes that vendor opaque wheelhouses (freetoken-style) skip autoPatchelf and
 resolve native libraries from the wrapper environment instead.
 
-`templates/` holds `gitattributes` and `workflow.yml`, which a consuming repo installs as `.gitattributes` and `.github/workflows/update.yml`.
+`templates/` holds `workflow.yml`, which a consuming repo installs as `.github/workflows/update.yml`.
 
 
 ### Split update-branches jobs

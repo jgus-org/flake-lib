@@ -24,8 +24,7 @@ initialize_repository() {
   git -C "${CHECKOUT}" remote add origin "${REMOTE}"
   write_pin "${CHECKOUT}/pin.nix" "1.0.0" "original-hash"
   printf '%s\n' '{ "fixture": "original" }' > "${CHECKOUT}/flake.lock"
-  printf '%s\n' 'pin.nix merge=ours' 'flake.lock merge=ours' > "${CHECKOUT}/.gitattributes"
-  git -C "${CHECKOUT}" add pin.nix flake.lock .gitattributes
+  git -C "${CHECKOUT}" add pin.nix flake.lock
   git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm initial
   git -C "${CHECKOUT}" push -q -u origin main
 }
@@ -534,20 +533,30 @@ assert_same_ref main v1.2.0
 [[ "$(cat "${CASE_ROOT}/transient-attempts/update-version-1.2.0")" == 2 ]]
 clear_test_failures
 
-# Owned patterns matching nothing must not fail the publish, and the orchestrator keeps .gitattributes' merge=ours declarations in step with the owned files on published branches.
 initialize_repository
 BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json missing.txt' run_update '1.2.3-rc1'
 assert_ref_version v1.2.3-rc1 1.2.3-rc1
-git --git-dir="${REMOTE}" show 'refs/heads/v1.2.3-rc1:.gitattributes' | grep -Fqx $'wheels-*.json\tmerge=ours'
-git --git-dir="${REMOTE}" show 'refs/heads/v1.2.3-rc1:.gitattributes' | grep -Fqx $'missing.txt\tmerge=ours'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.3-rc1:.gitattributes'
 
-# Refreshing an existing branch re-asserts the declarations before merging the discovery base, so branch-owned artifacts survive the merge.
 initialize_repository
 seed_exact_branch 1.2.3-rc1
 point_aggregate main 1.2.3-rc1
 BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json' run_update '1.2.4-rc1'
-git --git-dir="${REMOTE}" show 'refs/heads/v1.2.4-rc1:.gitattributes' | grep -Fqx $'wheels-*.json\tmerge=ours'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.4-rc1:.gitattributes'
 assert_ref_version v1.2.4-rc1 1.2.4-rc1
+
+initialize_repository
+printf '%s\n' 'pin.nix merge=ours' 'flake.lock merge=ours' > "${CHECKOUT}/.gitattributes"
+git -C "${CHECKOUT}" add .gitattributes
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'legacy ownership attributes'
+git -C "${CHECKOUT}" push -q origin main
+seed_exact_branch 1.2.0
+git -C "${CHECKOUT}" rm -q .gitattributes
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'remove legacy ownership attributes'
+git -C "${CHECKOUT}" push -q origin main
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock' run_update '1.2.0'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:.gitattributes'
+assert_ref_version v1.2.0 1.2.0
 
 initialize_repository
 printf '%s\n' ancestor > "${CHECKOUT}/owned-modified.txt"
@@ -573,6 +582,39 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock owned-*.txt' run_update '1.2.0'
 [[ "$(git --git-dir="${REMOTE}" show 'refs/heads/v1.2.0:owned-modified.txt')" == branch ]]
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-deleted.txt'
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-absent.txt'
+
+initialize_repository
+mkdir -p "${CHECKOUT}/owned-dir" "${CHECKOUT}/absent-dir"
+printf '%s\n' ancestor > "${CHECKOUT}/owned-dir/retained.txt"
+printf '%s\n' ancestor > "${CHECKOUT}/owned-dir/removed.txt"
+printf '%s\n' ancestor > "${CHECKOUT}/absent-dir/file.txt"
+git -C "${CHECKOUT}" add owned-dir absent-dir
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'common owned directories'
+git -C "${CHECKOUT}" push -q origin main
+seed_exact_branch 1.2.0
+git -C "${CHECKOUT}" switch -q v1.2.0
+printf '%s\n' branch > "${CHECKOUT}/owned-dir/retained.txt"
+mkdir -p "${CHECKOUT}/owned-dir/nested"
+printf '%s\n' branch > "${CHECKOUT}/owned-dir/nested/added.txt"
+git -C "${CHECKOUT}" rm -q "owned-dir/removed.txt" "absent-dir/file.txt"
+git -C "${CHECKOUT}" add owned-dir
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'branch owned directories'
+git -C "${CHECKOUT}" push -q origin v1.2.0
+git -C "${CHECKOUT}" switch -q main
+printf '%s\n' base > "${CHECKOUT}/owned-dir/retained.txt"
+printf '%s\n' base > "${CHECKOUT}/owned-dir/removed.txt"
+printf '%s\n' base > "${CHECKOUT}/owned-dir/base-only.txt"
+printf '%s\n' base > "${CHECKOUT}/absent-dir/file.txt"
+printf '%s\n' base > "${CHECKOUT}/absent-dir/base-only.txt"
+git -C "${CHECKOUT}" add owned-dir absent-dir
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'base owned directory changes'
+git -C "${CHECKOUT}" push -q origin main
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock owned-dir absent-dir' run_update '1.2.0'
+[[ "$(git --git-dir="${REMOTE}" show 'refs/heads/v1.2.0:owned-dir/retained.txt')" == branch ]]
+[[ "$(git --git-dir="${REMOTE}" show 'refs/heads/v1.2.0:owned-dir/nested/added.txt')" == branch ]]
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-dir/removed.txt'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-dir/base-only.txt'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:absent-dir'
 
 initialize_repository
 seed_exact_branch 1.2.0

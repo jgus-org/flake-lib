@@ -52,6 +52,8 @@ ARTIFACT_LOG="${TEST_ROOT}/artifact-hook.log"
 printf '%s\n' \
   "#!${TEST_BASH}/bin/bash" \
   'printf "%s\n" "${SOURCE_TYPE}" >> "${TEST_ARTIFACT_LOG}"' \
+  'if [[ -n "${TEST_ARTIFACT_FILE:-}" ]]; then printf "%s\n" migrated > "${FLAKE_ROOT}/${TEST_ARTIFACT_FILE}"; fi' \
+  'if [[ -n "${TEST_STALE_ARTIFACT:-}" ]]; then rm -f "${FLAKE_ROOT}/${TEST_STALE_ARTIFACT}"; fi' \
   'printf "%s\n" "artifactFingerprint=${TEST_ARTIFACT_FINGERPRINT}"' \
   'printf "%s\n" "requirementsHash=requirements-hash"' \
   'printf "%s\n" "wheelManifestHash=manifest-hash"' > "${ARTIFACT_HOOK}"
@@ -131,6 +133,62 @@ SIBLINGS='[]' \
 bash "${UPDATE_VERSION}" 1.2.3
 grep -Fqx github "${ARTIFACT_LOG}"
 grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
+
+run_artifact_git_case() {
+  local CASE_ROOT="${1}" ORCHESTRATED_FILES="${2}" EXPECT_TRACKED_FILE="${3}"
+  mkdir -p "${CASE_ROOT}"
+  cat > "${CASE_ROOT}/pin.nix" <<'EOF'
+{
+  version = "1.2.3";
+  sourceRev = "source-revision";
+  sourceHash = "sha256-source";
+  artifactFingerprint = "old-fingerprint";
+  requirementsHash = "requirements-hash";
+  wheelManifestHash = "manifest-hash";
+}
+EOF
+  printf '%s\n' legacy > "${CASE_ROOT}/wheels-3.14.json"
+  git -C "${CASE_ROOT}" init -q
+  git -C "${CASE_ROOT}" add pin.nix wheels-3.14.json
+  git -C "${CASE_ROOT}" -c user.name=test -c user.email=test@example.com commit -qm initial
+  (
+    cd "${CASE_ROOT}"
+    TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
+    TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
+    TEST_ARTIFACT_FILE=wheels-3.14-x86_64-linux.json \
+    TEST_STALE_ARTIFACT=wheels-3.14.json \
+    TEST_EXPECT_TRACKED_FILE="${EXPECT_TRACKED_FILE}" \
+    FLAKE_ROOT="${CASE_ROOT}" \
+    ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_FILES}" \
+    SOURCE_TYPE=github \
+    GH_OWNER=openai \
+    GH_REPO=codex \
+    GITLAB_OWNER='' \
+    GITLAB_REPO='' \
+    GH_TAG_PREFIXES='["v","V",""]' \
+    GH_TRACK=release \
+    TEST_RELEASE_TAG=v1.2.3 \
+    TEST_TAGS='' \
+    BUILD_ATTR=codex \
+    HASH_MODE=prefetch \
+    EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+    PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+    ARTIFACT_FINGERPRINT=exact-fingerprint \
+    ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
+    VERIFICATION=evaluate \
+    SIBLINGS='[]' \
+    bash "${UPDATE_VERSION}" 1.2.3
+  )
+}
+
+DIRECT_ROOT="${TEST_ROOT}/direct-artifacts"
+run_artifact_git_case "${DIRECT_ROOT}" '' ''
+! git -C "${DIRECT_ROOT}" ls-files --error-unmatch -- wheels-3.14-x86_64-linux.json >/dev/null 2>&1
+
+ORCHESTRATED_ROOT="${TEST_ROOT}/orchestrated-artifacts"
+run_artifact_git_case "${ORCHESTRATED_ROOT}" 'pin.nix flake.lock requirements-*.lock wheels-*.json' wheels-3.14-x86_64-linux.json
+git -C "${ORCHESTRATED_ROOT}" ls-files --error-unmatch -- wheels-3.14-x86_64-linux.json >/dev/null
+! git -C "${ORCHESTRATED_ROOT}" ls-files --error-unmatch -- wheels-3.14.json >/dev/null 2>&1
 
 sed -i -e 's/sourceRev = "source-revision";/hash = "sha256-pypi";/' -e 's/sourceHash = "sha256-source";//' -e 's/artifactFingerprint = "exact-fingerprint";/pythonEnvironment = "3.13";/' "${TEST_ROOT}/pin.nix"
 : > "${ARTIFACT_LOG}"

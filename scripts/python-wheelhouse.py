@@ -17,6 +17,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 
@@ -36,8 +37,8 @@ class ResolutionError(RuntimeError):
     pass
 
 
-def run(*args: str, cwd: Path | None = None) -> None:
-    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+def run(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
+    result = subprocess.run(args, cwd=cwd, env=os.environ | env if env else None, capture_output=True, text=True)
     if result.returncode != 0:
         if result.stdout:
             print(result.stdout, end="", file=sys.stderr)
@@ -125,8 +126,45 @@ def wheel_url(index_url: str, name: str, filename: str, digest: str) -> str:
     raise ResolutionError(f"the index did not report {filename} with {digest}")
 
 
+def requirement_text(requirement: Requirement) -> str:
+    extras = f"[{','.join(sorted(requirement.extras))}]" if requirement.extras else ""
+    if requirement.url is not None:
+        return f"{requirement.name}{extras} @ {requirement.url}"
+    return f"{requirement.name}{extras}{requirement.specifier}"
+
+
+def logical_requirement_lines(text: str) -> list[str]:
+    entries = []
+    current = ""
+    for line in text.splitlines():
+        stripped = line.rstrip()
+        if stripped.endswith("\\"):
+            current += stripped[:-1].rstrip() + " "
+        else:
+            entries.append(current + stripped)
+            current = ""
+    if current:
+        raise ResolutionError("the resolved requirements file ends with a continuation")
+    return entries
+
+
+def target_requirements(requirements_lock: Path, marker_environment: dict[str, str]) -> str:
+    selected = []
+    for entry in logical_requirement_lines(requirements_lock.read_text()):
+        stripped = entry.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = re.split(r"(\s+--hash=)", stripped, maxsplit=1)
+        requirement_part = parts[0]
+        hashes = " " + " ".join("".join(parts[1:]).split()) if len(parts) > 1 else ""
+        requirement = Requirement(requirement_part)
+        if requirement.marker is None or requirement.marker.evaluate(marker_environment):
+            selected.append(requirement_text(requirement) + hashes)
+    return "\n".join(selected) + "\n"
+
+
 def resolve_environment(environment: dict[str, Any], work: Path, requirements_in: Path, index_url: str) -> dict[str, Any]:
-    env_work = work / f"env-{environment['python']}"
+    env_work = work / f"env-{environment['python']}-{environment['system']}"
     env_work.mkdir()
     shutil.copy2(requirements_in, env_work / "requirements.in")
 
@@ -140,23 +178,27 @@ def resolve_environment(environment: dict[str, Any], work: Path, requirements_in
         "--output-file", requirements_lock.name,
         "--no-header",
         cwd=env_work,
+        env=environment["uvEnvironment"],
     )
+
+    requirements_target = env_work / "requirements.target"
+    requirements_target.write_text(target_requirements(requirements_lock, environment["markerEnvironment"]))
 
     wheelhouse = env_work / "wheelhouse"
     wheelhouse.mkdir()
     platform_args = [tag for platform in environment["pipPlatforms"] for tag in ("--platform", platform)]
-    abi_args = [tag for tag in environment.get("pipAbiLadder", [environment["pipAbi"]]) for tag in ("--abi", tag)]
     run(
         "pip", "download",
         "--require-hashes",
+        "--no-deps",
         "--only-binary", ":all:",
         "--dest", str(wheelhouse),
         *platform_args,
         "--python-version", environment["pipPythonVersion"],
         "--implementation", "cp",
-        *abi_args,
+        "--abi", environment["pipAbi"],
         "--index-url", index_url,
-        "--requirement", str(requirements_lock),
+        "--requirement", str(requirements_target),
     )
 
     manifest = []
@@ -182,13 +224,87 @@ def resolve_environment(environment: dict[str, Any], work: Path, requirements_in
     }
 
 
-def aggregate_hash(environments: list[dict[str, Any]], resolved: dict[str, dict[str, Any]], artifact: str) -> str:
+def aggregate_hash(
+    environments: list[dict[str, Any]],
+    resolved: dict[tuple[str, str], dict[str, Any]],
+    artifact: str,
+) -> str:
     entries = [
-        {"python": environment["python"], "sha256": sha256(resolved[environment["python"]][artifact])}
+        {
+            "python": environment["python"],
+            "system": environment["system"],
+            "sha256": sha256(resolved[environment_key(environment)][artifact]),
+        }
         for environment in environments
     ]
     encoded = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def environment_key(environment: dict[str, Any]) -> tuple[str, str]:
+    return environment["python"], environment["system"]
+
+
+def artifact_names(environment: dict[str, Any]) -> tuple[str, str]:
+    stem = f"{environment['python']}-{environment['system']}"
+    return f"requirements-{stem}.lock", f"wheels-{stem}.json"
+
+
+def publish_artifacts(
+    flake_root: Path,
+    requirements_in: Path,
+    environments: list[dict[str, Any]],
+    resolved: dict[tuple[str, str], dict[str, Any]],
+) -> None:
+    artifacts = {
+        "requirements.in": requirements_in,
+        **{
+            name: resolved[environment_key(environment)][artifact]
+            for environment in environments
+            for name, artifact in zip(artifact_names(environment), ("requirements_lock", "wheel_manifest"), strict=True)
+        },
+    }
+    declared = set(artifacts)
+    stale = [
+        path
+        for pattern in ("requirements-*.lock", "wheels-*.json")
+        for path in flake_root.glob(pattern)
+        if path.name not in declared
+    ]
+    with tempfile.TemporaryDirectory(prefix=".python-wheelhouse-", dir=flake_root) as raw_staging:
+        staging = Path(raw_staging)
+        backup = staging / "backup"
+        backup.mkdir()
+        targets = [
+            *(flake_root / name for name in artifacts),
+            *stale,
+            flake_root / "python-readiness.json",
+        ]
+        previous = {path: backup / path.name if path.exists() else None for path in targets}
+        for path, backup_path in previous.items():
+            if backup_path is not None:
+                shutil.copy2(path, backup_path)
+        for name, source in artifacts.items():
+            shutil.copy2(source, staging / name)
+        try:
+            for name in artifacts:
+                (staging / name).replace(flake_root / name)
+            for path in stale:
+                path.unlink()
+            (flake_root / "python-readiness.json").unlink(missing_ok=True)
+        except OSError as publication_error:
+            rollback_errors = []
+            for path, backup_path in previous.items():
+                try:
+                    if backup_path is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        shutil.copy2(backup_path, path)
+                except OSError as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                raise publication_error from ExceptionGroup("wheelhouse artifact rollback failed", rollback_errors)
+            raise
 
 
 def main() -> None:
@@ -221,22 +337,11 @@ def main() -> None:
         requirements_in.write_text(f"{header}\n" + "\n".join(deduplicated) + "\n")
 
         resolved = {
-            environment["python"]: resolve_environment(environment, work, requirements_in, index_url)
+            environment_key(environment): resolve_environment(environment, work, requirements_in, index_url)
             for environment in environments
         }
 
-        declared = {environment["python"] for environment in environments}
-        for pattern in ("requirements-*.lock", "wheels-*.json"):
-            for path in flake_root.glob(pattern):
-                match = re.fullmatch(r"requirements-(.+)\.lock", path.name) or re.fullmatch(r"wheels-(.+)\.json", path.name)
-                if match and match.group(1) not in declared:
-                    path.unlink()
-
-        shutil.copy2(requirements_in, flake_root / "requirements.in")
-        for python, artifacts in resolved.items():
-            shutil.copy2(artifacts["requirements_lock"], flake_root / f"requirements-{python}.lock")
-            shutil.copy2(artifacts["wheel_manifest"], flake_root / f"wheels-{python}.json")
-        (flake_root / "python-readiness.json").unlink(missing_ok=True)
+        publish_artifacts(flake_root, requirements_in, environments, resolved)
 
         print(f"artifactFingerprint={spec['fingerprint']}")
         print(f"requirementsHash={aggregate_hash(environments, resolved, 'requirements_lock')}")

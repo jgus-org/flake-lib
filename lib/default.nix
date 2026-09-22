@@ -28,5 +28,5 @@ let
 in
 {
   inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
-  inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse mkWheelhouse installWheelhouse;
+  inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse;
 }

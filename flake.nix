@@ -10,7 +10,13 @@
     let
       pythonEnvironments = {
         pythonVersions = [ "3.13" "3.14" ];
-        platform = "x86_64-manylinux_2_28";
+        systems = flake-utils.lib.defaultSystems;
+        targets = {
+          x86_64-linux = { uvPlatform = "x86_64-manylinux_2_28"; };
+          aarch64-linux = { uvPlatform = "aarch64-manylinux_2_28"; };
+          x86_64-darwin = { uvPlatform = "x86_64-apple-darwin"; };
+          aarch64-darwin = { uvPlatform = "aarch64-apple-darwin"; };
+        };
       };
     in
     {
@@ -121,6 +127,42 @@
           in
           pkgs.lib.throwIf (failures != [ ]) "platformTags tests failed"
             (pkgs.runCommand "wheelhouse-tags-tests" { } "touch $out");
+        wheelhouse-environment-tests =
+          let
+            x86 = lib.mkPythonWheelhouse {
+              inherit pkgs;
+              pythonVersions = [ "3.13" ];
+              systems = [ "x86_64-linux" ];
+              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+            };
+            arm = lib.mkPythonWheelhouse {
+              inherit pkgs;
+              pythonVersions = [ "3.13" ];
+              systems = [ "aarch64-linux" ];
+              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+            };
+            unsupportedSystem = builtins.tryEval (lib.wheelhouseArtifactPaths {
+              root = ./.;
+              pythonVersion = "3.13";
+              system = "armv7-linux";
+            });
+            unsupportedPython = builtins.tryEval (lib.wheelhouseArtifactPaths {
+              root = ./.;
+              pythonVersion = "3.12";
+              system = "x86_64-linux";
+            });
+            customPython = lib.wheelhouseArtifactPaths {
+              root = ./.;
+              pythonVersion = "3.12";
+              pythonVersions = [ "3.12" ];
+              system = "x86_64-linux";
+            };
+          in
+          assert x86.fingerprint != arm.fingerprint;
+          assert !unsupportedSystem.success;
+          assert !unsupportedPython.success;
+          assert builtins.baseNameOf customPython.wheelManifest == "wheels-3.12-x86_64-linux.json";
+          pkgs.runCommand "wheelhouse-environment-tests" { } "touch $out";
         wheelhouse-fingerprint-tests =
           let
             changedMenu = lib.mkPythonWheelhouse {
@@ -152,12 +194,14 @@
         wheelhouse-consumer-selection-tests =
           let
             python = pkgs.python313;
-            manifests = {
-              "3.13" = "wheels-3.13.json";
-              "3.14" = "wheels-3.14.json";
+            artifacts = lib.wheelhouseArtifactPaths {
+              root = ./.;
+              pythonVersion = python.pythonVersion;
+              system = "aarch64-linux";
             };
           in
-          assert manifests.${python.pythonVersion} == "wheels-3.13.json";
+          assert builtins.baseNameOf artifacts.requirementsLock == "requirements-3.13-aarch64-linux.lock";
+          assert builtins.baseNameOf artifacts.wheelManifest == "wheels-3.13-aarch64-linux.json";
           pkgs.runCommand "wheelhouse-consumer-selection-tests" { } "touch $out";
         python-wheelhouse-tests = pkgs.runCommand "python-wheelhouse-tests"
           {
@@ -338,7 +382,7 @@
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration;
           inherit update-version-tests;
         };
       });

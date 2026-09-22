@@ -46,6 +46,7 @@ EXTRA_HASHES="${EXTRA_HASHES:-[]}"        # JSON array of extra pin field names 
 PIN_HASHES="${PIN_HASHES:-${EXTRA_HASHES}}"
 BUILD_FAILURE_HASH="${BUILD_FAILURE_HASH:-}"
 ARTIFACT_HOOK="${ARTIFACT_HOOK:-}"        # consumer script: regenerate vendored files, emit name=value extra hashes
+ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_OWNED_FILES:-}"
 VERIFICATION="${VERIFICATION:-evaluate}"
 SIBLINGS="${SIBLINGS:-[]}"
 SIBLING_REFS_IN_PIN="${SIBLING_REFS_IN_PIN:-}"
@@ -399,6 +400,21 @@ write_huggingface_manifest() {
   extra["${HF_MANIFEST_HASH_FIELD}"]=$(sha256sum "${OUTPUT}" | cut -d' ' -f1)
 }
 
+stage_orchestrated_owned_files() {
+  local PATTERN
+  local -a MATCHED_PATTERNS=() OWNED_PATTERNS=()
+  [[ -z "${ORCHESTRATED_OWNED_FILES}" ]] && return 0
+  read -r -a OWNED_PATTERNS <<<"${ORCHESTRATED_OWNED_FILES}"
+  for PATTERN in "${OWNED_PATTERNS[@]}"; do
+    if compgen -G "${FLAKE_ROOT}/${PATTERN}" >/dev/null || git -C "${FLAKE_ROOT}" ls-files --error-unmatch -- "${PATTERN}" >/dev/null 2>&1; then
+      MATCHED_PATTERNS+=("${PATTERN}")
+    fi
+  done
+  if (( ${#MATCHED_PATTERNS[@]} > 0 )); then
+    git -C "${FLAKE_ROOT}" add -A -- "${MATCHED_PATTERNS[@]}"
+  fi
+}
+
 run_artifact_hook() {
   # $1 rev, $2 version. Runs the consumer hook (which regenerates vendored files in FLAKE_ROOT) and captures its `name=value` stdout lines into `extra`.
   local rev="$1" v="$2" hook_out k val
@@ -416,6 +432,7 @@ run_artifact_hook() {
     echo "error: artifact hook did not emit the declared artifactFingerprint" >&2
     return 1
   fi
+  stage_orchestrated_owned_files
   return 0 # the loop's status is its last body command — a falsy `[[ -n ]]` on an empty/keyless line — which would trip the caller's set -e; this function has no meaningful return
 }
 

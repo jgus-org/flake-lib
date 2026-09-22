@@ -315,16 +315,16 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 matching_owned_paths() {
   # Owned patterns that match something in the current worktree. Unmatched
   # patterns must not reach git: they are fatal pathspec errors there.
-  local pattern
-  local matches=()
-  # shellcheck disable=SC2086
-  for pattern in ${BRANCH_OWNED_FILES}; do
-    if compgen -G "${pattern}" >/dev/null || git ls-files --error-unmatch -- "${pattern}" >/dev/null 2>&1; then
-      matches+=("${pattern}")
+  local PATTERN
+  local -a MATCHES=() OWNED_PATTERNS=()
+  read -r -a OWNED_PATTERNS <<<"${BRANCH_OWNED_FILES}"
+  for PATTERN in "${OWNED_PATTERNS[@]}"; do
+    if compgen -G "${PATTERN}" >/dev/null || git ls-files --error-unmatch -- "${PATTERN}" >/dev/null 2>&1; then
+      MATCHES+=("${PATTERN}")
     fi
   done
-  if [[ ${#matches[@]} -gt 0 ]]; then
-    printf '%s\n' "${matches[@]}"
+  if [[ ${#MATCHES[@]} -gt 0 ]]; then
+    printf '%s\n' "${MATCHES[@]}"
   fi
 }
 
@@ -544,6 +544,7 @@ remove_worktree() {
 refresh_version() {
   local v="${1}" upstream="${2}" branch="v${1}" wt update_phase update_exit
   local expected_remote_sha=""
+  local -a OWNED_PATHS=()
   LAST_FAILURE_REASON=""
   if [[ ! "${v}" =~ ${safe_version_re} || ! "${upstream}" =~ ${safe_version_re} ]]; then
     LAST_FAILURE_REASON="unsafe version argument"
@@ -591,7 +592,7 @@ refresh_version() {
   update_exit=0
   if run_with_transient_retry "nix flake update for ${branch}" nix flake update --option post-build-hook ""; then
     update_phase="update-version"
-    run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
+    run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" ORCHESTRATED_OWNED_FILES="${BRANCH_OWNED_FILES}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
   else
     update_exit=$?
   fi
@@ -603,11 +604,9 @@ refresh_version() {
     remove_worktree "${wt}"
     return 1
   fi
-  owned_paths="$(matching_owned_paths || true)"
-  # shellcheck disable=SC2086
-  if [[ -n "${owned_paths}" ]] && { ! git diff --quiet -- ${owned_paths} || [[ -n "$(git ls-files --others --exclude-standard -- ${owned_paths})" ]]; }; then
-    # shellcheck disable=SC2086
-    if ! git add -A -- ${owned_paths} || ! git commit -q -m "auto: ${v} pin"; then
+  mapfile -t OWNED_PATHS < <(matching_owned_paths || true)
+  if (( ${#OWNED_PATHS[@]} > 0 )) && { ! git diff --quiet HEAD -- "${OWNED_PATHS[@]}" || [[ -n "$(git ls-files --others --exclude-standard -- "${OWNED_PATHS[@]}")" ]]; }; then
+    if ! git add -A -- "${OWNED_PATHS[@]}" || ! git commit -q -m "auto: ${v} pin"; then
       LAST_FAILURE_REASON="committing ${branch} failed"
       popd >/dev/null
       remove_worktree "${wt}"

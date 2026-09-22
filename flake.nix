@@ -286,6 +286,13 @@
               "  version = \"''${TARGET_VERSION}\";" \
               '  assets.fixture = "updated-hash";' \
               '}' > "''${FLAKE_ROOT}/pin.nix"
+            if [[ -n "''${TEST_STAGE_OWNED:-}" ]]; then
+              [[ "''${ORCHESTRATED_OWNED_FILES}" == 'pin.nix flake.lock wheels-*.json' ]]
+              rm -f "''${FLAKE_ROOT}/wheels-3.14.json"
+              printf '%s\n' migrated > "''${FLAKE_ROOT}/wheels-3.14-x86_64-linux.json"
+              read -r -a OWNED_PATTERNS <<<"''${ORCHESTRATED_OWNED_FILES}"
+              git -C "''${FLAKE_ROOT}" add -A -- "''${OWNED_PATTERNS[@]}"
+            fi
           '';
         };
         update-version-test-gh = pkgs.writeShellApplication {
@@ -311,13 +318,15 @@
         };
         update-version-test-nix = pkgs.writeShellApplication {
           name = "nix";
-          runtimeInputs = [ pkgs.gnused ];
+          runtimeInputs = [ pkgs.git pkgs.gnused ];
           text = ''
             case "''${1}" in
               eval)
                 if [[ "''${*}" == *'--file '* ]]; then
                   FIELD="''${*: -1}"
                   sed -nE "s/^[[:space:]]*''${FIELD}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "''${FLAKE_ROOT}/pin.nix"
+                elif [[ -n "''${TEST_EXPECT_TRACKED_FILE:-}" ]]; then
+                  git -C "''${FLAKE_ROOT}" ls-files --error-unmatch -- "''${TEST_EXPECT_TRACKED_FILE}" >/dev/null
                 fi
                 ;;
               flake) printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock" ;;
@@ -338,6 +347,7 @@
             nativeBuildInputs = [
               pkgs.bash
               pkgs.coreutils
+              pkgs.git
               pkgs.gnugrep
               pkgs.jq
               update-version-test-gh

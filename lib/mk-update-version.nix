@@ -46,7 +46,7 @@ pkgs.writeShellApplication {
   name = "update-version";
   # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
   excludeShellChecks = [ "SC2016" "SC2089" "SC2090" ];
-  runtimeInputs = pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
+  runtimeInputs = [ pkgs.git ] ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
   runtimeEnv = {
     SOURCE_TYPE = source.type;
     PYPI_NAME = source.pname or "";

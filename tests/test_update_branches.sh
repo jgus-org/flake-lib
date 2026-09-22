@@ -82,7 +82,7 @@ EOF
 clear_test_failures() {
   unset TEST_GIT_BIN TEST_PUSH_COUNT_FILE TEST_PUSH_CONFLICT_SHA TEST_PUSH_FAILURES TEST_PUSH_MODE TEST_PUSH_REF TEST_REAL_GIT TEST_REMOTE
   unset TEST_TRANSIENT_ATTEMPT_DIR TEST_TRANSIENT_FAILURE_MODE TEST_TRANSIENT_UPDATE_VERSIONS
-  unset TEST_DELETE_OWNED
+  unset TEST_DELETE_OWNED TEST_STAGE_OWNED
 }
 
 seed_exact_branch() {
@@ -615,6 +615,23 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock owned-dir absent-dir' run_update
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-dir/removed.txt'
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:owned-dir/base-only.txt'
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:absent-dir'
+
+initialize_repository
+printf '%s\n' legacy > "${CHECKOUT}/wheels-3.14.json"
+git -C "${CHECKOUT}" add wheels-3.14.json
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'legacy artifact layout'
+git -C "${CHECKOUT}" push -q origin main
+seed_exact_branch 1.2.0
+git -C "${CHECKOUT}" rm -q wheels-3.14.json
+printf '%s\n' base > "${CHECKOUT}/wheels-3.14-x86_64-linux.json"
+git -C "${CHECKOUT}" add wheels-3.14-x86_64-linux.json
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'system-qualified artifact layout'
+git -C "${CHECKOUT}" push -q origin main
+export TEST_STAGE_OWNED=1
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json' run_update '1.2.0'
+[[ "$(git --git-dir="${REMOTE}" show 'refs/heads/v1.2.0:wheels-3.14-x86_64-linux.json')" == migrated ]]
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:wheels-3.14.json'
+clear_test_failures
 
 initialize_repository
 seed_exact_branch 1.2.0

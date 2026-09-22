@@ -27,10 +27,11 @@ flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
-flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + platform
+flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + systems + targets
 flake-lib.lib.platformTags     { pythonVersion; platform; }              # "3.13" + "x86_64-manylinux_2_28" -> uv/pip tag attrs
-flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; pythonVersions ? pythonEnvironments.pythonVersions; platform ? pythonEnvironments.platform; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; fingerprint; }
-flake-lib.lib.mkWheelhouse     { pkgs; wheels; }                         # wheels-<py>.json path or list -> { files; wheelhouse; }
+flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; pythonVersions ? pythonEnvironments.pythonVersions; systems ? pythonEnvironments.systems; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; fingerprint; }
+flake-lib.lib.wheelhouseArtifactPaths { root; pythonVersion; system; pythonVersions ? pythonEnvironments.pythonVersions; } # -> { requirementsLock; wheelManifest; }
+flake-lib.lib.mkWheelhouse     { pkgs; wheels; }                         # target-qualified wheels JSON path or list -> { files; wheelhouse; }
 flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
@@ -113,16 +114,19 @@ flake-lib pre-prepares wheel sets for these environments:
 
 ```nix
 flake-lib.lib.pythonEnvironments
-# { pythonVersions = [ "3.13" "3.14" ]; platform = "x86_64-manylinux_2_28"; }
+# {
+#   pythonVersions = [ "3.13" "3.14" ];
+#   systems = flake-utils.lib.defaultSystems;
+#   targets = {
+#     x86_64-linux = { uvPlatform = "x86_64-manylinux_2_28"; };
+#     aarch64-linux = { uvPlatform = "aarch64-manylinux_2_28"; };
+#     x86_64-darwin = { uvPlatform = "x86_64-apple-darwin"; };
+#     aarch64-darwin = { uvPlatform = "aarch64-apple-darwin"; };
+#   };
+# }
 ```
 
-The list is the prepared compatibility menu: every entry is claimed support,
-so every environment must resolve successfully before any generated file is
-published. A failure preserves the complete last known-good artifact set.
-Removed menu entries and the obsolete `python-readiness.json` are pruned after
-a successful resolution. A consumer may narrow `pythonVersions` only for a
-demonstrated incompatibility. `requirementsHash` and `wheelManifestHash` are
-deterministic aggregates over the complete ordered environment set.
+The Python-version list and system-to-platform mapping form the prepared compatibility menu: every pair is claimed support, so every environment resolves before mutation. If replacement or pruning raises `OSError`, the hook attempts to restore every pre-publication path and then fails, blocking upstream branch publication. Persistent filesystem failures during restoration or abrupt process termination can leave the worktree partial. Removed pairs, legacy unqualified artifacts, and the obsolete `python-readiness.json` are pruned after a successful resolution. A consumer may narrow `pythonVersions` or `systems` only for a demonstrated incompatibility. `requirementsHash` and `wheelManifestHash` are deterministic aggregates over the complete ordered `(python, system)` environment set.
 
 The client declares only its requirements source:
 
@@ -150,13 +154,16 @@ Requirements-file directives such as `-r` and `-c` are rejected; flatten
 included requirements and constraints into the declared source file before
 using it as a wheelhouse source.
 
-At eval time `mkWheelhouse` turns a `wheels.json` into a hash-pinned wheelhouse,
-and consumers select the committed manifest from their composed interpreter's
-version. `installWheelhouse` installs it into an application derivation:
+At eval time `mkWheelhouse` turns a target-qualified manifest into a hash-pinned wheelhouse. `wheelhouseArtifactPaths` selects exactly one committed manifest from the composed interpreter version and Nix target system. `installWheelhouse` installs it into an application derivation:
 
 ```nix
 python = pkgs.python3;
-wheelManifest = ./. + "/wheels-${python.pythonVersion}.json";
+wheelArtifacts = flake-lib.lib.wheelhouseArtifactPaths {
+  root = ./.;
+  pythonVersion = python.pythonVersion;
+  system = pkgs.system;
+};
+wheelManifest = wheelArtifacts.wheelManifest;
 wheelhouse = flake-lib.lib.mkWheelhouse { inherit pkgs; wheels = wheelManifest; };
 nativeBuildInputs = [ pkgs.uv pkgs.autoPatchelfHook ];
 installPhase = ''

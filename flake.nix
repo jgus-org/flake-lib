@@ -264,6 +264,9 @@
                     network)
                       printf '%s\n' 'curl: (22) The requested URL returned error: 504' >&2
                       ;;
+                    python-tls-eof)
+                      printf '%s\n' 'urllib.error.URLError: <urlopen error [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1082)>' >&2
+                      ;;
                     github-ref)
                       printf '%s\n' "error: unable to download 'https://api.github.com/repos/example/example/commits/v1.2.0': HTTP error 422" >&2
                       printf '%s\n' '"message": "No commit found for SHA: v1.2.0",' >&2

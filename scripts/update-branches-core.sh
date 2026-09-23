@@ -116,7 +116,7 @@ transient_failure_kind() {
     echo github-ref
     return 0
   fi
-  if grep -Eiq '(requested URL returned error: (429|5[0-9]{2})|HTTP[^[:space:]]* (429|5[0-9]{2})|Internal Server Error|Could not resolve host|Failed to connect|Connection reset by peer|Operation timed out|TLS connect error|Temporary failure in name resolution)' "${log}"; then
+  if grep -Eiq '(requested URL returned error: (429|5[0-9]{2})|HTTP[^[:space:]]* (429|5[0-9]{2})|Internal Server Error|Could not resolve host|Failed to connect|Connection reset by peer|Operation timed out|TLS connect error|UNEXPECTED_EOF_WHILE_READING|Temporary failure in name resolution)' "${log}"; then
     echo network
     return 0
   fi

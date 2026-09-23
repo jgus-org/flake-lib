@@ -521,6 +521,17 @@ assert_same_ref main v1.2.0
 [[ "$(cat "${CASE_ROOT}/transient-attempts/update-version-1.2.0")" == 2 ]]
 clear_test_failures
 
+initialize_repository
+mkdir -p "${CASE_ROOT}/transient-attempts"
+export TEST_TRANSIENT_UPDATE_VERSIONS=1.2.0
+export TEST_TRANSIENT_ATTEMPT_DIR="${CASE_ROOT}/transient-attempts"
+export TEST_TRANSIENT_FAILURE_MODE=python-tls-eof
+run_update '1.2.0'
+assert_same_ref main v1.2.0
+[[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 2 ]]
+[[ "$(cat "${CASE_ROOT}/transient-attempts/update-version-1.2.0")" == 2 ]]
+clear_test_failures
+
 # The commits-API lag behind a just-pushed sibling ref ("No commit found for SHA") gets its own longer bounded retry.
 initialize_repository
 mkdir -p "${CASE_ROOT}/transient-attempts"

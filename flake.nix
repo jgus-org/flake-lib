@@ -344,6 +344,9 @@
               flake) printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock" ;;
               store)
                 if [[ "''${*}" == *'downloads.example.test/artifact.bin'* ]]; then
+                  if [[ -n "''${TEST_PREFETCH_LOG:-}" ]]; then
+                    printf '%s\n' mutable-url >> "''${TEST_PREFETCH_LOG}"
+                  fi
                   printf '%s\n' '{"hash":"sha256-mutable"}'
                 else
                   printf '%s\n' '{"hash":"sha256-pypi"}'

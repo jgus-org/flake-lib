@@ -501,22 +501,17 @@ case "${SOURCE_TYPE}" in
       echo "error: mutable-url response has no Last-Modified header" >&2
       exit 1
     fi
-    LAST_MODIFIED_DATE=$(date -u -d "${LAST_MODIFIED}" +%F 2>/dev/null || true)
-    if [[ -z "${LAST_MODIFIED_DATE}" ]]; then
-      echo "error: mutable-url Last-Modified header is invalid" >&2
-      exit 1
+    CURRENT_LAST_MODIFIED=$(nix eval --raw --file "${pin}" lastModified 2>/dev/null || echo "")
+    CURRENT_HASH=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
+    if [[ "${CURRENT_LAST_MODIFIED}" == "${LAST_MODIFIED}" && -n "${CURRENT_HASH}" ]]; then
+      finish_unchanged "main"
     fi
-    new_version="0-unstable-${LAST_MODIFIED_DATE}"
     echo "Prefetching ${MUTABLE_URL}..."
     new_hash=$(nix store prefetch-file --json --hash-type sha256 "${MUTABLE_URL}" | jq -r '.hash')
-    CURRENT_VERSION=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
-    CURRENT_HASH=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
-    if [[ "${CURRENT_VERSION}" == "${new_version}" && "${CURRENT_HASH}" == "${new_hash}" ]]; then
-      finish_unchanged "${new_version}"
-    fi
+    new_version="main"
     printf '%s\n' \
       '{' \
-      "  version = \"${new_version}\";" \
+      "  lastModified = \"${LAST_MODIFIED}\";" \
       "  hash = \"${new_hash}\";" \
       '}' > "${pin}"
     pin_changed=1

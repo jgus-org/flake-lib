@@ -55,7 +55,7 @@ source = {
 };
 ```
 
-`mutable-url` tracks a small artifact whose URL remains stable while its contents change. The updater derives an unstable version from the final response's `Last-Modified` header and always prefetches the current content before comparing the `{ version, hash }` pin.
+`mutable-url` tracks a small artifact whose URL remains stable while its contents change. It is single-branch and has no meaningful upstream version. The updater compares the final response's `Last-Modified` header with the `{ lastModified, hash }` pin and downloads the artifact only when that header changes.
 
 ```nix
 source = {

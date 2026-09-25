@@ -39,7 +39,7 @@ flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash 
 flake-lib.lib.warnIfNewerMajor { pkgs; name; lib ? pkgs.lib; }
 ```
 
-`source.type` is `pypi`, `github`, `github-release-asset`, `huggingface`, or `gitlab`. `github`
+`source.type` is `pypi`, `github`, `github-release-asset`, `huggingface`, `gitlab`, or `mutable-url`. `github`
 hashes the source *tree* at a release tag (`{ version, sourceRev, sourceHash }`);
 GitHub sources whose release tags have an additional prefix set `tagPrefix`, such as `source = { type = "github"; owner = "openai"; repo = "codex"; tagPrefix = "rust-v"; };`. Pins and version branches use the version without that prefix.
 `github-release-asset` instead prefetches a single prebuilt release asset into a
@@ -52,6 +52,15 @@ source = {
   owner = "Suwayomi"; repo = "Suwayomi-Server";
   asset = "Suwayomi-Server-v\${version}.jar";  # tokens: \${version} (tag minus leading v), \${tag}
   # tag = "\${version}";                        # optional; default "v\${version}"
+};
+```
+
+`mutable-url` tracks a small artifact whose URL remains stable while its contents change. It is single-branch and has no meaningful upstream version. The updater compares the final response's `Last-Modified` header with the `{ lastModified, hash }` pin and downloads the artifact only when that header changes.
+
+```nix
+source = {
+  type = "mutable-url";
+  url = "https://downloads.example.test/artifact.bin";
 };
 ```
 

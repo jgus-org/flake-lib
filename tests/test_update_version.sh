@@ -59,6 +59,34 @@ printf '%s\n' \
   'printf "%s\n" "wheelManifestHash=manifest-hash"' > "${ARTIFACT_HOOK}"
 chmod +x "${ARTIFACT_HOOK}"
 
+printf '%s\n' \
+  '{' \
+  '  lastModified = "";' \
+  '  hash = "";' \
+  '}' > "${TEST_ROOT}/pin.nix"
+PREFETCH_LOG="${TEST_ROOT}/mutable-prefetch.log"
+MUTABLE_OUTPUT=$(TEST_PREFETCH_LOG="${PREFETCH_LOG}" \
+  FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=mutable-url \
+  MUTABLE_URL=https://downloads.example.test/artifact.bin \
+  BUILD_ATTR=artifact \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}")
+grep -Fq 'lastModified = "Tue, 25 Aug 2026 12:34:56 GMT";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'hash = "sha256-mutable";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'Updated artifact to main.' <<<"${MUTABLE_OUTPUT}"
+MUTABLE_NOOP_OUTPUT=$(TEST_PREFETCH_LOG="${PREFETCH_LOG}" \
+  FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=mutable-url \
+  MUTABLE_URL=https://downloads.example.test/artifact.bin \
+  BUILD_ATTR=artifact \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}")
+grep -Fq 'Already up to date (main).' <<<"${MUTABLE_NOOP_OUTPUT}"
+[[ "$(wc -l < "${PREFETCH_LOG}")" -eq 1 ]]
+
 write_empty_pin
 run_update release '["rust-v"]' rust-v1.2.3 ''
 assert_pin

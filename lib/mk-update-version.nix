@@ -49,6 +49,7 @@ pkgs.writeShellApplication {
   runtimeInputs = [ pkgs.git ] ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
   runtimeEnv = {
     SOURCE_TYPE = source.type;
+    MUTABLE_URL = source.url or "";
     PYPI_NAME = source.pname or "";
     PYPI_FORMAT = source.format or "sdist";
     GH_OWNER = source.owner or "";

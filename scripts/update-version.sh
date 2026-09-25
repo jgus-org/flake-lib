@@ -66,6 +66,7 @@ HF_MANIFEST_PATH="${HF_MANIFEST_PATH:-}"
 HF_MANIFEST_INCLUDE="${HF_MANIFEST_INCLUDE:-[]}"
 HF_MANIFEST_EXCLUDE="${HF_MANIFEST_EXCLUDE:-[]}"
 HF_MANIFEST_HASH_FIELD="${HF_MANIFEST_HASH_FIELD:-}"
+MUTABLE_URL="${MUTABLE_URL:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
 declare -A extra=()
@@ -478,6 +479,44 @@ source_pin_current() {
 }
 
 case "${SOURCE_TYPE}" in
+  mutable-url)
+    if [[ -n "${requested}" || -n "${requested_ref}" ]]; then
+      echo "error: mutable-url does not support requested versions or refs" >&2
+      exit 1
+    fi
+    if [[ -z "${MUTABLE_URL}" ]]; then
+      echo "error: mutable-url requires source.url" >&2
+      exit 1
+    fi
+    HEADER_OUTPUT=$(retry curl -sSfIL "${MUTABLE_URL}")
+    LAST_MODIFIED=""
+    while IFS= read -r HEADER; do
+      HEADER="${HEADER%$'\r'}"
+      if [[ "${HEADER,,}" == last-modified:* ]]; then
+        LAST_MODIFIED="${HEADER#*:}"
+        LAST_MODIFIED="${LAST_MODIFIED#"${LAST_MODIFIED%%[![:space:]]*}"}"
+      fi
+    done <<<"${HEADER_OUTPUT}"
+    if [[ -z "${LAST_MODIFIED}" ]]; then
+      echo "error: mutable-url response has no Last-Modified header" >&2
+      exit 1
+    fi
+    CURRENT_LAST_MODIFIED=$(nix eval --raw --file "${pin}" lastModified 2>/dev/null || echo "")
+    CURRENT_HASH=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
+    if [[ "${CURRENT_LAST_MODIFIED}" == "${LAST_MODIFIED}" && -n "${CURRENT_HASH}" ]]; then
+      finish_unchanged "main"
+    fi
+    echo "Prefetching ${MUTABLE_URL}..."
+    new_hash=$(nix store prefetch-file --json --hash-type sha256 "${MUTABLE_URL}" | jq -r '.hash')
+    new_version="main"
+    printf '%s\n' \
+      '{' \
+      "  lastModified = \"${LAST_MODIFIED}\";" \
+      "  hash = \"${new_hash}\";" \
+      '}' > "${pin}"
+    pin_changed=1
+    ;;
+
   pypi)
     if [[ -n "${requested}" ]]; then
       new_version="${requested}"

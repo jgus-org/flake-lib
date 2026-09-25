@@ -66,6 +66,7 @@ HF_MANIFEST_PATH="${HF_MANIFEST_PATH:-}"
 HF_MANIFEST_INCLUDE="${HF_MANIFEST_INCLUDE:-[]}"
 HF_MANIFEST_EXCLUDE="${HF_MANIFEST_EXCLUDE:-[]}"
 HF_MANIFEST_HASH_FIELD="${HF_MANIFEST_HASH_FIELD:-}"
+MUTABLE_URL="${MUTABLE_URL:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
 declare -A extra=()
@@ -478,6 +479,49 @@ source_pin_current() {
 }
 
 case "${SOURCE_TYPE}" in
+  mutable-url)
+    if [[ -n "${requested}" || -n "${requested_ref}" ]]; then
+      echo "error: mutable-url does not support requested versions or refs" >&2
+      exit 1
+    fi
+    if [[ -z "${MUTABLE_URL}" ]]; then
+      echo "error: mutable-url requires source.url" >&2
+      exit 1
+    fi
+    HEADER_OUTPUT=$(retry curl -sSfIL "${MUTABLE_URL}")
+    LAST_MODIFIED=""
+    while IFS= read -r HEADER; do
+      HEADER="${HEADER%$'\r'}"
+      if [[ "${HEADER,,}" == last-modified:* ]]; then
+        LAST_MODIFIED="${HEADER#*:}"
+        LAST_MODIFIED="${LAST_MODIFIED#"${LAST_MODIFIED%%[![:space:]]*}"}"
+      fi
+    done <<<"${HEADER_OUTPUT}"
+    if [[ -z "${LAST_MODIFIED}" ]]; then
+      echo "error: mutable-url response has no Last-Modified header" >&2
+      exit 1
+    fi
+    LAST_MODIFIED_DATE=$(date -u -d "${LAST_MODIFIED}" +%F 2>/dev/null || true)
+    if [[ -z "${LAST_MODIFIED_DATE}" ]]; then
+      echo "error: mutable-url Last-Modified header is invalid" >&2
+      exit 1
+    fi
+    new_version="0-unstable-${LAST_MODIFIED_DATE}"
+    echo "Prefetching ${MUTABLE_URL}..."
+    new_hash=$(nix store prefetch-file --json --hash-type sha256 "${MUTABLE_URL}" | jq -r '.hash')
+    CURRENT_VERSION=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
+    CURRENT_HASH=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
+    if [[ "${CURRENT_VERSION}" == "${new_version}" && "${CURRENT_HASH}" == "${new_hash}" ]]; then
+      finish_unchanged "${new_version}"
+    fi
+    printf '%s\n' \
+      '{' \
+      "  version = \"${new_version}\";" \
+      "  hash = \"${new_hash}\";" \
+      '}' > "${pin}"
+    pin_changed=1
+    ;;
+
   pypi)
     if [[ -n "${requested}" ]]; then
       new_version="${requested}"

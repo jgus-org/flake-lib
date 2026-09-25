@@ -82,6 +82,14 @@
           };
           buildAttr = "model";
         };
+        update-version-mutable-url = lib.mkUpdateVersion {
+          inherit pkgs;
+          source = {
+            type = "mutable-url";
+            url = "https://downloads.example.test/artifact.bin";
+          };
+          buildAttr = "artifact";
+        };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
         wheelhouse-example = lib.mkPythonWheelhouse {
           inherit pkgs;
@@ -313,6 +321,7 @@
           name = "curl";
           text = ''
             case "''${*}" in
+              *'downloads.example.test/artifact.bin'*) printf '%s\n' 'HTTP/2 200' 'Last-Modified: Tue, 25 Aug 2026 12:34:56 GMT' ;;
               *'pypi.org/pypi/'*) printf '%s\n' "''${TEST_PYPI_METADATA}" ;;
               *'huggingface.co/api/models/'*) printf '%s\n' "''${TEST_HF_METADATA}" ;;
               *) exit 1 ;;
@@ -333,7 +342,13 @@
                 fi
                 ;;
               flake) printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock" ;;
-              store) printf '%s\n' '{"hash":"sha256-pypi"}' ;;
+              store)
+                if [[ "''${*}" == *'downloads.example.test/artifact.bin'* ]]; then
+                  printf '%s\n' '{"hash":"sha256-mutable"}'
+                else
+                  printf '%s\n' '{"hash":"sha256-pypi"}'
+                fi
+                ;;
               *) exit 1 ;;
             esac
           '';
@@ -387,9 +402,9 @@
         '';
       in
       {
-        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-branches-github-pnpm revalidate-hash; };
+        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-branches-github-pnpm revalidate-hash; };
         checks = {
-          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-branches-github-pnpm revalidate-hash;
+          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;

@@ -59,6 +59,30 @@ printf '%s\n' \
   'printf "%s\n" "wheelManifestHash=manifest-hash"' > "${ARTIFACT_HOOK}"
 chmod +x "${ARTIFACT_HOOK}"
 
+printf '%s\n' \
+  '{' \
+  '  version = "";' \
+  '  hash = "";' \
+  '}' > "${TEST_ROOT}/pin.nix"
+MUTABLE_OUTPUT=$(FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=mutable-url \
+  MUTABLE_URL=https://downloads.example.test/artifact.bin \
+  BUILD_ATTR=artifact \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}")
+grep -Fq 'version = "0-unstable-2026-08-25";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'hash = "sha256-mutable";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'Updated artifact to 0-unstable-2026-08-25.' <<<"${MUTABLE_OUTPUT}"
+MUTABLE_NOOP_OUTPUT=$(FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=mutable-url \
+  MUTABLE_URL=https://downloads.example.test/artifact.bin \
+  BUILD_ATTR=artifact \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}")
+grep -Fq 'Already up to date (0-unstable-2026-08-25).' <<<"${MUTABLE_NOOP_OUTPUT}"
+
 write_empty_pin
 run_update release '["rust-v"]' rust-v1.2.3 ''
 assert_pin

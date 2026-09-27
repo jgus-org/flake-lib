@@ -90,6 +90,23 @@
           };
           buildAttr = "artifact";
         };
+        local-dependencies-api-tests =
+          let
+            updater = lib.mkUpdateVersion {
+              inherit pkgs;
+              source = exampleSource;
+              buildAttr = "example";
+              localDependencies = [ "before-default" { name = "after-source"; args = [ "static-after" ]; } ];
+              localDependencyArgsHook = "${pkgs.coreutils}/bin/true";
+            };
+          in
+          assert updater.localDependencyPaths == [ "../before-default" "../after-source" ];
+          pkgs.runCommand "local-dependencies-api-tests" { } ''
+            grep -Fq before-default ${updater}/bin/update-version
+            grep -Fq ../after-source ${updater}/bin/update-version
+            grep -Fq static-after ${updater}/bin/update-version
+            touch $out
+          '';
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
         wheelhouse-example = lib.mkPythonWheelhouse {
           inherit pkgs;
@@ -339,9 +356,44 @@
                   sed -nE "s/^[[:space:]]*''${FIELD}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "''${FLAKE_ROOT}/pin.nix"
                 elif [[ -n "''${TEST_EXPECT_TRACKED_FILE:-}" ]]; then
                   git -C "''${FLAKE_ROOT}" ls-files --error-unmatch -- "''${TEST_EXPECT_TRACKED_FILE}" >/dev/null
+                elif [[ -n "''${TEST_PARENT_EVAL_LOG:-}" ]]; then
+                  printf '%s\n' "''${FLAKE_ROOT}" >> "''${TEST_PARENT_EVAL_LOG}"
                 fi
                 ;;
-              flake) printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock" ;;
+              flake)
+                case "''${2}" in
+                  lock)
+                    if [[ -z "''${TEST_LOCAL_DEP_LOG:-}" || ! -f "''${FLAKE_ROOT}/flake.lock" ]]; then
+                      printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock"
+                    fi
+                    ;;
+                  update)
+                    INPUT="''${*: -1}"
+                    [[ "''${*}" == *"--flake ''${FLAKE_ROOT} ''${INPUT}" ]]
+                    printf '{"nodes":{"%s":{"locked":{"generation":"%s"}}}}\n' "''${INPUT}" "$(< "''${FLAKE_ROOT}/../''${INPUT}/generation")" > "''${FLAKE_ROOT}/flake.lock"
+                    ;;
+                  prefetch)
+                    ROOT="''${*: -1}"
+                    ROOT="''${ROOT#path:}"
+                    GENERATION=initial
+                    if [[ -f "''${ROOT}/generation" ]]; then
+                      GENERATION=$(< "''${ROOT}/generation")
+                    fi
+                    printf '{"hash":"sha256-%s"}\n' "''${GENERATION}"
+                    ;;
+                  *) exit 1 ;;
+                esac
+                ;;
+              run)
+                [[ "''${2}" == path:*'#update-version' ]]
+                if [[ -n "''${TEST_FAIL_LOCAL_DEP:-}" && "''${2}" == *"''${TEST_FAIL_LOCAL_DEP}"* ]]; then
+                  exit 37
+                fi
+                printf '%s|%s|%s|%s|%s|%s\n' "''${2}" "''${FLAKE_ROOT}" "''${NEW_VERSION:-}" "''${NEW_REV:-}" "''${SOURCE_TYPE:-}" "''${*:4}" >> "''${TEST_LOCAL_DEP_LOG}"
+                printf '%s\0' "''${@:4}" >> "''${TEST_LOCAL_ARGS_LOG}"
+                printf '%s\n' "''${LOCAL_DEPENDENCY_ANCESTORS}" >> "''${TEST_LOCAL_ANCESTOR_LOG}"
+                printf '%s\n' updated > "''${FLAKE_ROOT}/generation"
+                ;;
               store)
                 if [[ "''${*}" == *'downloads.example.test/artifact.bin'* ]]; then
                   if [[ -n "''${TEST_PREFETCH_LOG:-}" ]]; then
@@ -413,7 +465,7 @@
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration local-dependencies-api-tests;
           inherit update-version-tests;
         };
       });

@@ -8,6 +8,8 @@
 , source
 , buildAttr
 , siblings ? [ ]
+, localDependencies ? [ ]
+, localDependencyArgsHook ? null
 , siblingRefsInPin ? false
 , hashMode ? "prefetch"
 , extraHashes ? [ ]
@@ -20,6 +22,17 @@
 assert builtins.elem verification [ "evaluate" "build" ];
 assert artifactFingerprint == "" || artifactHook != null;
 let
+  normalizeLocalDependency = dependency:
+    if builtins.isString dependency then {
+      name = dependency;
+      path = "../${dependency}";
+      args = [ ];
+    } else {
+      name = dependency.name;
+      path = dependency.path or "../${dependency.name}";
+      args = dependency.args or [ ];
+    };
+  normalizedLocalDependencies = map normalizeLocalDependency localDependencies;
   hfManifest = source.manifest or null;
   hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
   effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (artifactFingerprint != "") "artifactFingerprint" ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
@@ -46,7 +59,7 @@ pkgs.writeShellApplication {
   name = "update-version";
   # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
   excludeShellChecks = [ "SC2016" "SC2089" "SC2090" ];
-  runtimeInputs = [ pkgs.git ] ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
+  runtimeInputs = [ pkgs.coreutils pkgs.git ] ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
   runtimeEnv = {
     SOURCE_TYPE = source.type;
     MUTABLE_URL = source.url or "";
@@ -78,12 +91,17 @@ pkgs.writeShellApplication {
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
     VERIFICATION = verification;
     SIBLINGS = builtins.toJSON siblings;
+    LOCAL_DEPENDENCIES = builtins.toJSON normalizedLocalDependencies;
+    LOCAL_DEPENDENCY_ARGS_HOOK = if localDependencyArgsHook == null then "" else "${localDependencyArgsHook}";
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
     ARTIFACT_FINGERPRINT = artifactFingerprint;
     NIX_PATH = "nixpkgs=${pkgs.path}";
     CASCADE_PY = "${../scripts/cascade.py}";
     DEPS_CORE = "${../scripts/deps_core.py}";
+  };
+  passthru = {
+    localDependencyPaths = map (dependency: dependency.path) normalizedLocalDependencies;
   };
   text = ''exec ${../scripts/update-version.sh} "$@"'';
 }

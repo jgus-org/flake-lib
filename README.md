@@ -19,7 +19,7 @@ flake-lib.lib.mkLeafFlake {
 # => packages.<system> = { <attr>; update-version; update-branches; default; }
 
 # Low-level: bespoke flakes supply their own package derivation.
-flake-lib.lib.mkUpdateVersion  { pkgs; source; buildAttr; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; artifactHook ? null; verification ? if buildFailureHash == null then "evaluate" else "build"; markerEnvironment ? {}; artifactFingerprint ? ""; }
+flake-lib.lib.mkUpdateVersion  { pkgs; source; buildAttr; siblings ? []; localDependencies ? []; localDependencyArgsHook ? null; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; artifactHook ? null; verification ? if buildFailureHash == null then "evaluate" else "build"; markerEnvironment ? {}; artifactFingerprint ? ""; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
 flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
@@ -97,6 +97,10 @@ PyPI producers resolve sibling requirements from their release metadata. Exact p
 GitHub producers read sibling requirements from `reqFile = "requirements.txt"` by default. Set `reqFormat = "pyproject"`, `reqFile = "pyproject.toml"`, and `reqGroups = [ "extra-name" ]` to combine `[project].dependencies` with selected optional-dependency groups. Environment markers are evaluated before the compatible branch is selected.
 
 Set `siblingRefsInPin = true` to write the resolved refs under `pin.nix.dependencies` instead of rewriting `flake.nix`. The updater applies those refs while regenerating `flake.lock`, so each historical branch owns its complete source and dependency selection through `pin.nix` and `flake.lock` while `flake.nix` retains generic input URLs.
+
+`localDependencies` runs local subflakes through their own `update-version` commands after this flake's source version and revision are selected, before its pin, hash, lock, and final verification. An entry is either a name string (using `../<name>`) or `{ name; path ? "../${name}"; args ? []; }`. Every entry receives `FLAKE_ROOT` set to its canonical local root. `localDependencyArgsHook`, when set, runs once with `NEW_VERSION`, `NEW_REV`, `FLAKE_ROOT` (the parent root), and the source updater environment; it must emit exactly one JSON object from dependency names to arrays of string arguments. Keys must name configured dependencies. A hook entry replaces that dependency's static `args`; names omitted by the hook keep their static arguments. Local path inputs whose flake content changed refresh with `nix flake update --flake <parent> <input>`, including their transitive lock entries. Dependencies run even when the parent source pin is already current; the parent is then locked and verified. Nested local dependency cycles fail.
+
+The returned updater derivation exposes its normalized declared paths as `localDependencyPaths`.
 
 Update verification evaluates the target package's derivation on every run. Set `verification = "build"` only when the producer must realize the package before publishing its pin. A non-null `buildFailureHash` selects build verification by default; set `verification = "evaluate"` when hash discovery is sufficient and realizing the full package is prohibitively expensive for the updater.
 

@@ -23,7 +23,7 @@
 
 set -euo pipefail
 
-FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
+FLAKE_ROOT=$(realpath -m "${FLAKE_ROOT:-${PWD}}")
 pin="${FLAKE_ROOT}/pin.nix"
 flake="${FLAKE_ROOT}/flake.nix"
 
@@ -39,6 +39,10 @@ pin_changed=0
 new_version=""
 CASCADE_CHANGED=0
 LOCK_CHANGED=0
+LOCAL_DEPENDENCIES_RAN=0
+LOCAL_DEPENDENCY_REFRESH_INPUTS='[]'
+LOCAL_DEPENDENCY_ARGS='{}'
+LOCAL_DEPENDENCY_ARGS_READY=0
 
 # Optional seams (defaulted so simple pypi leaves need not set them):
 HASH_MODE="${HASH_MODE:-prefetch}"        # prefetch | build-failure (source/vendor hash)
@@ -49,6 +53,9 @@ ARTIFACT_HOOK="${ARTIFACT_HOOK:-}"        # consumer script: regenerate vendored
 ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_OWNED_FILES:-}"
 VERIFICATION="${VERIFICATION:-evaluate}"
 SIBLINGS="${SIBLINGS:-[]}"
+LOCAL_DEPENDENCIES="${LOCAL_DEPENDENCIES:-[]}"
+LOCAL_DEPENDENCY_ARGS_HOOK="${LOCAL_DEPENDENCY_ARGS_HOOK:-}"
+LOCAL_DEPENDENCY_ANCESTORS="${LOCAL_DEPENDENCY_ANCESTORS:-[]}"
 SIBLING_REFS_IN_PIN="${SIBLING_REFS_IN_PIN:-}"
 MARKER_ENV="${MARKER_ENV:-}"
 CASCADE_PY="${CASCADE_PY:-}"
@@ -72,6 +79,71 @@ mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 declare -A extra=()
 declare -A HF_HASHES=()
 RESOLVED_SIBLING_REFS='{}'
+
+if ! jq -e 'type == "array" and all(.[]; type == "object" and (.name | type == "string") and (.path | type == "string") and (.args | type == "array") and all(.args[]; type == "string"))' <<<"${LOCAL_DEPENDENCIES}" >/dev/null; then
+  echo "error: LOCAL_DEPENDENCIES must contain dependency specs" >&2
+  exit 1
+fi
+LOCAL_DEPENDENCIES_CONFIGURED=$(jq 'length' <<<"${LOCAL_DEPENDENCIES}")
+
+if ! jq -e 'type == "array" and all(.[]; type == "string")' <<<"${LOCAL_DEPENDENCY_ANCESTORS}" >/dev/null; then
+  echo "error: LOCAL_DEPENDENCY_ANCESTORS must contain canonical roots" >&2
+  exit 1
+fi
+
+if jq -e --arg root "${FLAKE_ROOT}" 'index($root) != null' <<<"${LOCAL_DEPENDENCY_ANCESTORS}" >/dev/null; then
+  echo "error: local dependency cycle at ${FLAKE_ROOT}" >&2
+  exit 1
+fi
+
+prepare_local_dependency_args() {
+  local hook_output
+  (( LOCAL_DEPENDENCY_ARGS_READY )) && return 0
+  LOCAL_DEPENDENCY_ARGS_READY=1
+  [[ -z "${LOCAL_DEPENDENCY_ARGS_HOOK}" ]] && return 0
+  hook_output=$(NEW_VERSION="${new_version}" NEW_REV="${new_rev:-}" FLAKE_ROOT="${FLAKE_ROOT}" "${LOCAL_DEPENDENCY_ARGS_HOOK}")
+  if ! jq -e -s 'length == 1 and (.[0] | type == "object" and all(.[]; type == "array" and all(.[]; type == "string")))' <<<"${hook_output}" >/dev/null; then
+    echo "error: local dependency args hook must emit an object of string arrays" >&2
+    return 1
+  fi
+  LOCAL_DEPENDENCY_ARGS=$(jq -c -s '.[0]' <<<"${hook_output}")
+  if ! jq -e --argjson dependencies "${LOCAL_DEPENDENCIES}" 'keys_unsorted - ($dependencies | map(.name)) | length == 0' <<<"${LOCAL_DEPENDENCY_ARGS}" >/dev/null; then
+    echo "error: local dependency args hook returned unknown dependencies" >&2
+    return 1
+  fi
+}
+
+run_local_dependencies() {
+  local index count name path root static_args args_json ancestors before_hash after_hash
+  local -a args=()
+  count=$(jq 'length' <<<"${LOCAL_DEPENDENCIES}")
+  (( count == 0 )) && return 0
+  prepare_local_dependency_args
+  for (( index = 0; index < count; index++ )); do
+    name=$(jq -r ".[$index].name" <<<"${LOCAL_DEPENDENCIES}")
+    path=$(jq -r ".[$index].path" <<<"${LOCAL_DEPENDENCIES}")
+    if [[ "${path}" == /* ]]; then
+      root=$(realpath -m "${path}")
+    else
+      root=$(realpath -m "${FLAKE_ROOT}/${path}")
+    fi
+    static_args=$(jq -c ".[$index].args" <<<"${LOCAL_DEPENDENCIES}")
+    args_json=$(jq -c --arg name "${name}" --argjson static "${static_args}" 'if has($name) then .[$name] else $static end' <<<"${LOCAL_DEPENDENCY_ARGS}")
+    args=()
+    while IFS= read -r -d '' arg; do
+      args+=("${arg}")
+    done < <(jq -j '.[] + "\u0000"' <<<"${args_json}")
+    ancestors=$(jq -c --arg root "${FLAKE_ROOT}" '. + [$root]' <<<"${LOCAL_DEPENDENCY_ANCESTORS}")
+    before_hash=$(nix flake prefetch --json "path:${root}" | jq -r '.hash')
+    echo "Updating local dependency ${name}."
+    NEW_VERSION="${new_version}" NEW_REV="${new_rev:-}" FLAKE_ROOT="${root}" LOCAL_DEPENDENCY_ANCESTORS="${ancestors}" nix run "path:${root}#update-version" -- "${args[@]}"
+    after_hash=$(nix flake prefetch --json "path:${root}" | jq -r '.hash')
+    if [[ "${before_hash}" != "${after_hash}" ]]; then
+      LOCAL_DEPENDENCY_REFRESH_INPUTS=$(jq -c --arg name "${name}" '. + [$name]' <<<"${LOCAL_DEPENDENCY_REFRESH_INPUTS}")
+    fi
+    LOCAL_DEPENDENCIES_RAN=1
+  done
+}
 
 evaluate_package() {
   echo "Evaluating ${BUILD_ATTR}..."
@@ -231,6 +303,21 @@ update_flake_lock() {
     done
   fi
   nix flake lock --option post-build-hook "" "${OVERRIDE_ARGS[@]}" "${FLAKE_ROOT}"
+  AFTER=$(sha256sum "${FLAKE_ROOT}/flake.lock")
+  if [[ "${BEFORE}" != "${AFTER}" ]]; then
+    LOCK_CHANGED=1
+  fi
+}
+
+refresh_local_dependency_locks() {
+  local BEFORE="" AFTER INDEX NAME
+  if [[ -f "${FLAKE_ROOT}/flake.lock" ]]; then
+    BEFORE=$(sha256sum "${FLAKE_ROOT}/flake.lock")
+  fi
+  for (( INDEX = 0; INDEX < $(jq 'length' <<<"${LOCAL_DEPENDENCY_REFRESH_INPUTS}"); INDEX++ )); do
+    NAME=$(jq -r ".[$INDEX]" <<<"${LOCAL_DEPENDENCY_REFRESH_INPUTS}")
+    nix flake update --option post-build-hook "" --flake "${FLAKE_ROOT}" "${NAME}"
+  done
   AFTER=$(sha256sum "${FLAKE_ROOT}/flake.lock")
   if [[ "${BEFORE}" != "${AFTER}" ]]; then
     LOCK_CHANGED=1
@@ -503,18 +590,22 @@ case "${SOURCE_TYPE}" in
     fi
     CURRENT_LAST_MODIFIED=$(nix eval --raw --file "${pin}" lastModified 2>/dev/null || echo "")
     CURRENT_HASH=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
-    if [[ "${CURRENT_LAST_MODIFIED}" == "${LAST_MODIFIED}" && -n "${CURRENT_HASH}" ]]; then
+    new_version="main"
+    new_rev=""
+    run_local_dependencies
+    if [[ "${CURRENT_LAST_MODIFIED}" == "${LAST_MODIFIED}" && -n "${CURRENT_HASH}" && ${LOCAL_DEPENDENCIES_CONFIGURED} -eq 0 ]]; then
       finish_unchanged "main"
     fi
-    echo "Prefetching ${MUTABLE_URL}..."
-    new_hash=$(nix store prefetch-file --json --hash-type sha256 "${MUTABLE_URL}" | jq -r '.hash')
-    new_version="main"
-    printf '%s\n' \
-      '{' \
-      "  lastModified = \"${LAST_MODIFIED}\";" \
-      "  hash = \"${new_hash}\";" \
-      '}' > "${pin}"
-    pin_changed=1
+    if [[ "${CURRENT_LAST_MODIFIED}" != "${LAST_MODIFIED}" || -z "${CURRENT_HASH}" ]]; then
+      echo "Prefetching ${MUTABLE_URL}..."
+      new_hash=$(nix store prefetch-file --json --hash-type sha256 "${MUTABLE_URL}" | jq -r '.hash')
+      printf '%s\n' \
+        '{' \
+        "  lastModified = \"${LAST_MODIFIED}\";" \
+        "  hash = \"${new_hash}\";" \
+        '}' > "${pin}"
+      pin_changed=1
+    fi
     ;;
 
   pypi)
@@ -536,13 +627,15 @@ case "${SOURCE_TYPE}" in
       echo "error: no ${PYPI_FORMAT} artifact for ${PYPI_NAME} ${new_version}" >&2
       exit 1
     fi
+    new_rev=""
+    run_local_dependencies
     new_hash=$(nix store prefetch-file --json --hash-type sha256 "${url}" | jq -r '.hash')
     if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
       echo "Resolving sibling cascades..."
       resolve_siblings_from_metadata "${rel}"
     fi
     if pypi_pin_current "${new_version}" "${new_hash}"; then
-      if [[ -z "${SIBLING_REFS_IN_PIN}" ]] && (( CASCADE_CHANGED == 0 )); then
+      if [[ -z "${SIBLING_REFS_IN_PIN}" ]] && (( CASCADE_CHANGED == 0 && LOCAL_DEPENDENCIES_CONFIGURED == 0 )); then
         finish_unchanged "${cur_version}"
       fi
       echo "Source pin already up to date (${cur_version})."
@@ -605,12 +698,13 @@ case "${SOURCE_TYPE}" in
         exit 1
       fi
     fi
+    run_local_dependencies
     if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
       echo "Resolving sibling cascades..."
       resolve_siblings_from_source "${new_rev}"
     fi
     if [[ "${HASH_MODE}" != "build-failure" ]] && source_pin_current "${new_version}" "${new_rev}"; then
-      if [[ -z "${SIBLING_REFS_IN_PIN}" ]] && (( CASCADE_CHANGED == 0 )); then
+      if [[ -z "${SIBLING_REFS_IN_PIN}" ]] && (( CASCADE_CHANGED == 0 && LOCAL_DEPENDENCIES_CONFIGURED == 0 )); then
         finish_unchanged "${new_version}"
       fi
       echo "Source pin already up to date (${new_version})."
@@ -646,26 +740,31 @@ case "${SOURCE_TYPE}" in
     fi
     cur_version=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
     cur_hash=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
+    new_rev=""
+    run_local_dependencies
     if [[ "${cur_version}" == "${new_version}" && -n "${cur_hash}" ]]; then
-      finish_unchanged "${new_version}"
-    fi
-    tag_tmpl="${GH_TAG}"
-    [[ -n "${tag_tmpl}" ]] || tag_tmpl='v${version}'
-    tag="${tag_tmpl//'${version}'/${new_version}}"
-    asset="${GH_ASSET//'${version}'/${new_version}}"
-    asset="${asset//'${tag}'/${tag}}"
-    url="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/${tag}/${asset}"
-    echo "Prefetching ${url}..."
-    new_hash=$(nix store prefetch-file --json --hash-type sha256 "${url}" | jq -r '.hash')
-    echo "Writing pin.nix (${cur_version:-<none>} -> ${new_version})..."
-    cat > "${pin}" <<EOF
+      if (( LOCAL_DEPENDENCIES_CONFIGURED == 0 )); then
+        finish_unchanged "${new_version}"
+      fi
+    else
+      tag_tmpl="${GH_TAG}"
+      [[ -n "${tag_tmpl}" ]] || tag_tmpl='v${version}'
+      tag="${tag_tmpl//'${version}'/${new_version}}"
+      asset="${GH_ASSET//'${version}'/${new_version}}"
+      asset="${asset//'${tag}'/${tag}}"
+      url="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/${tag}/${asset}"
+      echo "Prefetching ${url}..."
+      new_hash=$(nix store prefetch-file --json --hash-type sha256 "${url}" | jq -r '.hash')
+      echo "Writing pin.nix (${cur_version:-<none>} -> ${new_version})..."
+      cat > "${pin}" <<EOF
 # Auto-managed by \`nix run .#update-version\`. Manual edits will be overwritten by the next bump.
 {
   version = "${new_version}";
   hash = "${new_hash}";
 }
 EOF
-    pin_changed=1
+      pin_changed=1
+    fi
     ;;
 
   huggingface)
@@ -683,19 +782,24 @@ EOF
       exit 1
     fi
     new_version="0-unstable-${HF_DATE}"
+    new_rev="${HF_REV}"
+    run_local_dependencies
     write_huggingface_manifest "${HF_METADATA}"
     run_artifact_hook "${HF_REV}" "${new_version}"
     if huggingface_pin_current "${new_version}" "${HF_REV}"; then
-      finish_unchanged "${new_version}"
+      if (( LOCAL_DEPENDENCIES_CONFIGURED == 0 )); then
+        finish_unchanged "${new_version}"
+      fi
+    else
+      while IFS= read -r HF_FILE; do
+        HF_FILE_URL=$(jq -rn --arg VALUE "${HF_FILE}" '$VALUE | split("/") | map(@uri) | join("/")')
+        echo "Prefetching ${HF_FILE}..."
+        HF_HASHES["${HF_FILE}"]=$(nix store prefetch-file --json --hash-type sha256 "https://huggingface.co/${HF_REPO}/resolve/${HF_REV}/${HF_FILE_URL}" | jq -r '.hash')
+      done < <(jq -r '.[]' <<<"${HF_FILES}")
+      echo "Writing pin.nix (-> ${new_version})..."
+      write_huggingface_pin "${new_version}" "${HF_REV}"
+      pin_changed=1
     fi
-    while IFS= read -r HF_FILE; do
-      HF_FILE_URL=$(jq -rn --arg VALUE "${HF_FILE}" '$VALUE | split("/") | map(@uri) | join("/")')
-      echo "Prefetching ${HF_FILE}..."
-      HF_HASHES["${HF_FILE}"]=$(nix store prefetch-file --json --hash-type sha256 "https://huggingface.co/${HF_REPO}/resolve/${HF_REV}/${HF_FILE_URL}" | jq -r '.hash')
-    done < <(jq -r '.[]' <<<"${HF_FILES}")
-    echo "Writing pin.nix (-> ${new_version})..."
-    write_huggingface_pin "${new_version}" "${HF_REV}"
-    pin_changed=1
     ;;
 
   gitlab)
@@ -730,12 +834,13 @@ EOF
       new_date=$(jq -r '.committed_date' <<<"${commit}" | cut -d'T' -f1)
       new_version="0-unstable-${new_date}"
     fi
+    run_local_dependencies
     if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
       echo "Resolving sibling cascades..."
       resolve_siblings_from_source "${new_rev}"
     fi
     if [[ "${HASH_MODE}" != "build-failure" ]] && source_pin_current "${new_version}" "${new_rev}"; then
-      if [[ -z "${SIBLING_REFS_IN_PIN}" ]] && (( CASCADE_CHANGED == 0 )); then
+      if [[ -z "${SIBLING_REFS_IN_PIN}" ]] && (( CASCADE_CHANGED == 0 && LOCAL_DEPENDENCIES_CONFIGURED == 0 )); then
         finish_unchanged "${new_version}"
       fi
       echo "Source pin already up to date (${new_version})."
@@ -762,12 +867,17 @@ EOF
     ;;
 esac
 
-if (( pin_changed || CASCADE_CHANGED )) || [[ -n "${SIBLING_REFS_IN_PIN}" ]]; then
+if [[ "${LOCAL_DEPENDENCY_REFRESH_INPUTS}" != "[]" ]]; then
+  echo "Refreshing local flake inputs..."
+  refresh_local_dependency_locks
+fi
+
+if (( pin_changed || CASCADE_CHANGED || LOCAL_DEPENDENCIES_RAN )) || [[ -n "${SIBLING_REFS_IN_PIN}" ]]; then
   echo "Updating flake.lock..."
   update_flake_lock
 fi
 
-if (( pin_changed == 0 && CASCADE_CHANGED == 0 && LOCK_CHANGED == 0 )); then
+if (( pin_changed == 0 && CASCADE_CHANGED == 0 && LOCK_CHANGED == 0 && LOCAL_DEPENDENCIES_CONFIGURED == 0 )); then
   finish_unchanged "${new_version}"
 fi
 

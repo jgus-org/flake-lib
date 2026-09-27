@@ -326,3 +326,146 @@ HF_MISMATCH_OUTPUT=$(TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
 grep -Fqx huggingface "${ARTIFACT_LOG}"
 grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
 grep -Fq 'Updated model to 0-unstable-2026-08-26.' <<<"${HF_MISMATCH_OUTPUT}"
+
+LOCAL_PARENT="${TEST_ROOT}/local-parent"
+mkdir -p "${LOCAL_PARENT}" "${TEST_ROOT}/local-child" "${TEST_ROOT}/hook-child" "${TEST_ROOT}/failing-child"
+cat > "${LOCAL_PARENT}/pin.nix" <<'EOF'
+{
+  version = "1.2.3";
+  sourceRev = "source-revision";
+  sourceHash = "sha256-source";
+}
+EOF
+printf '%s\n' stale > "${LOCAL_PARENT}/flake.lock"
+LOCAL_DEP_LOG="${TEST_ROOT}/local-dependencies.log"
+LOCAL_ARGS_LOG="${TEST_ROOT}/local-dependency-args.log"
+LOCAL_ANCESTOR_LOG="${TEST_ROOT}/local-dependency-ancestors.log"
+LOCAL_HOOK_LOG="${TEST_ROOT}/local-dependency-args-hook.log"
+LOCAL_ARGS_HOOK="${TEST_ROOT}/local-dependency-args-hook"
+printf '%s\n' \
+  "#!${TEST_BASH}/bin/bash" \
+  'printf "%s|%s|%s|%s\n" "${FLAKE_ROOT}" "${NEW_VERSION}" "${NEW_REV}" "${SOURCE_TYPE}" >> "${TEST_LOCAL_HOOK_LOG}"' \
+  'printf "%s\n" '\''{"hook-child":["hook-value"]}'\''' > "${LOCAL_ARGS_HOOK}"
+chmod +x "${LOCAL_ARGS_HOOK}"
+run_local_dependency_parent() {
+  TEST_LOCAL_DEP_LOG="${LOCAL_DEP_LOG}" \
+  TEST_LOCAL_ARGS_LOG="${LOCAL_ARGS_LOG}" \
+  TEST_LOCAL_ANCESTOR_LOG="${LOCAL_ANCESTOR_LOG}" \
+  TEST_LOCAL_HOOK_LOG="${LOCAL_HOOK_LOG}" \
+  TEST_PARENT_EVAL_LOG="${TEST_ROOT}/parent-evaluations.log" \
+  FLAKE_ROOT="${LOCAL_PARENT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  TEST_TAGS='' \
+  BUILD_ATTR=parent \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='[]' \
+  PIN_HASHES='[]' \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  LOCAL_DEPENDENCIES='[{"name":"local-child","path":"../local-child","args":["static\nnewline"]},{"name":"hook-child","path":"../hook-child","args":["static-overridden"]}]' \
+  LOCAL_DEPENDENCY_ARGS_HOOK="${LOCAL_ARGS_HOOK}" \
+  bash "${UPDATE_VERSION}" 1.2.3
+}
+
+LOCAL_OUTPUT_LOG="${TEST_ROOT}/local-parent-output.log"
+run_local_dependency_parent > "${LOCAL_OUTPUT_LOG}"
+LOCAL_OUTPUT=$(< "${LOCAL_OUTPUT_LOG}")
+grep -Fqx "${LOCAL_PARENT}|1.2.3|source-revision|github" "${LOCAL_HOOK_LOG}"
+grep -Fqx "path:${TEST_ROOT}/local-child#update-version|${TEST_ROOT}/local-child|1.2.3|source-revision|github|static" "${LOCAL_DEP_LOG}"
+grep -Fqx "newline" "${LOCAL_DEP_LOG}"
+grep -Fqx "path:${TEST_ROOT}/hook-child#update-version|${TEST_ROOT}/hook-child|1.2.3|source-revision|github|hook-value" "${LOCAL_DEP_LOG}"
+mapfile -t LOCAL_DEP_LINES < "${LOCAL_DEP_LOG}"
+[[ "${LOCAL_DEP_LINES[0]}" == "path:${TEST_ROOT}/local-child#update-version|${TEST_ROOT}/local-child|1.2.3|source-revision|github|static" ]]
+[[ "${LOCAL_DEP_LINES[2]}" == "path:${TEST_ROOT}/hook-child#update-version|${TEST_ROOT}/hook-child|1.2.3|source-revision|github|hook-value" ]]
+[[ "$(od -An -tx1 "${LOCAL_ARGS_LOG}" | tr -d ' \n')" == '7374617469630a6e65776c696e6500686f6f6b2d76616c756500' ]]
+grep -Fqx "[\"${LOCAL_PARENT}\"]" "${LOCAL_ANCESTOR_LOG}"
+grep -Fq 'Refreshing local flake inputs...' <<<"${LOCAL_OUTPUT}"
+grep -Fq '"generation":"updated"' "${LOCAL_PARENT}/flake.lock"
+[[ "$(wc -l < "${TEST_ROOT}/parent-evaluations.log")" -eq 1 ]]
+
+run_local_dependency_parent > "${LOCAL_OUTPUT_LOG}"
+LOCAL_NOOP_OUTPUT=$(< "${LOCAL_OUTPUT_LOG}")
+[[ "$(wc -l < "${LOCAL_HOOK_LOG}")" -eq 2 ]]
+[[ "$(wc -l < "${LOCAL_DEP_LOG}")" -eq 6 ]]
+[[ "$(wc -l < "${TEST_ROOT}/parent-evaluations.log")" -eq 2 ]]
+grep -Fq 'parent: pin unchanged (1.2.3).' <<<"${LOCAL_NOOP_OUTPUT}"
+! grep -Fq 'Refreshing local flake inputs...' <<<"${LOCAL_NOOP_OUTPUT}"
+
+printf '%s\n' stale > "${LOCAL_PARENT}/flake.lock"
+if TEST_LOCAL_DEP_LOG="${LOCAL_DEP_LOG}" \
+  TEST_LOCAL_ARGS_LOG="${LOCAL_ARGS_LOG}" \
+  TEST_FAIL_LOCAL_DEP=failing-child \
+  FLAKE_ROOT="${LOCAL_PARENT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  BUILD_ATTR=parent \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='[]' \
+  PIN_HASHES='[]' \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  LOCAL_DEPENDENCIES='[{"name":"failing-child","path":"../failing-child","args":[]}]' \
+  bash "${UPDATE_VERSION}" 1.2.3; then
+  exit 1
+fi
+grep -Fqx stale "${LOCAL_PARENT}/flake.lock"
+
+UNKNOWN_ARGS_HOOK="${TEST_ROOT}/unknown-local-dependency-args-hook"
+printf '%s\n' "#!${TEST_BASH}/bin/bash" 'printf "%s\n" '\''{"unknown-child":["arg"]}'\''' > "${UNKNOWN_ARGS_HOOK}"
+chmod +x "${UNKNOWN_ARGS_HOOK}"
+if FLAKE_ROOT="${LOCAL_PARENT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  BUILD_ATTR=parent \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='[]' \
+  PIN_HASHES='[]' \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  LOCAL_DEPENDENCIES='[{"name":"local-child","path":"../local-child","args":[]}]' \
+  LOCAL_DEPENDENCY_ARGS_HOOK="${UNKNOWN_ARGS_HOOK}" \
+  bash "${UPDATE_VERSION}" 1.2.3 >/dev/null 2>&1; then
+  exit 1
+fi
+
+MULTI_ARGS_HOOK="${TEST_ROOT}/multiple-local-dependency-args-hook"
+printf '%s\n' "#!${TEST_BASH}/bin/bash" 'printf "%s\n" '\''{"local-child":[]}'\'' '\''{"local-child":[]}'\''' > "${MULTI_ARGS_HOOK}"
+chmod +x "${MULTI_ARGS_HOOK}"
+if FLAKE_ROOT="${LOCAL_PARENT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  BUILD_ATTR=parent \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='[]' \
+  PIN_HASHES='[]' \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  LOCAL_DEPENDENCIES='[{"name":"local-child","path":"../local-child","args":[]}]' \
+  LOCAL_DEPENDENCY_ARGS_HOOK="${MULTI_ARGS_HOOK}" \
+  bash "${UPDATE_VERSION}" 1.2.3 >/dev/null 2>&1; then
+  exit 1
+fi
+
+if FLAKE_ROOT="${LOCAL_PARENT}" \
+  LOCAL_DEPENDENCY_ANCESTORS="[\"${LOCAL_PARENT}\"]" \
+  SOURCE_TYPE=github \
+  bash "${UPDATE_VERSION}" 1.2.3 >/dev/null 2>&1; then
+  exit 1
+fi

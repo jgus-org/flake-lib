@@ -95,6 +95,22 @@
           inherit pkgs;
           sources = [{ kind = "repo-file"; path = "requirements.in"; }];
         };
+        huggingface-model-manager = lib.mkHuggingFaceModelManager {
+          inherit pkgs;
+          name = "huggingface-model-manager";
+          manifest = pkgs.writeText "huggingface-model-manager-manifest.json" ''
+            {
+              "repo": "example/model",
+              "revision": "revision-one",
+              "total_bytes": 32,
+              "files": [
+                { "path": "sha256.txt", "bytes": 15, "sha256": "85ad1c506a0c0e1eb1b7d36d4a5128b90d2e411863baf1f275279aec8b3e458a" },
+                { "path": "git-blob.txt", "bytes": 17, "sha256": null, "git_blob": "9a5c9c50f67f7be093ed07dc3bc185066b5c9067" }
+              ]
+            }
+          '';
+          model = { };
+        };
         wheelhouse-example-hook = wheelhouse-example.hook;
         npm-generated-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; source = "generated"; };
         yarn-hook = lib.mkJsDepsHook { inherit pkgs; manager = "yarn"; };
@@ -236,6 +252,14 @@
             ${lib.installWheelhouse { inherit python; target = "$out"; inherit wheelhouse; }}
             PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig, msgpack'
           '';
+        huggingface-model-manager-tests = pkgs.runCommand "huggingface-model-manager-tests"
+          {
+            nativeBuildInputs = [ pkgs.python3 huggingface-model-manager ];
+            MODEL_MANAGER = "${huggingface-model-manager}/bin/huggingface-model-manager";
+          } ''
+          python3 ${./tests/test_huggingface_model_manager.py}
+          touch "$out"
+        '';
         update-branches-test-gh = pkgs.writeShellApplication {
           name = "gh";
           text = ''printf '%s\n' "''${TEST_VERSIONS}"'';
@@ -413,7 +437,7 @@
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration huggingface-model-manager-tests;
           inherit update-version-tests;
         };
       });

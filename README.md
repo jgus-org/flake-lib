@@ -25,6 +25,7 @@ flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
 flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
+flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; stampName ? ".${name}-verified.json"; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
 flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + systems + targets
@@ -86,6 +87,17 @@ source = {
     path = "model-manifest.json";
     exclude = [ "^\\." "\\.complete\\.json$" ];
   };
+};
+```
+
+`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing.
+
+```nix
+modelManager = flake-lib.lib.mkHuggingFaceModelManager {
+  inherit pkgs;
+  name = "example-model";
+  manifest = ./model-manifest.json;
+  model = { repository = "example/large-model"; };
 };
 ```
 

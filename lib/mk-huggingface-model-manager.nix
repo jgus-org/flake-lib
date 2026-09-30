@@ -22,6 +22,6 @@ in
 }).overrideAttrs
   (oldAttrs: {
     passthru = (oldAttrs.passthru or { }) // {
-      inherit model;
+      inherit model stampName;
     };
   })

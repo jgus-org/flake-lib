@@ -15,7 +15,8 @@ in
   inherit name;
   runtimeInputs = [ python ];
   text = ''
-    export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+    # A token is used only when explicitly provided in the caller's environment (e.g. an sops template
+    # exporting HF_TOKEN for gated repositories); the local HF token store is never picked up implicitly.
     export HF_HUB_DISABLE_TELEMETRY=1
     exec ${python}/bin/python ${../scripts/huggingface-model-manager.py} ${manifest} ${pkgs.lib.escapeShellArg stampName} "''${@}"
   '';

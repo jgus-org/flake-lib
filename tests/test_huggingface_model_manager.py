@@ -48,6 +48,32 @@ class HuggingFaceModelManagerTests(unittest.TestCase):
         (self.model_directory / ".huggingface-model-manager-verified.json").write_text("{}")
         self.run_manager("check", succeeds=False)
 
+    def capture_download_kwargs(self, environment: dict[str, str]) -> dict:
+        fake_hub = self.root / "fake_hub_capture"
+        if not fake_hub.exists():
+            fake_hub.mkdir()
+        capture_file = self.root / "captured.json"
+        (fake_hub / "huggingface_hub.py").write_text(
+            "import json, os\n"
+            "def snapshot_download(**kwargs):\n"
+            "    with open(os.environ['CAPTURE_FILE'], 'w') as stream:\n"
+            "        json.dump(kwargs, stream, default=str)\n"
+        )
+        self.run_manager("download", environment={**environment, "CAPTURE_FILE": str(capture_file)})
+        return __import__("json").loads(capture_file.read_text())
+
+    def test_download_anonymous_without_token(self) -> None:
+        self.run_manager("verify")
+        kwargs = self.capture_download_kwargs({"PYTHONPATH": str(self.root / "fake_hub_capture")})
+        self.assertIs(kwargs["token"], False)
+
+    def test_download_uses_hf_token_environment(self) -> None:
+        self.run_manager("verify")
+        kwargs = self.capture_download_kwargs(
+            {"PYTHONPATH": str(self.root / "fake_hub_capture"), "HF_TOKEN": "test-token"}
+        )
+        self.assertEqual(kwargs["token"], "test-token")
+
     def test_failed_download_invalidates_stamp(self) -> None:
         self.run_manager("verify")
         fake_hub = self.root / "fake_hub"

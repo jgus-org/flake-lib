@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import os
 from pathlib import Path
 
 
@@ -71,7 +72,7 @@ def main() -> None:
                 revision=revision,
                 local_dir=args.directory,
                 allow_patterns=[item["path"] for item in files],
-                token=False,
+                token=os.environ.get("HF_TOKEN") or False,
                 max_workers=4,
             )
         if args.action == "check":

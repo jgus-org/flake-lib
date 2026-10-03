@@ -15,7 +15,6 @@ in
   inherit name;
   runtimeInputs = [ python ];
   text = ''
-    export HF_HUB_DISABLE_IMPLICIT_TOKEN=1
     export HF_HUB_DISABLE_TELEMETRY=1
     exec ${python}/bin/python ${../scripts/huggingface-model-manager.py} ${manifest} ${pkgs.lib.escapeShellArg stampName} "''${@}"
   '';

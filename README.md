@@ -90,7 +90,7 @@ source = {
 };
 ```
 
-`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing.
+`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing. `download` authenticates against Hugging Face only when the caller's environment exports `HF_TOKEN`; the local HF token store is never picked up implicitly.
 
 ```nix
 modelManager = flake-lib.lib.mkHuggingFaceModelManager {

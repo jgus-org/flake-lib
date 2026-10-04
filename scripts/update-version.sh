@@ -479,6 +479,86 @@ source_pin_current() {
 }
 
 case "${SOURCE_TYPE}" in
+  oci)
+    if [[ -n "${requested_ref}" ]]; then
+      echo "error: oci accepts one tag or digest" >&2
+      exit 1
+    fi
+    if [[ -z "${OCI_SETTINGS:-}" || -z "${OCI_FINGERPRINT:-}" || -z "${OCI_SKOPEO:-}" ]]; then
+      echo "error: oci requires archive settings and skopeo" >&2
+      exit 1
+    fi
+    OCI_NAME=$(jq -er '.imageName' <<<"${OCI_SETTINGS}")
+    OCI_OS=$(jq -er '.os' <<<"${OCI_SETTINGS}")
+    OCI_ARCH=$(jq -er '.arch' <<<"${OCI_SETTINGS}")
+    OCI_FINAL_NAME=$(jq -er '.finalImageName' <<<"${OCI_SETTINGS}")
+    OCI_FINAL_TAG=$(jq -er '.finalImageTag' <<<"${OCI_SETTINGS}")
+    OCI_REF="${requested:-$(jq -er '.tag' <<<"${OCI_SETTINGS}")}"
+    if [[ "${OCI_REF}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      OCI_URL="docker://${OCI_NAME}@${OCI_REF}"
+    elif [[ "${OCI_REF}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+      OCI_URL="docker://${OCI_NAME}:${OCI_REF}"
+    else
+      echo "error: oci reference is not a tag or sha256 digest" >&2
+      exit 1
+    fi
+    OCI_METADATA=$("${OCI_SKOPEO}" --override-os "${OCI_OS}" --override-arch "${OCI_ARCH}" inspect --no-tags "${OCI_URL}")
+    OCI_DIGEST=$(jq -er '.Digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' <<<"${OCI_METADATA}")
+    if [[ "${OCI_REF}" == sha256:* && "${OCI_REF}" != "${OCI_DIGEST}" ]]; then
+      echo "error: oci inspection returned a different digest" >&2
+      exit 1
+    fi
+    if ! jq -e --arg OS "${OCI_OS}" --arg ARCH "${OCI_ARCH}" '.Os == $OS and .Architecture == $ARCH' <<<"${OCI_METADATA}" >/dev/null; then
+      echo "error: oci inspection returned a different platform" >&2
+      exit 1
+    fi
+    OCI_CURRENT_DIGEST=$(nix eval --raw --file "${pin}" imageDigest 2>/dev/null || echo "")
+    OCI_CURRENT_HASH=$(nix eval --raw --file "${pin}" imageHash 2>/dev/null || echo "")
+    OCI_CURRENT_FINGERPRINT=$(nix eval --raw --file "${pin}" archiveFingerprint 2>/dev/null || echo "")
+    if [[ "${OCI_CURRENT_DIGEST}" == "${OCI_DIGEST}" && "${OCI_CURRENT_FINGERPRINT}" == "${OCI_FINGERPRINT}" && "${OCI_CURRENT_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+      finish_unchanged "${OCI_DIGEST}"
+    fi
+    OCI_WORK=$(mktemp -d)
+    cp "${pin}" "${OCI_WORK}/pin.nix"
+    OCI_HAD_LOCK=0
+    if [[ -f "${FLAKE_ROOT}/flake.lock" ]]; then
+      cp "${FLAKE_ROOT}/flake.lock" "${OCI_WORK}/flake.lock"
+      OCI_HAD_LOCK=1
+    fi
+    trap '
+      OCI_STATUS="${?}"
+      if (( OCI_STATUS != 0 )); then
+        cp "${OCI_WORK}/pin.nix" "${pin}" || echo "error: oci pin restoration failed" >&2
+        if (( OCI_HAD_LOCK )); then
+          cp "${OCI_WORK}/flake.lock" "${FLAKE_ROOT}/flake.lock" || echo "error: oci lock restoration failed" >&2
+        else
+          rm -f "${FLAKE_ROOT}/flake.lock"
+        fi
+      fi
+      rm -rf "${OCI_WORK}"
+      exit "${OCI_STATUS}"
+    ' EXIT
+    OCI_ARCHIVE_NAME="docker-image-${OCI_FINAL_NAME}-${OCI_FINAL_TAG}.tar"
+    OCI_ARCHIVE_NAME="${OCI_ARCHIVE_NAME//\//-}"
+    OCI_ARCHIVE_NAME="${OCI_ARCHIVE_NAME//:/-}"
+    OCI_ARCHIVE="${OCI_WORK}/${OCI_ARCHIVE_NAME}"
+    "${OCI_SKOPEO}" --insecure-policy --tmpdir "${OCI_WORK}" --override-os "${OCI_OS}" --override-arch "${OCI_ARCH}" copy --src-tls-verify=true "docker://${OCI_NAME}@${OCI_DIGEST}" "docker-archive://${OCI_ARCHIVE}:${OCI_FINAL_NAME}:${OCI_FINAL_TAG}" | cat
+    OCI_HASH=$(nix hash file --type sha256 --sri "${OCI_ARCHIVE}")
+    if [[ ! "${OCI_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+      echo "error: oci archive hash is not a sha256 SRI" >&2
+      exit 1
+    fi
+    nix-store --add-fixed sha256 "${OCI_ARCHIVE}" >/dev/null
+    printf '%s\n' \
+      '{' \
+      "  imageDigest = \"${OCI_DIGEST}\";" \
+      "  imageHash = \"${OCI_HASH}\";" \
+      "  archiveFingerprint = \"${OCI_FINGERPRINT}\";" \
+      '}' > "${pin}"
+    new_version="${OCI_DIGEST}"
+    pin_changed=1
+    ;;
+
   mutable-url)
     if [[ -n "${requested}" || -n "${requested_ref}" ]]; then
       echo "error: mutable-url does not support requested versions or refs" >&2

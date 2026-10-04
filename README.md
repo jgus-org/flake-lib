@@ -26,6 +26,7 @@ flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; stampName ? ".${name}-verified.json"; }
+flake-lib.lib.mkOciImage       { pkgs; source; pin; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
 flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + systems + targets
@@ -40,7 +41,7 @@ flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash 
 flake-lib.lib.warnIfNewerMajor { pkgs; name; lib ? pkgs.lib; }
 ```
 
-`source.type` is `pypi`, `github`, `github-release-asset`, `huggingface`, `gitlab`, or `mutable-url`. `github`
+`source.type` is `pypi`, `github`, `github-release-asset`, `huggingface`, `gitlab`, `mutable-url`, or `oci`. `github`
 hashes the source *tree* at a release tag (`{ version, sourceRev, sourceHash }`);
 GitHub sources whose release tags have an additional prefix set `tagPrefix`, such as `source = { type = "github"; owner = "openai"; repo = "codex"; tagPrefix = "rust-v"; };`. Pins and version branches use the version without that prefix.
 `github-release-asset` instead prefetches a single prebuilt release asset into a
@@ -64,6 +65,24 @@ source = {
   url = "https://downloads.example.test/artifact.bin";
 };
 ```
+
+`oci` tracks a public registry tag and pins `{ imageDigest, imageHash, archiveFingerprint }`. `imageName` must include the registry hostname. `mkOciImage` and `mkUpdateVersion` share the platform and docker-archive reference below; the updater accepts an optional tag or `sha256:...` digest in the configured repository. It inspects the requested platform, then copies only the resolved immutable digest. An index digest remains pinned with the declared platform selection.
+
+```nix
+source = {
+  type = "oci";
+  imageName = "docker.io/vendor/runtime";
+  tag = "latest-sm86";
+  os = "linux";
+  arch = "amd64";
+  finalImageName = "vendor/runtime";
+  finalImageTag = "latest-sm86";
+};
+image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
+update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
+```
+
+`tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The final archive name defaults to `imageName`, and its tag defaults to `tag`. Public fetches use isolated registry configuration and an empty authentication file, never implicit local credentials. `archiveFingerprint` covers the complete reference/platform contract and the scoped skopeo build identity; changing it rehashes even an unchanged digest. `mkOciImage` rejects a stale nonempty fingerprint, while an empty bootstrap fingerprint is accepted. OCI updates skip archive downloads only for a matching digest, fingerprint, and populated hash. They preserve existing dependency locks and restore the original pin and lock if updating or verification fails. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
 
 `huggingface` tracks a model repository revision and writes a `{ version,
 sourceRev }` pin. An optional `files` list adds a `hashes` attribute containing

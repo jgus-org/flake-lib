@@ -20,6 +20,7 @@
 assert builtins.elem verification [ "evaluate" "build" ];
 assert artifactFingerprint == "" || artifactHook != null;
 let
+  oci = if source.type == "oci" then import ./oci-image.nix { inherit pkgs source; } else null;
   hfManifest = source.manifest or null;
   hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
   effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (artifactFingerprint != "") "artifactFingerprint" ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
@@ -42,6 +43,7 @@ in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
 assert hfManifestHashField == null || hfManifestHashField != "";
+assert oci == null || (siblings == [ ] && artifactHook == null && extraHashes == [ ] && buildFailureHash == null && hashMode == "prefetch");
 pkgs.writeShellApplication {
   name = "update-version";
   # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
@@ -49,6 +51,9 @@ pkgs.writeShellApplication {
   runtimeInputs = [ pkgs.git ] ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
   runtimeEnv = {
     SOURCE_TYPE = source.type;
+    OCI_SETTINGS = if oci == null then "" else builtins.toJSON oci.settings;
+    OCI_FINGERPRINT = if oci == null then "" else oci.fingerprint;
+    OCI_SKOPEO = if oci == null then "" else pkgs.lib.getExe oci.skopeo;
     MUTABLE_URL = source.url or "";
     PYPI_NAME = source.pname or "";
     PYPI_FORMAT = source.format or "sdist";

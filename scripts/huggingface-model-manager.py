@@ -60,7 +60,7 @@ def main() -> None:
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
     }
 
-    with (args.directory.parent / f".{args.directory.name}.lock").open("a+") as lock:
+    with (args.directory / f".{args.directory.name}.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if args.action != "check":
             stamp.unlink(missing_ok=True)

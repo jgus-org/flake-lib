@@ -65,6 +65,8 @@ def main() -> None:
         if args.action != "check":
             stamp.unlink(missing_ok=True)
         if args.action == "download":
+            if not any(name in os.environ for name in ("HF_XET_CACHE", "HF_HOME", "XDG_CACHE_HOME")):
+                os.environ["HF_XET_CACHE"] = str(args.directory / ".cache" / "huggingface" / "xet")
             from huggingface_hub import snapshot_download
 
             snapshot_download(

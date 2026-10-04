@@ -90,6 +90,12 @@
           };
           buildAttr = "artifact";
         };
+        update-version-oci = lib.mkUpdateVersion {
+          inherit pkgs;
+          source = { type = "oci"; imageName = "registry.example/image"; tag = "latest-sm86"; os = "linux"; arch = "amd64"; };
+          buildAttr = "image";
+        };
+        oci-fixture = import ./tests/oci-image.nix { inherit pkgs lib; };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
         wheelhouse-example = lib.mkPythonWheelhouse {
           inherit pkgs;
@@ -361,11 +367,32 @@
                 if [[ "''${*}" == *'--file '* ]]; then
                   FIELD="''${*: -1}"
                   sed -nE "s/^[[:space:]]*''${FIELD}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "''${FLAKE_ROOT}/pin.nix"
+                elif [[ "''${TEST_OCI_FAIL:-}" == evaluate ]]; then
+                  exit 42
                 elif [[ -n "''${TEST_EXPECT_TRACKED_FILE:-}" ]]; then
                   git -C "''${FLAKE_ROOT}" ls-files --error-unmatch -- "''${TEST_EXPECT_TRACKED_FILE}" >/dev/null
                 fi
+                if [[ "''${*}" != *'--file '* && -n "''${TEST_OCI_EVALUATION_LOG:-}" ]]; then
+                  printf '%s\n' evaluated >> "''${TEST_OCI_EVALUATION_LOG}"
+                fi
                 ;;
-              flake) printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock" ;;
+              flake)
+                [[ "''${2}" == lock ]]
+                if [[ "''${TEST_OCI_FAIL:-}" == lock ]]; then
+                  printf '%s\n' '{"fixture":"partial"}' > "''${FLAKE_ROOT}/flake.lock"
+                  exit 42
+                fi
+                if [[ ! -f "''${FLAKE_ROOT}/flake.lock" ]]; then
+                  printf '%s\n' '{}' > "''${FLAKE_ROOT}/flake.lock"
+                fi
+                ;;
+              hash)
+                [[ "''${TEST_OCI_FAIL:-}" != hash ]]
+                exec ${pkgs.nix}/bin/nix --extra-experimental-features nix-command "''${@}"
+                ;;
+              build)
+                [[ "''${TEST_OCI_FAIL:-}" != build ]]
+                ;;
               store)
                 if [[ "''${*}" == *'downloads.example.test/artifact.bin'* ]]; then
                   if [[ -n "''${TEST_PREFETCH_LOG:-}" ]]; then
@@ -387,6 +414,14 @@
             printf '%s\n' '{"hash":"sha256-source"}'
           '';
         };
+        update-version-test-store = pkgs.writeShellApplication {
+          name = "nix-store";
+          text = ''
+            [[ "''${1}" == --add-fixed && "''${2}" == sha256 ]]
+            [[ -f "''${3}" ]]
+            [[ "''${TEST_OCI_FAIL:-}" != store ]]
+          '';
+        };
         update-version-tests = pkgs.runCommand "update-version-tests"
           {
             nativeBuildInputs = [
@@ -399,13 +434,21 @@
               update-version-test-curl
               update-version-test-nix
               update-version-test-prefetch
+              update-version-test-store
             ];
             TEST_BASH = pkgs.bash;
             UPDATE_VERSION = ./scripts/update-version.sh;
             NIX_PATH = "nixpkgs=${pkgs.path}";
+            OCI_TEST_SETTINGS = oci-fixture.settings;
+            OCI_TEST_FINGERPRINT = oci-fixture.fingerprint;
+            OCI_TEST_SKOPEO = oci-fixture.skopeo;
+            OCI_TEST_ARM_SKOPEO = oci-fixture.armSkopeo;
+            OCI_TEST_IMAGE = oci-fixture.image;
+            OCI_TEST_HASH = oci-fixture.imageHash;
           } ''
             grep -Fqx "NIX_PATH='nixpkgs=${pkgs.path}'" ${update-version}/bin/update-version
             bash ${./tests/test_update_version.sh}
+            bash ${./tests/test_update_version_oci.sh}
             touch "''${out}"
           '';
         update-branches-tests = pkgs.runCommand "update-branches-tests"
@@ -429,9 +472,9 @@
         '';
       in
       {
-        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-branches-github-pnpm revalidate-hash; };
+        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-branches-github-pnpm revalidate-hash; };
         checks = {
-          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-branches-github-pnpm revalidate-hash;
+          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;

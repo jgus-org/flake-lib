@@ -117,6 +117,37 @@
           '';
           model = { };
         };
+        # Deterministic: a stub downloader stands in for the HF client, and also writes a
+        # cache sidecar that must NOT reach the output. The pinned recursive hash is stable
+        # only because the output holds exactly the manifest-declared files.
+        fetch-huggingface-example = lib.fetchHuggingFace {
+          inherit pkgs;
+          name = "fetch-huggingface-example";
+          manifest = pkgs.writeText "fetch-huggingface-manifest.json" ''
+            {
+              "repo": "example/model",
+              "revision": "revision-one",
+              "total_bytes": 6,
+              "files": [
+                { "path": "plain.txt", "bytes": 3, "sha256": null, "git_blob": "a3fb46dce3065411f1db0362631738a913909873" },
+                { "path": "sub/nested.txt", "bytes": 3, "sha256": null, "git_blob": "b2c3b0fadf6dfe4b0a3c5c8b6e6e5e5f0b1c2d3e" }
+              ]
+            }
+          '';
+          outputHash = "sha256-mBMaNyeIXL3RVqjshxmOaWc7n/GuxT6ZntQNQYuztNc=";
+          downloader = ''
+            mkdir -p staging/sub staging/.cache/huggingface
+            printf 'abc' > staging/plain.txt
+            printf 'def' > staging/sub/nested.txt
+            printf 'junk' > staging/.cache/huggingface/pollution
+          '';
+        };
+        fetch-huggingface-contents = pkgs.runCommand "fetch-huggingface-contents" { } ''
+          test "$(cat ${fetch-huggingface-example}/plain.txt)" = abc
+          test "$(cat ${fetch-huggingface-example}/sub/nested.txt)" = def
+          test -f ${fetch-huggingface-example}/.cache/huggingface/pollution && exit 1 || true
+          touch "$out"
+        '';
         wheelhouse-example-hook = wheelhouse-example.hook;
         npm-generated-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; source = "generated"; };
         yarn-hook = lib.mkJsDepsHook { inherit pkgs; manager = "yarn"; };
@@ -472,7 +503,10 @@
         '';
       in
       {
-        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-branches-github-pnpm revalidate-hash; };
+        packages = {
+          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-branches-github-pnpm revalidate-hash;
+          fetch-huggingface-example = fetch-huggingface-example;
+        };
         checks = {
           inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
@@ -482,6 +516,8 @@
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
           inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration huggingface-model-manager-tests;
           inherit update-version-tests;
+          fetch-huggingface-example = fetch-huggingface-example;
+          fetch-huggingface-contents = fetch-huggingface-contents;
         };
       });
 }

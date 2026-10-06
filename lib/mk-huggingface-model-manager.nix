@@ -6,17 +6,14 @@
   stampName ? ".${name}-verified.json",
 }:
 let
-  python = pkgs.python3.withPackages (pythonPackages: [
-    pythonPackages.hf-xet
-    pythonPackages.huggingface-hub
-  ]);
+  client = import ./huggingface-client.nix { inherit pkgs; };
 in
 (pkgs.writeShellApplication {
   inherit name;
-  runtimeInputs = [ python ];
+  runtimeInputs = [ client.python ];
   text = ''
     export HF_HUB_DISABLE_TELEMETRY=1
-    exec ${python}/bin/python ${../scripts/huggingface-model-manager.py} ${manifest} ${pkgs.lib.escapeShellArg stampName} "''${@}"
+    exec ${client.python}/bin/python ${client.script} ${manifest} ${pkgs.lib.escapeShellArg stampName} "''${@}"
   '';
 }).overrideAttrs
   (oldAttrs: {

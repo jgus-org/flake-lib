@@ -7,6 +7,7 @@ let
   mkJsDepsHook = import ./mk-js-deps-hook.nix;
   mkComposedHook = import ./mk-composed-hook.nix;
   mkHuggingFaceModelManager = import ./mk-huggingface-model-manager.nix;
+  fetchHuggingFace = import ./fetch-huggingface.nix;
   mkOciImage = import ./mk-oci-image.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
@@ -29,6 +30,6 @@ let
       pkgs.${name};
 in
 {
-  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
+  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager fetchHuggingFace mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
   inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse;
 }

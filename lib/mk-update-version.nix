@@ -62,6 +62,7 @@ pkgs.writeShellApplication {
     GH_TAG_PREFIXES = builtins.toJSON (if source ? tagPrefix then [ source.tagPrefix ] else [ "v" "V" "" ]);
     GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)
     GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
+    GH_COMMIT = source.commit or ""; # pinned commit: an explicit immutable rev, surfaced as version commit-<rev>, re-learned without following HEAD
     GH_FETCH_SUBMODULES = if (source.fetchSubmodules or false) then "1" else ""; # hash the tree with submodules (src must set fetchSubmodules = true)
     GH_ASSET = source.asset or ""; # github-release-asset: filename template, tokens ${version} and ${tag}
     GH_TAG = source.tag or ""; # github-release-asset: tag template, token ${version} (default v${version})

@@ -638,7 +638,18 @@ case "${SOURCE_TYPE}" in
     ;;
 
   github)
-    if [[ "${GH_TRACK}" == "commit" ]]; then
+    if [[ -n "${GH_COMMIT}" ]]; then
+      # Pinned at an explicit immutable commit, surfaced as version commit-<rev>. Never follows
+      # the branch HEAD: the commit is only moved by editing the pin's source.commit, so a bare
+      # run just re-verifies and re-learns the tree hash for the commit already named.
+      commit=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${GH_COMMIT}")
+      new_rev=$(jq -r '.sha' <<<"${commit}")
+      [[ "${new_rev}" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "error: could not resolve pinned commit ${GH_COMMIT} on ${GH_OWNER}/${GH_REPO}" >&2
+        exit 1
+      }
+      new_version="commit-${new_rev}"
+    elif [[ "${GH_TRACK}" == "commit" ]]; then
       if [[ -n "${requested}" ]]; then
         commit=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${requested}")
       else

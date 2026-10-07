@@ -107,6 +107,34 @@ write_empty_pin
 run_update release '["rust-v"]' '' '' 1.2.3 1.2.3
 assert_pin
 
+# A github source pinned at an explicit commit resolves that commit (not HEAD or the latest release),
+# surfaces it as version commit-<rev>, takes precedence over the release stream (GH_TRACK=release and
+# TEST_RELEASE_TAG=v9.9.9 are both ignored here), and is idempotent on a bare re-run.
+run_pinned_commit_update() {
+  FLAKE_ROOT="${TEST_ROOT}" \
+    SOURCE_TYPE=github \
+    GH_OWNER=openai \
+    GH_REPO=codex \
+    GH_TAG_PREFIXES='["v","V",""]' \
+    GH_TRACK=release \
+    GH_COMMIT=0000000000000000000000000000000000000000 \
+    TEST_RELEASE_TAG=v9.9.9 \
+    TEST_TAGS='' \
+    BUILD_ATTR=codex \
+    HASH_MODE=prefetch \
+    EXTRA_HASHES='[]' \
+    PIN_HASHES='[]' \
+    VERIFICATION=evaluate \
+    SIBLINGS='[]' \
+    bash "${UPDATE_VERSION}"
+}
+write_empty_pin
+run_pinned_commit_update
+grep -Fq 'version = "commit-source-revision";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'sourceRev = "source-revision";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'sourceHash = "sha256-source";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'Already up to date (commit-source-revision).' <<<"$(run_pinned_commit_update)"
+
 cat > "${TEST_ROOT}/pin.nix" <<'EOF'
 {
   version = "1.2.3";

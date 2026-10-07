@@ -43,6 +43,7 @@ in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
 assert hfManifestHashField == null || hfManifestHashField != "";
+assert !(source ? commit) || source.type == "github";
 assert oci == null || (siblings == [ ] && artifactHook == null && extraHashes == [ ] && buildFailureHash == null && hashMode == "prefetch");
 pkgs.writeShellApplication {
   name = "update-version";
@@ -62,7 +63,7 @@ pkgs.writeShellApplication {
     GH_TAG_PREFIXES = builtins.toJSON (if source ? tagPrefix then [ source.tagPrefix ] else [ "v" "V" "" ]);
     GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)
     GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
-    GH_COMMIT = source.commit or ""; # pinned commit: an explicit immutable rev, surfaced as version commit-<rev>, re-learned without following HEAD
+    GH_COMMIT = source.commit or ""; # explicit immutable rev (overrides track), surfaced as version commit-<rev>; never follows HEAD
     GH_FETCH_SUBMODULES = if (source.fetchSubmodules or false) then "1" else ""; # hash the tree with submodules (src must set fetchSubmodules = true)
     GH_ASSET = source.asset or ""; # github-release-asset: filename template, tokens ${version} and ${tag}
     GH_TAG = source.tag or ""; # github-release-asset: tag template, token ${version} (default v${version})

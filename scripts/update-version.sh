@@ -7,6 +7,7 @@
 #   GH_OWNER/GH_REPO          GitHub owner/repo              [github, github-release-asset]
 #   GH_TRACK                  release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)  [github]
 #   GH_BRANCH                 commit-tracking: branch to follow (default: repo default branch)  [github]
+#   GH_COMMIT                 explicit immutable rev to pin (takes precedence over GH_TRACK), surfaced as version commit-<rev>; never follows HEAD  [github]
 #   GH_ASSET                  release-asset filename template; tokens ${version} (tag minus leading v) and ${tag}  [github-release-asset]
 #   GH_TAG                    release-tag template; token ${version} (default: v${version})  [github-release-asset]
 #   GITLAB_OWNER/GITLAB_REPO  GitLab owner/repo              [gitlab]
@@ -638,13 +639,13 @@ case "${SOURCE_TYPE}" in
     ;;
 
   github)
-    if [[ -n "${GH_COMMIT}" ]]; then
-      # Pinned at an explicit immutable commit, surfaced as version commit-<rev>. Never follows
-      # the branch HEAD: the commit is only moved by editing the pin's source.commit, so a bare
-      # run just re-verifies and re-learns the tree hash for the commit already named.
-      commit=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${GH_COMMIT}")
-      new_rev=$(jq -r '.sha' <<<"${commit}")
-      [[ "${new_rev}" =~ ^[0-9a-f]{40}$ ]] || {
+    if [[ -n "${GH_COMMIT:-}" ]]; then
+      # Pinned at an explicit immutable commit, surfaced as version commit-<rev>, not a moving
+      # branch or release stream: the commit moves only when the pin's source.commit is edited, so a
+      # bare run just re-learns the tree hash at the exact commit already named and reports unchanged.
+      echo "Resolving pinned commit of ${GH_OWNER}/${GH_REPO}..."
+      new_rev=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${GH_COMMIT}" --jq '.sha')
+      [[ -n "${new_rev}" ]] || {
         echo "error: could not resolve pinned commit ${GH_COMMIT} on ${GH_OWNER}/${GH_REPO}" >&2
         exit 1
       }

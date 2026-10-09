@@ -66,7 +66,7 @@ source = {
 };
 ```
 
-`oci` tracks a public registry tag and pins `{ imageDigest, imageHash, archiveFingerprint }`. `imageName` must include the registry hostname. `mkOciImage` and `mkUpdateVersion` share the platform and docker-archive reference below; the updater accepts an optional tag or `sha256:...` digest in the configured repository. It inspects the requested platform, then copies only the resolved immutable digest. An index digest remains pinned with the declared platform selection.
+`oci` tracks a public registry tag and pins `{ imageDigest, imageHash }`. `imageName` must include the registry hostname. The updater accepts an optional tag or `sha256:...` digest in the configured repository, resolves an image index to one platform manifest, checks its platform, and copies that immutable manifest with its config and layers unchanged. `imageHash` is the recursive Nix hash of the resulting Skopeo directory.
 
 ```nix
 source = {
@@ -76,13 +76,12 @@ source = {
   os = "linux";
   arch = "amd64";
   finalImageName = "vendor/runtime";
-  finalImageTag = "latest-sm86";
 };
 image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
 update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
 ```
 
-`tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The final archive name defaults to `imageName`, and its tag defaults to `tag`. Public fetches use isolated registry configuration and an empty authentication file, never implicit local credentials. `archiveFingerprint` covers the complete reference/platform contract and the scoped skopeo build identity; changing it rehashes even an unchanged digest. `mkOciImage` rejects a stale nonempty fingerprint, while an empty bootstrap fingerprint is accepted. OCI updates skip archive downloads only for a matching digest, fingerprint, and populated hash. They preserve existing dependency locks and restore the original pin and lock if updating or verification fails. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
+`tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The returned package is the image directory, with `imageName`, `imageTag`, `copyTo`, and `copyToPodman` attributes for loading it. Its local name defaults to `imageName`, and its local tag defaults to the manifest digest without `sha256:`; `finalImageName` and `finalImageTag` can override them. `copyTo` accepts a Skopeo destination and additional copy arguments. Public fetches use isolated registry configuration and an empty authentication file. Pulling and loading preserve the original image manifest, config, and compressed layers rather than rebuilding a base image. OCI updates skip downloads for a matching platform manifest digest and populated hash, preserve dependency locks, and restore the original pin and lock if updating or verification fails. A legacy `archiveFingerprint` triggers one fetch to migrate the hash to the directory format and remove that field. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
 
 `huggingface` tracks a model repository revision and writes a `{ version,
 sourceRev }` pin. An optional `files` list adds a `hashes` attribute containing

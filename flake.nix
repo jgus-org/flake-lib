@@ -4,14 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    # mkOciImage composes the pinned pull into a nix2container image. Not followed:
-    # nix2container vendors a skopeo patch against an older layout than nixpkgs pins, and
-    # its nixpkgs is used only for the offline image-from-dir/buildImage-bin, never to pull,
-    # so it does not affect the skopeo the pin's recursive hash is computed with.
-    nix2container = { url = "github:nlewo/nix2container"; flake = true; };
   };
 
-  outputs = { self, nixpkgs, flake-utils, nix2container }:
+  outputs = { self, nixpkgs, flake-utils }:
     let
       pythonEnvironments = {
         pythonVersions = [ "3.13" "3.14" ];
@@ -25,7 +20,7 @@
       };
     in
     {
-      lib = import ./lib { inherit pythonEnvironments nix2container; };
+      lib = import ./lib { inherit pythonEnvironments; };
     }
     //
     flake-utils.lib.eachDefaultSystem (system:
@@ -100,6 +95,7 @@
           source = { type = "oci"; imageName = "registry.example/image"; tag = "latest-sm86"; os = "linux"; arch = "amd64"; };
           buildAttr = "image";
         };
+        oci-image-tests = import ./tests/oci-image.nix { inherit pkgs lib; };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
         wheelhouse-example = lib.mkPythonWheelhouse {
           inherit pkgs;
@@ -421,8 +417,12 @@
         update-version-test-store = pkgs.writeShellApplication {
           name = "nix-store";
           text = ''
-            [[ "''${1}" == --add-fixed && "''${2}" == sha256 ]]
-            [[ -f "''${3}" ]]
+            [[ "''${1}" == --add-fixed ]]
+            if [[ "''${2}" == --recursive ]]; then
+              [[ "''${3}" == sha256 && -d "''${4}" ]]
+            else
+              [[ "''${2}" == sha256 && -f "''${3}" ]]
+            fi
             [[ "''${TEST_OCI_FAIL:-}" != store ]]
           '';
         };
@@ -446,6 +446,7 @@
           } ''
             grep -Fqx "NIX_PATH='nixpkgs=${pkgs.path}'" ${update-version}/bin/update-version
             bash ${./tests/test_update_version.sh}
+            OCI_SKOPEO_SOURCE=${./tests/oci-skopeo.sh} bash ${./tests/test_oci.sh}
             touch "''${out}"
           '';
         update-branches-tests = pkgs.runCommand "update-branches-tests"
@@ -479,6 +480,7 @@
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
           inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration huggingface-model-manager-tests;
           inherit update-version-tests;
+          inherit oci-image-tests;
         };
       });
 }

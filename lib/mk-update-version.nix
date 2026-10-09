@@ -52,7 +52,6 @@ pkgs.writeShellApplication {
   runtimeEnv = {
     SOURCE_TYPE = source.type;
     OCI_SETTINGS = if oci == null then "" else builtins.toJSON oci.settings;
-    OCI_FINGERPRINT = if oci == null then "" else oci.fingerprint;
     OCI_SKOPEO = if oci == null then "" else pkgs.lib.getExe oci.skopeo;
     MUTABLE_URL = source.url or "";
     PYPI_NAME = source.pname or "";

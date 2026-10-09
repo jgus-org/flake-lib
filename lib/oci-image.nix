@@ -7,8 +7,8 @@ let
     arch = source.arch or "amd64";
     variant = source.variant or "";
     finalImageName = source.finalImageName or source.imageName;
-    finalImageTag = source.finalImageTag or (source.tag or "latest");
-  };
+  }
+  // pkgs.lib.optionalAttrs (source ? finalImageTag) { inherit (source) finalImageTag; };
   registry = builtins.head (pkgs.lib.splitString "/" settings.imageName);
   registries = pkgs.writeText "oci-registries.conf" ''
     unqualified-search-registries = []
@@ -32,7 +32,9 @@ assert
   builtins.match "[a-z0-9][a-z0-9.-]*(:[0-9]+)?/[a-z0-9][a-z0-9._/-]*" settings.imageName != null;
 assert registry == "localhost" || pkgs.lib.hasInfix "." registry || pkgs.lib.hasInfix ":" registry;
 assert builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" settings.tag != null;
-assert builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" settings.finalImageTag != null;
+assert
+  !(settings ? finalImageTag)
+  || builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" settings.finalImageTag != null;
 assert
   builtins.match "[a-z0-9][a-z0-9._/-]*(:[0-9]+)?(/[a-z0-9][a-z0-9._/-]*)?" settings.finalImageName
   != null;
@@ -41,12 +43,4 @@ assert builtins.match "[a-z0-9][a-z0-9_-]*" settings.arch != null;
 assert builtins.match "[A-Za-z0-9_.-]*" settings.variant != null;
 {
   inherit settings skopeo;
-  fingerprint = builtins.hashString "sha256" (
-    builtins.toJSON {
-      inherit settings;
-      archiveFormat = "nix2container-oci-dir";
-      skopeoVersion = pkgs.skopeo.version;
-      skopeoIdentity = toString skopeo;
-    }
-  );
 }

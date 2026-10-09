@@ -484,13 +484,14 @@ case "${SOURCE_TYPE}" in
       echo "error: oci accepts one tag or digest" >&2
       exit 1
     fi
-    if [[ -z "${OCI_SETTINGS:-}" || -z "${OCI_FINGERPRINT:-}" || -z "${OCI_SKOPEO:-}" ]]; then
-      echo "error: oci requires archive settings and skopeo" >&2
+    if [[ -z "${OCI_SETTINGS:-}" || -z "${OCI_SKOPEO:-}" ]]; then
+      echo "error: oci requires image settings and skopeo" >&2
       exit 1
     fi
     OCI_NAME=$(jq -er '.imageName' <<<"${OCI_SETTINGS}")
     OCI_OS=$(jq -er '.os' <<<"${OCI_SETTINGS}")
     OCI_ARCH=$(jq -er '.arch' <<<"${OCI_SETTINGS}")
+    OCI_VARIANT=$(jq -r '.variant' <<<"${OCI_SETTINGS}")
     OCI_REF="${requested:-$(jq -er '.tag' <<<"${OCI_SETTINGS}")}"
     if [[ "${OCI_REF}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
       OCI_URL="docker://${OCI_NAME}@${OCI_REF}"
@@ -500,9 +501,25 @@ case "${SOURCE_TYPE}" in
       echo "error: oci reference is not a tag or sha256 digest" >&2
       exit 1
     fi
-    OCI_METADATA=$("${OCI_SKOPEO}" --override-os "${OCI_OS}" --override-arch "${OCI_ARCH}" inspect --no-tags "${OCI_URL}")
-    OCI_DIGEST=$(jq -er '.Digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' <<<"${OCI_METADATA}")
-    if [[ "${OCI_REF}" == sha256:* && "${OCI_REF}" != "${OCI_DIGEST}" ]]; then
+    OCI_MANIFEST=$("${OCI_SKOPEO}" inspect --raw "${OCI_URL}")
+    if jq -e 'has("manifests")' <<<"${OCI_MANIFEST}" >/dev/null; then
+      OCI_DIGEST=$(jq -er --arg OS "${OCI_OS}" --arg ARCH "${OCI_ARCH}" --arg VARIANT "${OCI_VARIANT}" '
+        [.manifests[] | select(.platform.os == $OS and .platform.architecture == $ARCH and ($VARIANT == "" or .platform.variant == $VARIANT)) | .digest]
+        | if length == 1 then .[0] else error("image index does not identify a unique platform manifest") end
+      ' <<<"${OCI_MANIFEST}")
+    else
+      OCI_DIGEST=$("${OCI_SKOPEO}" inspect --no-tags "${OCI_URL}" | jq -er '.Digest')
+      if [[ "${OCI_REF}" == sha256:* && "${OCI_REF}" != "${OCI_DIGEST}" ]]; then
+        echo "error: oci inspection returned a different digest" >&2
+        exit 1
+      fi
+    fi
+    if [[ ! "${OCI_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      echo "error: oci manifest digest is not a sha256 digest" >&2
+      exit 1
+    fi
+    OCI_METADATA=$("${OCI_SKOPEO}" inspect --no-tags "docker://${OCI_NAME}@${OCI_DIGEST}")
+    if [[ "$(jq -er '.Digest' <<<"${OCI_METADATA}")" != "${OCI_DIGEST}" ]]; then
       echo "error: oci inspection returned a different digest" >&2
       exit 1
     fi
@@ -510,10 +527,14 @@ case "${SOURCE_TYPE}" in
       echo "error: oci inspection returned a different platform" >&2
       exit 1
     fi
+    if [[ -n "${OCI_VARIANT}" ]] && ! "${OCI_SKOPEO}" inspect --config "docker://${OCI_NAME}@${OCI_DIGEST}" | jq -e --arg VARIANT "${OCI_VARIANT}" '.variant == $VARIANT' >/dev/null; then
+      echo "error: oci inspection returned a different platform variant" >&2
+      exit 1
+    fi
     OCI_CURRENT_DIGEST=$(nix eval --raw --file "${pin}" imageDigest 2>/dev/null || echo "")
     OCI_CURRENT_HASH=$(nix eval --raw --file "${pin}" imageHash 2>/dev/null || echo "")
-    OCI_CURRENT_FINGERPRINT=$(nix eval --raw --file "${pin}" archiveFingerprint 2>/dev/null || echo "")
-    if [[ "${OCI_CURRENT_DIGEST}" == "${OCI_DIGEST}" && "${OCI_CURRENT_FINGERPRINT}" == "${OCI_FINGERPRINT}" && "${OCI_CURRENT_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+    OCI_LEGACY_FINGERPRINT=$(nix eval --raw --file "${pin}" archiveFingerprint 2>/dev/null || echo "")
+    if [[ "${OCI_CURRENT_DIGEST}" == "${OCI_DIGEST}" && "${OCI_CURRENT_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ && -z "${OCI_LEGACY_FINGERPRINT}" ]]; then
       finish_unchanged "${OCI_DIGEST}"
     fi
     OCI_WORK=$(mktemp -d)
@@ -536,8 +557,8 @@ case "${SOURCE_TYPE}" in
       rm -rf "${OCI_WORK}"
       exit "${OCI_STATUS}"
     ' EXIT
-    OCI_DIR="${OCI_WORK}/oci-dir"
-    "${OCI_SKOPEO}" --insecure-policy --tmpdir "${OCI_WORK}" --override-os "${OCI_OS}" --override-arch "${OCI_ARCH}" copy --src-tls-verify=true "docker://${OCI_NAME}@${OCI_DIGEST}" "dir://${OCI_DIR}" | cat
+    OCI_DIR="${OCI_WORK}/oci-image-${OCI_DIGEST#sha256:}"
+    "${OCI_SKOPEO}" --insecure-policy --tmpdir "${OCI_WORK}" copy --preserve-digests --src-tls-verify=true "docker://${OCI_NAME}@${OCI_DIGEST}" "dir://${OCI_DIR}" | cat
     OCI_HASH=$(nix hash path "${OCI_DIR}")
     if [[ ! "${OCI_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
       echo "error: oci image directory hash is not a sha256 SRI" >&2
@@ -548,7 +569,6 @@ case "${SOURCE_TYPE}" in
       '{' \
       "  imageDigest = \"${OCI_DIGEST}\";" \
       "  imageHash = \"${OCI_HASH}\";" \
-      "  archiveFingerprint = \"${OCI_FINGERPRINT}\";" \
       '}' > "${pin}"
     new_version="${OCI_DIGEST}"
     pin_changed=1

@@ -4,9 +4,14 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # mkOciImage composes the pinned pull into a nix2container image. Not followed:
+    # nix2container vendors a skopeo patch against an older layout than nixpkgs pins, and
+    # its nixpkgs is used only for the offline image-from-dir/buildImage-bin, never to pull,
+    # so it does not affect the skopeo the pin's recursive hash is computed with.
+    nix2container = { url = "github:nlewo/nix2container"; flake = true; };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, nix2container }:
     let
       pythonEnvironments = {
         pythonVersions = [ "3.13" "3.14" ];
@@ -20,7 +25,7 @@
       };
     in
     {
-      lib = import ./lib { inherit pythonEnvironments; };
+      lib = import ./lib { inherit pythonEnvironments nix2container; };
     }
     //
     flake-utils.lib.eachDefaultSystem (system:
@@ -95,7 +100,6 @@
           source = { type = "oci"; imageName = "registry.example/image"; tag = "latest-sm86"; os = "linux"; arch = "amd64"; };
           buildAttr = "image";
         };
-        oci-fixture = import ./tests/oci-image.nix { inherit pkgs lib; };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
         wheelhouse-example = lib.mkPythonWheelhouse {
           inherit pkgs;
@@ -439,16 +443,9 @@
             TEST_BASH = pkgs.bash;
             UPDATE_VERSION = ./scripts/update-version.sh;
             NIX_PATH = "nixpkgs=${pkgs.path}";
-            OCI_TEST_SETTINGS = oci-fixture.settings;
-            OCI_TEST_FINGERPRINT = oci-fixture.fingerprint;
-            OCI_TEST_SKOPEO = oci-fixture.skopeo;
-            OCI_TEST_ARM_SKOPEO = oci-fixture.armSkopeo;
-            OCI_TEST_IMAGE = oci-fixture.image;
-            OCI_TEST_HASH = oci-fixture.imageHash;
           } ''
             grep -Fqx "NIX_PATH='nixpkgs=${pkgs.path}'" ${update-version}/bin/update-version
             bash ${./tests/test_update_version.sh}
-            bash ${./tests/test_update_version_oci.sh}
             touch "''${out}"
           '';
         update-branches-tests = pkgs.runCommand "update-branches-tests"

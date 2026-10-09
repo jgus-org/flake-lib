@@ -1,4 +1,4 @@
-{ pythonEnvironments }:
+{ pythonEnvironments, nix2container }:
 let
   mkPypiPackage = import ./mk-pypi-package.nix;
   mkUpdateVersion = import ./mk-update-version.nix;
@@ -7,7 +7,9 @@ let
   mkJsDepsHook = import ./mk-js-deps-hook.nix;
   mkComposedHook = import ./mk-composed-hook.nix;
   mkHuggingFaceModelManager = import ./mk-huggingface-model-manager.nix;
-  mkOciImage = import ./mk-oci-image.nix;
+  # mkOciImage composes the nix2container image a consumer pins, so nix2container is
+  # closed over here rather than threaded through every consumer call site.
+  mkOciImage = arguments: import ./mk-oci-image.nix (arguments // { inherit nix2container; });
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches; };

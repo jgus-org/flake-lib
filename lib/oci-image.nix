@@ -44,13 +44,9 @@ assert builtins.match "[A-Za-z0-9_.-]*" settings.variant != null;
   fingerprint = builtins.hashString "sha256" (
     builtins.toJSON {
       inherit settings;
-      archiveFormat = "docker-archive";
+      archiveFormat = "nix2container-oci-dir";
       skopeoVersion = pkgs.skopeo.version;
       skopeoIdentity = toString skopeo;
     }
   );
-  pullArgs = builtins.removeAttrs settings [
-    "tag"
-    "variant"
-  ];
 }

@@ -491,8 +491,6 @@ case "${SOURCE_TYPE}" in
     OCI_NAME=$(jq -er '.imageName' <<<"${OCI_SETTINGS}")
     OCI_OS=$(jq -er '.os' <<<"${OCI_SETTINGS}")
     OCI_ARCH=$(jq -er '.arch' <<<"${OCI_SETTINGS}")
-    OCI_FINAL_NAME=$(jq -er '.finalImageName' <<<"${OCI_SETTINGS}")
-    OCI_FINAL_TAG=$(jq -er '.finalImageTag' <<<"${OCI_SETTINGS}")
     OCI_REF="${requested:-$(jq -er '.tag' <<<"${OCI_SETTINGS}")}"
     if [[ "${OCI_REF}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
       OCI_URL="docker://${OCI_NAME}@${OCI_REF}"
@@ -538,17 +536,14 @@ case "${SOURCE_TYPE}" in
       rm -rf "${OCI_WORK}"
       exit "${OCI_STATUS}"
     ' EXIT
-    OCI_ARCHIVE_NAME="docker-image-${OCI_FINAL_NAME}-${OCI_FINAL_TAG}.tar"
-    OCI_ARCHIVE_NAME="${OCI_ARCHIVE_NAME//\//-}"
-    OCI_ARCHIVE_NAME="${OCI_ARCHIVE_NAME//:/-}"
-    OCI_ARCHIVE="${OCI_WORK}/${OCI_ARCHIVE_NAME}"
-    "${OCI_SKOPEO}" --insecure-policy --tmpdir "${OCI_WORK}" --override-os "${OCI_OS}" --override-arch "${OCI_ARCH}" copy --src-tls-verify=true "docker://${OCI_NAME}@${OCI_DIGEST}" "docker-archive://${OCI_ARCHIVE}:${OCI_FINAL_NAME}:${OCI_FINAL_TAG}" | cat
-    OCI_HASH=$(nix hash file --type sha256 --sri "${OCI_ARCHIVE}")
+    OCI_DIR="${OCI_WORK}/oci-dir"
+    "${OCI_SKOPEO}" --insecure-policy --tmpdir "${OCI_WORK}" --override-os "${OCI_OS}" --override-arch "${OCI_ARCH}" copy --src-tls-verify=true "docker://${OCI_NAME}@${OCI_DIGEST}" "dir://${OCI_DIR}" | cat
+    OCI_HASH=$(nix hash path "${OCI_DIR}")
     if [[ ! "${OCI_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
-      echo "error: oci archive hash is not a sha256 SRI" >&2
+      echo "error: oci image directory hash is not a sha256 SRI" >&2
       exit 1
     fi
-    nix-store --add-fixed sha256 "${OCI_ARCHIVE}" >/dev/null
+    nix-store --add-fixed --recursive sha256 "${OCI_DIR}" >/dev/null
     printf '%s\n' \
       '{' \
       "  imageDigest = \"${OCI_DIGEST}\";" \

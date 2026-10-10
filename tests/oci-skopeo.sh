@@ -5,6 +5,9 @@ DIGEST="sha256:$(printf 'a%.0s' {1..64})"
 ARM_DIGEST="sha256:$(printf 'b%.0s' {1..64})"
 case "${*}" in
   *'inspect --raw '*)
+    if [[ -n "${TEST_OCI_INSPECT_LOG:-}" ]]; then
+      printf '%s\n' "${*: -1}" >> "${TEST_OCI_INSPECT_LOG}"
+    fi
     case "${TEST_OCI_MANIFEST:-index}" in
       index)
         jq -n --arg DIGEST "${DIGEST}" --arg ARM_DIGEST "${ARM_DIGEST}" '{manifests:[{digest:$DIGEST,platform:{os:"linux",architecture:"amd64"}},{digest:$ARM_DIGEST,platform:{os:"linux",architecture:"arm64",variant:"v8"}}]}'

@@ -5,8 +5,32 @@ set -euo pipefail
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
+BASE_IMAGE_DIGEST="sha256:$(printf 'a%.0s' {1..64})"
+BASE_IMAGE_HASH="sha256-$(printf 'c%.0s' {1..43})="
+UPDATED_IMAGE_DIGEST="sha256:$(printf 'b%.0s' {1..64})"
+UPDATED_IMAGE_HASH="sha256-$(printf 'd%.0s' {1..43})="
+
 write_pin() {
   local FILE="${1}" VERSION="${2}" HASH="${3}"
+  case "${PIN_FORMAT:-}" in
+    oci)
+      printf '%s\n' \
+        '{' \
+        "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
+        "  imageHash = \"${BASE_IMAGE_HASH}\";" \
+        '}' > "${FILE}"
+      return
+      ;;
+    oci-versioned)
+      printf '%s\n' \
+        '{' \
+        "  version = \"${VERSION}\";" \
+        "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
+        "  imageHash = \"${BASE_IMAGE_HASH}\";" \
+        '}' > "${FILE}"
+      return
+      ;;
+  esac
   printf '%s\n' \
     '{' \
     "  version = \"${VERSION}\";" \
@@ -15,6 +39,7 @@ write_pin() {
 }
 
 initialize_repository() {
+  PIN_FORMAT="${1:-}"
   CASE_ROOT=$(mktemp -d "${TEST_ROOT}/case.XXXXXX")
   REMOTE="${CASE_ROOT}/remote.git"
   CHECKOUT="${CASE_ROOT}/checkout"
@@ -103,17 +128,20 @@ point_aggregate() {
 invoke_update() {
   local VERSIONS="${1}" TAG_PREFIXES="${2}" FAILED_VERSIONS="${3}"
   local FAILED_REFRESH_VERSIONS="${4}"
+  local OVERRIDES="${VERSION_OVERRIDES:-}"
   shift 4
+  [[ -n "${OVERRIDES}" ]] || OVERRIDES='{}'
   (
     cd "${CHECKOUT}"
     BRANCH_OWNED_FILES="${BRANCH_OWNED_FILES_OVERRIDE:-pin.nix flake.lock}" \
     GH_OWNER=example \
     GH_REPO=example \
     GH_TAG_PREFIXES="${TAG_PREFIXES}" \
-    MINIMUM_TRACKING_VERSION=1.0.0 \
+    MINIMUM_TRACKING_VERSION="${MINIMUM_TRACKING_VERSION:-1.0.0}" \
     MIN_VERSION_COMPONENTS=3 \
-    PIN_SCHEMA=version-only \
-    SOURCE_TYPE=github \
+    PIN_SCHEMA="${PIN_SCHEMA:-version-only}" \
+    SOURCE_TYPE="${SOURCE_TYPE:-github}" \
+    VERSION_SOURCE_TYPE="${VERSION_SOURCE_TYPE:-}" \
     TEST_VERSIONS="${VERSIONS}" \
     TEST_FAILED_VERSIONS="${FAILED_VERSIONS}" \
     TEST_FAILED_REFRESH_VERSIONS="${FAILED_REFRESH_VERSIONS}" \
@@ -123,7 +151,7 @@ invoke_update() {
     GITHUB_REF_RETRY_DELAY_SECONDS=0 \
     TRANSIENT_RETRY_DELAY_SECONDS=0 \
     VERSION_CANON='' \
-    VERSION_OVERRIDES='{}' \
+    VERSION_OVERRIDES="${OVERRIDES}" \
     bash "${UPDATE_BRANCHES_CORE}" "$@"
   )
 }
@@ -143,6 +171,15 @@ run_command() {
 assert_ref_version() {
   local REF="${1}" VERSION="${2}"
   git --git-dir="${REMOTE}" show "refs/heads/${REF}:pin.nix" | grep -Fq "version = \"${VERSION}\";"
+}
+
+assert_ref_oci_pin() {
+  local REF="${1}" VERSION="${2}" DIGEST="${3}" HASH="${4}"
+  local PIN
+  PIN=$(git --git-dir="${REMOTE}" show "refs/heads/${REF}:pin.nix")
+  grep -Fq "version = \"${VERSION}\";" <<<"${PIN}"
+  grep -Fq "imageDigest = \"${DIGEST}\";" <<<"${PIN}"
+  grep -Fq "imageHash = \"${HASH}\";" <<<"${PIN}"
 }
 
 assert_same_ref() {
@@ -656,3 +693,67 @@ export TEST_DELETE_OWNED=removed-by-update.txt
 BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock removed-by-update.txt never-existed.txt' run_update '1.2.0'
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:removed-by-update.txt'
 clear_test_failures
+
+# An oci producer enumerates its tree from the release source named in source.versions, so a source type with no enumeration of its own still discovers.
+initialize_repository oci
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github
+PLAN=$(run_command $'2026.9.4\n2026.10.0\n2026.10.1' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["2026.10.1","2026.10.0","2026.9.4"]' ]]
+jq -e '.newestStable == {version:"2026.10.1", upstreamVersion:"2026.10.1", stable:true}' <<<"${PLAN}" >/dev/null
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
+
+# A version source the orchestrator cannot enumerate fails discovery by name, whatever the producer's own source type is.
+initialize_repository oci
+export PIN_SCHEMA=oci SOURCE_TYPE=github VERSION_SOURCE_TYPE=oci
+run_failed_update '1.2.0'
+grep -Fq 'error: update-branches cannot enumerate versions for source type oci' "${CASE_ROOT}/update.log"
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
+
+# A new oci branch is seeded with the base pin's image content alone, even when the base branch already claims a version; its own updater resolves that version's image and only then writes it.
+initialize_repository oci-versioned
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github TEST_EXPECT_SEEDED_PIN=1
+export VERSION_OVERRIDES='{"1.2.3+oe": "1.2.3"}' TEST_EXPECTED_UPSTREAM_VERSION='1.2.3+oe'
+run_update '1.2.3+oe'
+assert_ref_oci_pin v1.2.3 '1.2.3' "${UPDATED_IMAGE_DIGEST}" "${UPDATED_IMAGE_HASH}"
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.3' ]]
+assert_same_ref main v1.2.3
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE TEST_EXPECT_SEEDED_PIN VERSION_OVERRIDES TEST_EXPECTED_UPSTREAM_VERSION
+
+# A base pin still carrying the archive-hash marker cannot seed a branch: the seed would drop the field its updater migrates on.
+initialize_repository oci
+printf '%s\n' \
+  '{' \
+  "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
+  "  imageHash = \"${BASE_IMAGE_HASH}\";" \
+  "  archiveFingerprint = \"sha256:$(printf 'f%.0s' {1..64})\";" \
+  '}' > "${CHECKOUT}/pin.nix"
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qam 'archive-format image hash'
+git -C "${CHECKOUT}" push -q origin main
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github
+run_failed_update '1.2.0'
+grep -Fq 'archiveFingerprint' "${CASE_ROOT}/update.log"
+assert_missing_ref v1.2.0
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
+
+# Releases that share one image digest are each published as their own branch carrying its own version.
+initialize_repository oci
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github
+run_update $'1.2.3\n1.2.4'
+assert_ref_oci_pin v1.2.3 '1.2.3' "${UPDATED_IMAGE_DIGEST}" "${UPDATED_IMAGE_HASH}"
+assert_ref_oci_pin v1.2.4 '1.2.4' "${UPDATED_IMAGE_DIGEST}" "${UPDATED_IMAGE_HASH}"
+assert_same_ref main v1.2.4
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
+
+# A failed image resolution publishes nothing: no exact ref, no aggregate advance, and no base branch movement.
+initialize_repository oci
+BASE_MAIN_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github
+export GITHUB_STEP_SUMMARY="${CASE_ROOT}/summary.md"
+run_failed_update '1.2.0' '["v",""]' '1.2.0'
+assert_ref_sha main "${BASE_MAIN_SHA}"
+assert_missing_ref v1.2.0
+assert_missing_ref v1.2
+assert_missing_ref v1
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
+grep -Fqx -- "- \`v1.2.0\`: update-version failed (exit 1)" "${GITHUB_STEP_SUMMARY}"
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE GITHUB_STEP_SUMMARY

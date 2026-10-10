@@ -1,4 +1,5 @@
 { pkgs, source }:
+assert ! (source ? versions) || ! (source ? tag);
 let
   settings = {
     imageName = source.imageName;

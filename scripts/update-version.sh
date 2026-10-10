@@ -1,10 +1,11 @@
 #!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#curl nixpkgs#jq nixpkgs#nix nixpkgs#gh nixpkgs#gnused nixpkgs#nix-prefetch-github nixpkgs#nix-prefetch-git nixpkgs#coreutils --command bash
 
 # Generic update-version for jgus sub-flakes, driven by env vars injected by flake-lib's mkUpdateVersion:
-#   SOURCE_TYPE   pypi | github | github-release-asset | gitlab | huggingface
+#   SOURCE_TYPE   pypi | github | github-release-asset | gitlab | huggingface | oci | mutable-url
 #   PYPI_NAME     PyPI distribution name (underscore form)   [pypi]
 #   PYPI_FORMAT   sdist | wheel                              [pypi]
-#   GH_OWNER/GH_REPO          GitHub owner/repo              [github, github-release-asset]
+#   VERSION_SOURCE_TYPE       the source an oci producer discovers versions from (github); empty for a single-branch image    [oci]
+#   GH_OWNER/GH_REPO          GitHub owner/repo              [github, github-release-asset, oci release source]
 #   GH_TRACK                  release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)  [github]
 #   GH_BRANCH                 commit-tracking: branch to follow (default: repo default branch)  [github]
 #   GH_ASSET                  release-asset filename template; tokens ${version} (tag minus leading v) and ${tag}  [github-release-asset]
@@ -52,6 +53,7 @@ SIBLINGS="${SIBLINGS:-[]}"
 SIBLING_REFS_IN_PIN="${SIBLING_REFS_IN_PIN:-}"
 MARKER_ENV="${MARKER_ENV:-}"
 CASCADE_PY="${CASCADE_PY:-}"
+VERSION_SOURCE_TYPE="${VERSION_SOURCE_TYPE:-}"
 GH_TRACK="${GH_TRACK:-release}"
 GH_BRANCH="${GH_BRANCH:-}"
 GH_TAG_PREFIXES="${GH_TAG_PREFIXES:-[\"v\",\"V\",\"\"]}"
@@ -480,10 +482,6 @@ source_pin_current() {
 
 case "${SOURCE_TYPE}" in
   oci)
-    if [[ -n "${requested_ref}" ]]; then
-      echo "error: oci accepts one tag or digest" >&2
-      exit 1
-    fi
     if [[ -z "${OCI_SETTINGS:-}" || -z "${OCI_SKOPEO:-}" ]]; then
       echo "error: oci requires image settings and skopeo" >&2
       exit 1
@@ -492,7 +490,39 @@ case "${SOURCE_TYPE}" in
     OCI_OS=$(jq -er '.os' <<<"${OCI_SETTINGS}")
     OCI_ARCH=$(jq -er '.arch' <<<"${OCI_SETTINGS}")
     OCI_VARIANT=$(jq -r '.variant' <<<"${OCI_SETTINGS}")
-    OCI_REF="${requested:-$(jq -er '.tag' <<<"${OCI_SETTINGS}")}"
+    OCI_VERSION=""
+    case "${VERSION_SOURCE_TYPE}" in
+      "")
+        if [[ -n "${requested_ref}" ]]; then
+          echo "error: oci accepts one tag or digest" >&2
+          exit 1
+        fi
+        OCI_REF="${requested:-$(jq -er '.tag' <<<"${OCI_SETTINGS}")}"
+        ;;
+      github)
+        OCI_REF="${requested_ref:-${requested}}"
+        if [[ -z "${OCI_REF}" ]]; then
+          if [[ -z "${GH_OWNER}" || -z "${GH_REPO}" ]]; then
+            echo "error: oci version discovery needs a GitHub release source" >&2
+            exit 1
+          fi
+          echo "Querying GitHub for latest release of ${GH_OWNER}/${GH_REPO}..."
+          # The image is published under its version, not under the spelling of the GitHub release tag, so a
+          # discovered tag is normalized the same way the orchestrator's upstream-version argument already is.
+          OCI_REF=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/releases/latest" --jq '.tag_name')
+          OCI_REF=$(github_version_from_tag "${OCI_REF}" || printf '%s\n' "${OCI_REF}")
+        fi
+        OCI_VERSION="${requested:-$(github_version_from_tag "${OCI_REF}" || printf '%s\n' "${OCI_REF}")}"
+        if [[ ! "${OCI_VERSION}" =~ ^[0-9] ]]; then
+          echo "error: oci reference ${OCI_REF} does not yield a version for ${GH_OWNER}/${GH_REPO}" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "error: oci cannot discover versions from VERSION_SOURCE_TYPE=${VERSION_SOURCE_TYPE}" >&2
+        exit 1
+        ;;
+    esac
     if [[ "${OCI_REF}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
       OCI_URL="docker://${OCI_NAME}@${OCI_REF}"
     elif [[ "${OCI_REF}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
@@ -533,9 +563,16 @@ case "${SOURCE_TYPE}" in
     fi
     OCI_CURRENT_DIGEST=$(nix eval --raw --file "${pin}" imageDigest 2>/dev/null || echo "")
     OCI_CURRENT_HASH=$(nix eval --raw --file "${pin}" imageHash 2>/dev/null || echo "")
+    OCI_PIN_VERSION=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
     OCI_LEGACY_FINGERPRINT=$(nix eval --raw --file "${pin}" archiveFingerprint 2>/dev/null || echo "")
+    OCI_CONTENT_MATCHES=0
     if [[ "${OCI_CURRENT_DIGEST}" == "${OCI_DIGEST}" && "${OCI_CURRENT_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ && -z "${OCI_LEGACY_FINGERPRINT}" ]]; then
-      finish_unchanged "${OCI_DIGEST}"
+      OCI_CONTENT_MATCHES=1
+    fi
+    # The image is unchanged only when the pin already claims the version being resolved. A version branch created
+    # from a base that carries this release's image must record its own version, reusing the pinned content.
+    if (( OCI_CONTENT_MATCHES )) && [[ -z "${OCI_VERSION}" || "${OCI_PIN_VERSION}" == "${OCI_VERSION}" ]]; then
+      finish_unchanged "${OCI_VERSION:-${OCI_DIGEST}}"
     fi
     OCI_WORK=$(mktemp -d)
     cp "${pin}" "${OCI_WORK}/pin.nix"
@@ -557,20 +594,28 @@ case "${SOURCE_TYPE}" in
       rm -rf "${OCI_WORK}"
       exit "${OCI_STATUS}"
     ' EXIT
-    OCI_DIR="${OCI_WORK}/oci-image-${OCI_DIGEST#sha256:}"
-    "${OCI_SKOPEO}" --insecure-policy --tmpdir "${OCI_WORK}" copy --preserve-digests --src-tls-verify=true "docker://${OCI_NAME}@${OCI_DIGEST}" "dir://${OCI_DIR}" | cat
-    OCI_HASH=$(nix hash path "${OCI_DIR}")
-    if [[ ! "${OCI_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
-      echo "error: oci image directory hash is not a sha256 SRI" >&2
-      exit 1
+    if (( OCI_CONTENT_MATCHES )); then
+      OCI_HASH="${OCI_CURRENT_HASH}"
+    else
+      OCI_DIR="${OCI_WORK}/oci-image-${OCI_DIGEST#sha256:}"
+      "${OCI_SKOPEO}" --insecure-policy --tmpdir "${OCI_WORK}" copy --preserve-digests --src-tls-verify=true "docker://${OCI_NAME}@${OCI_DIGEST}" "dir://${OCI_DIR}" | cat
+      OCI_HASH=$(nix hash path "${OCI_DIR}")
+      if [[ ! "${OCI_HASH}" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+        echo "error: oci image directory hash is not a sha256 SRI" >&2
+        exit 1
+      fi
+      nix-store --add-fixed --recursive sha256 "${OCI_DIR}" >/dev/null
     fi
-    nix-store --add-fixed --recursive sha256 "${OCI_DIR}" >/dev/null
-    printf '%s\n' \
-      '{' \
-      "  imageDigest = \"${OCI_DIGEST}\";" \
-      "  imageHash = \"${OCI_HASH}\";" \
-      '}' > "${pin}"
-    new_version="${OCI_DIGEST}"
+    {
+      echo "{"
+      if [[ -n "${OCI_VERSION}" ]]; then
+        echo "  version = \"${OCI_VERSION}\";"
+      fi
+      echo "  imageDigest = \"${OCI_DIGEST}\";"
+      echo "  imageHash = \"${OCI_HASH}\";"
+      echo "}"
+    } > "${pin}"
+    new_version="${OCI_VERSION:-${OCI_DIGEST}}"
     pin_changed=1
     ;;
 

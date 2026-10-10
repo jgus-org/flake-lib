@@ -95,6 +95,24 @@
           source = { type = "oci"; imageName = "registry.example/image"; tag = "latest-sm86"; os = "linux"; arch = "amd64"; };
           buildAttr = "image";
         };
+        # source.versions opts an OCI producer into the version tree; the image tag is its version, so the spec pins no tag.
+        ociVersionedSource = {
+          type = "oci";
+          imageName = "registry.example/image";
+          os = "linux";
+          arch = "amd64";
+          versions = { type = "github"; owner = "example"; repo = "example"; };
+        };
+        update-version-oci-github = lib.mkUpdateVersion {
+          inherit pkgs;
+          source = ociVersionedSource;
+          buildAttr = "image";
+        };
+        update-branches-oci-github = lib.mkUpdateBranches {
+          inherit pkgs;
+          source = ociVersionedSource;
+          pinSchema = "oci";
+        };
         oci-image-tests = import ./tests/oci-image.nix { inherit pkgs lib; };
         npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
         wheelhouse-example = lib.mkPythonWheelhouse {
@@ -285,12 +303,23 @@
               exit 0
             fi
             [[ "''${1}" == "run" ]]
-            grep -Fq 'assets.fixture' "''${FLAKE_ROOT}/pin.nix"
+            if [[ "''${PIN_SCHEMA:-}" == "oci" ]]; then
+              grep -Fq 'imageDigest = "sha256:' "''${FLAKE_ROOT}/pin.nix"
+              if [[ -n "''${TEST_EXPECT_SEEDED_PIN:-}" ]]; then
+                if grep -Fq 'version = ' "''${FLAKE_ROOT}/pin.nix"; then
+                  printf '%s\n' 'fixture: a new oci branch must be seeded without a version' >&2
+                  exit 1
+                fi
+              fi
+            else
+              grep -Fq 'assets.fixture' "''${FLAKE_ROOT}/pin.nix"
+            fi
             while [[ "''${1}" != "--" ]]; do
               shift
             done
             shift
             TARGET_VERSION="''${1}"
+            [[ "''${2:-}" == "''${TEST_EXPECTED_UPSTREAM_VERSION:-''${TARGET_VERSION}}" ]]
             printf '%s\n' "''${TARGET_VERSION}" >> "''${TEST_UPDATE_VERSION_LOG}"
             for TRANSIENT_VERSION in ''${TEST_TRANSIENT_UPDATE_VERSIONS:-}; do
               if [[ "''${TARGET_VERSION}" == "''${TRANSIENT_VERSION}" ]]; then
@@ -322,11 +351,22 @@
             if [[ -n "''${TEST_DELETE_OWNED:-}" ]]; then
               rm -f "''${FLAKE_ROOT}/''${TEST_DELETE_OWNED}"
             fi
-            printf '%s\n' \
-              '{' \
-              "  version = \"''${TARGET_VERSION}\";" \
-              '  assets.fixture = "updated-hash";' \
-              '}' > "''${FLAKE_ROOT}/pin.nix"
+            if [[ "''${PIN_SCHEMA:-}" == "oci" ]]; then
+              UPDATED_DIGEST="sha256:$(printf 'b%.0s' {1..64})"
+              UPDATED_HASH="sha256-$(printf 'd%.0s' {1..43})="
+              printf '%s\n' \
+                '{' \
+                "  version = \"''${TARGET_VERSION}\";" \
+                "  imageDigest = \"''${UPDATED_DIGEST}\";" \
+                "  imageHash = \"''${UPDATED_HASH}\";" \
+                '}' > "''${FLAKE_ROOT}/pin.nix"
+            else
+              printf '%s\n' \
+                '{' \
+                "  version = \"''${TARGET_VERSION}\";" \
+                '  assets.fixture = "updated-hash";' \
+                '}' > "''${FLAKE_ROOT}/pin.nix"
+            fi
             if [[ -n "''${TEST_STAGE_OWNED:-}" ]]; then
               [[ "''${ORCHESTRATED_OWNED_FILES}" == 'pin.nix flake.lock wheels-*.json' ]]
               rm -f "''${FLAKE_ROOT}/wheels-3.14.json"
@@ -470,9 +510,9 @@
         '';
       in
       {
-        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-branches-github-pnpm revalidate-hash; };
+        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
         checks = {
-          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-branches-github-pnpm revalidate-hash;
+          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;

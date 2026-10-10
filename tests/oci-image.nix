@@ -58,10 +58,39 @@ let
       imageHash = "sha256-pdvWZEkndjjekvTaWJlBHmUbIJlGVkiBjJJJs7/3xiQ=";
     };
   };
+  versionedPin = {
+    version = "1.2.3";
+    imageDigest = "sha256:${pkgs.lib.concatStrings (pkgs.lib.replicate 64 "a")}";
+    imageHash = "sha256-pdvWZEkndjjekvTaWJlBHmUbIJlGVkiBjJJJs7/3xiQ=";
+  };
+  versionedImage = lib.mkOciImage {
+    pkgs = testPkgs;
+    source = {
+      type = "oci";
+      imageName = "registry.example/image";
+      versions = {
+        type = "github";
+        owner = "example";
+        repo = "example";
+      };
+    };
+    pin = versionedPin;
+  };
+  overrideTaggedImage = lib.mkOciImage {
+    pkgs = testPkgs;
+    source = {
+      type = "oci";
+      imageName = "registry.example/image";
+      finalImageTag = "local-override";
+    };
+    pin = versionedPin;
+  };
 in
 pkgs.runCommand "oci-image-tests" { nativeBuildInputs = [ pkgs.jq ]; } ''
   test '${image.imageName}' = registry.example/image
   test '${image.imageTag}' = '${pkgs.lib.removePrefix "sha256:" image.imageDigest}'
+  test '${versionedImage.imageTag}' = 1.2.3
+  test '${overrideTaggedImage.imageTag}' = local-override
   test -x ${pkgs.lib.getExe image.copyToPodman}
   ${pkgs.lib.getExe image.copyTo} dir:"''${TMPDIR}/loaded"
   cmp ${fixture}/manifest.json "''${TMPDIR}/loaded/manifest.json"

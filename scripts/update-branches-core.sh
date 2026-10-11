@@ -274,10 +274,6 @@ EOF
         echo "error: PIN_SCHEMA=oci branches from a base pin.nix carrying imageDigest and imageHash" >&2
         exit 1
       fi
-      if grep -Fq 'archiveFingerprint = "' pin.nix; then
-        echo "error: PIN_SCHEMA=oci cannot seed from a base pin still carrying archiveFingerprint; the seed would drop the marker that requests the image hash migration" >&2
-        exit 1
-      fi
       cat > pin.nix <<EOF
 {
   imageDigest = "${BASE_DIGEST}";

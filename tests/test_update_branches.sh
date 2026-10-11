@@ -719,22 +719,6 @@ assert_ref_oci_pin v1.2.3 '1.2.3' "${UPDATED_IMAGE_DIGEST}" "${UPDATED_IMAGE_HAS
 assert_same_ref main v1.2.3
 unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE TEST_EXPECT_SEEDED_PIN VERSION_OVERRIDES TEST_EXPECTED_UPSTREAM_VERSION
 
-# A base pin still carrying the archive-hash marker cannot seed a branch: the seed would drop the field its updater migrates on.
-initialize_repository oci
-printf '%s\n' \
-  '{' \
-  "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
-  "  imageHash = \"${BASE_IMAGE_HASH}\";" \
-  "  archiveFingerprint = \"sha256:$(printf 'f%.0s' {1..64})\";" \
-  '}' > "${CHECKOUT}/pin.nix"
-git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qam 'archive-format image hash'
-git -C "${CHECKOUT}" push -q origin main
-export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github
-run_failed_update '1.2.0'
-grep -Fq 'archiveFingerprint' "${CASE_ROOT}/update.log"
-assert_missing_ref v1.2.0
-unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
-
 # Releases that share one image digest are each published as their own branch carrying its own version.
 initialize_repository oci
 export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github

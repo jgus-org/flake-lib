@@ -81,7 +81,26 @@ image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; 
 update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
 ```
 
-`tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The returned package is the image directory, with `imageName`, `imageTag`, `copyTo`, and `copyToPodman` attributes for loading it. Its local name defaults to `imageName`, and its local tag defaults to the manifest digest without `sha256:`; `finalImageName` and `finalImageTag` can override them. `copyTo` accepts a Skopeo destination and additional copy arguments. Public fetches use isolated registry configuration and an empty authentication file. Pulling and loading preserve the original image manifest, config, and compressed layers rather than rebuilding a base image. OCI updates skip downloads for a matching platform manifest digest and populated hash, preserve dependency locks, and restore the original pin and lock if updating or verification fails. A legacy `archiveFingerprint` triggers one fetch to migrate the hash to the directory format and remove that field. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
+`tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The returned package is the image directory, with `imageName`, `imageTag`, `copyTo`, and `copyToPodman` attributes for loading it. Its local name defaults to `imageName`, and its local tag defaults to the manifest digest without `sha256:`; `finalImageName` and `finalImageTag` can override them. `copyTo` accepts a Skopeo destination and additional copy arguments. Public fetches use isolated registry configuration and an empty authentication file. Pulling and loading preserve the original image manifest, config, and compressed layers rather than rebuilding a base image. OCI updates skip downloads for a matching platform manifest digest and populated hash, preserve dependency locks, and restore the original pin and lock if updating or verification fails. A versioned producer skips only once its pin also names the version being resolved. A legacy `archiveFingerprint` triggers one fetch to migrate the hash to the directory format and remove that field. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
+
+An `oci` producer opts into the version tree by adding `versions` to the same spec, whose `type` selects the discovery path already implemented for that vocabulary (`github` reads the Releases API; a registry-tag source would be a new arm, not a producer-shape change). Its pin is `{ version, imageDigest, imageHash }`; a producer without `versions` keeps pinning exactly `{ imageDigest, imageHash }`. Absence of `versions` is the single-branch signal, so an existing producer is untouched by construction, still rejects a second positional argument, and still pins no version.
+
+```nix
+source = {
+  type = "oci";
+  imageName = "ghcr.io/home-assistant/home-assistant";
+  os = "linux";
+  arch = "amd64";
+  versions = { type = "github"; owner = "home-assistant"; repo = "core"; };
+};
+image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
+update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
+update-branches = flake-lib.lib.mkUpdateBranches { inherit pkgs source; pinSchema = "oci"; };
+```
+
+A versioned producer pins no `tag`: it publishes its image under its version, so the registry reference is the release version with any GitHub version prefix removed, which is also the version recorded in the pin. Invoking its `update-version` with no arguments resolves the newest upstream release through GitHub's `releases/latest` endpoint, which excludes drafts and prereleases; publish the whole tree with `update-branches`, whose `pinSchema = "oci"` seeds a new exact branch from the base pin's `imageDigest` and `imageHash` alone. A seed claims no version, because `mkOciImage` asserts the digest's shape at evaluation and the branch must not name a release before its image has been resolved. The updater then writes that branch's own version, and reuses the already-pinned content when the resolved image is the one the branch was seeded with. Several releases sharing one image digest is a correct pairing rather than a stale pin, and a version branch counts as unchanged only once its pin names the version it is being resolved for.
+
+`versions` therefore requires the registry to publish the bare release version as a tag. `versionOverrides` and `versionCanon` rename the canonical version — the branch and the pin's `version` — but the updater pulls the tag named by the upstream release version, so neither redirects the image reference. An upstream whose registry tag is spelled differently has no mechanism here and remains a single-branch producer until a version source that reads registry tags exists. The loaded image's local name and tag follow `finalImageName`/`finalImageTag` as usual; with neither set, a versioned pin tags the image with its own version, and a branch seeded before its image resolved falls back to the digest.
 
 `huggingface` tracks a model repository revision and writes a `{ version,
 sourceRev }` pin. An optional `files` list adds a `hashes` attribute containing
@@ -120,7 +139,7 @@ modelManager = flake-lib.lib.mkHuggingFaceModelManager {
 ```
 
 The update machinery and the orchestrator's per-flake bits
-(`list_upstream_versions`, `prepare_new_branch_pin`, and sibling cascades) are all driven from that spec. `version-only` preserves the current complete pin while creating a branch so a bespoke updater can evaluate and atomically replace it with the target version's complete pin.
+(`list_upstream_versions`, `prepare_new_branch_pin`, and sibling cascades) are all driven from that spec. `version-only` preserves the current complete pin while creating a branch so a bespoke updater can evaluate and atomically replace it with the target version's complete pin. `oci` seeds a content-only placeholder pin, and an `oci` producer discovers its versions from `source.versions` rather than from `source.type`.
 
 PyPI producers resolve sibling requirements from their release metadata. Exact pins select exact branches, unbounded minimums select `main`, and bounded ranges select a compatible aggregate. Prerelease exact branches are always maintained. A prerelease advances each aggregate independently only when that aggregate is absent or already tracks a prerelease; stable aggregates remain stable until a newer stable release replaces them.
 

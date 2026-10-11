@@ -19,8 +19,10 @@
 }:
 assert builtins.elem verification [ "evaluate" "build" ];
 assert artifactFingerprint == "" || artifactHook != null;
+assert ! (source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
   oci = if source.type == "oci" then import ./oci-image.nix { inherit pkgs source; } else null;
+  versionSource = source.versions or source;
   hfManifest = source.manifest or null;
   hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
   effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (artifactFingerprint != "") "artifactFingerprint" ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
@@ -53,12 +55,13 @@ pkgs.writeShellApplication {
     SOURCE_TYPE = source.type;
     OCI_SETTINGS = if oci == null then "" else builtins.toJSON oci.settings;
     OCI_SKOPEO = if oci == null then "" else pkgs.lib.getExe oci.skopeo;
+    VERSION_SOURCE_TYPE = source.versions.type or "";
     MUTABLE_URL = source.url or "";
     PYPI_NAME = source.pname or "";
     PYPI_FORMAT = source.format or "sdist";
-    GH_OWNER = source.owner or "";
-    GH_REPO = source.repo or "";
-    GH_TAG_PREFIXES = builtins.toJSON (if source ? tagPrefix then [ source.tagPrefix ] else [ "v" "V" "" ]);
+    GH_OWNER = versionSource.owner or "";
+    GH_REPO = versionSource.repo or "";
+    GH_TAG_PREFIXES = builtins.toJSON (if versionSource ? tagPrefix then [ versionSource.tagPrefix ] else [ "v" "V" "" ]);
     GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)
     GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
     GH_FETCH_SUBMODULES = if (source.fetchSubmodules or false) then "1" else ""; # hash the tree with submodules (src must set fetchSubmodules = true)

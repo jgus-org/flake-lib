@@ -15,11 +15,12 @@
 # any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
-#   SOURCE_TYPE          pypi | github | github-release-asset  (gitlab leaves are single-branch, no orchestrator)
+#   SOURCE_TYPE          pypi | github | github-release-asset | oci  (gitlab leaves are single-branch, no orchestrator)
+#   VERSION_SOURCE_TYPE  the source whose releases drive discovery; for an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
 #   PYPI_NAME            [pypi]
 #   PYPI_FORMAT          sdist | wheel  [pypi]
-#   GH_OWNER/GH_REPO     [github, github-release-asset]
-#   PIN_SCHEMA           pypi | github | github-npm | github-pnpm | github-yarn | github-asset | version-only
+#   GH_OWNER/GH_REPO     [github, github-release-asset, oci with source.versions]
+#   PIN_SCHEMA           pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
 #   BRANCH_OWNED_FILES   space-separated files update-version mutates per branch
 #   VERSION_OVERRIDES    JSON map raw version -> canonical version
 #   VERSION_CANON        newline-separated `sed -E` rules mapping raw version -> canonical version
@@ -174,7 +175,8 @@ run_with_transient_retry() {
 }
 
 list_upstream_versions() {
-  case "${SOURCE_TYPE}" in
+  local DISCOVERY_TYPE="${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}"
+  case "${DISCOVERY_TYPE}" in
     pypi)
       # Only enumerate releases the flake can actually fetch: sdist -> a source tarball; wheel -> a universal py3-none-any wheel (the one mk-pypi-package builds). Releases lacking it are skipped.
       if [ "${PYPI_FORMAT:-sdist}" = "wheel" ]; then
@@ -189,14 +191,14 @@ list_upstream_versions() {
       retry gh api --paginate "/repos/${GH_OWNER}/${GH_REPO}/releases" --jq '.[].tag_name'
       ;;
     *)
-      echo "error: update-branches does not support SOURCE_TYPE=${SOURCE_TYPE}" >&2
+      echo "error: update-branches cannot enumerate versions for source type ${DISCOVERY_TYPE}" >&2
       exit 1
       ;;
   esac
 }
 
 prepare_new_branch_pin() {
-  local VERSION="${1}" EXTRA_HASH
+  local VERSION="${1}" EXTRA_HASH BASE_DIGEST BASE_HASH
   case "${PIN_SCHEMA}" in
     pypi)
       {
@@ -261,6 +263,21 @@ EOF
 {
   version = "${VERSION}";
   hash = "";
+}
+EOF
+      ;;
+    oci)
+      # A content-addressed image pin has no evaluable blank placeholder: mk-oci-image asserts the digest shape when the image is evaluated, so an empty imageDigest would make the new branch unevaluable. Seed the branch with the base pin's content fields and nothing else: the version the branch is named for is not claimed until update-version resolves that version's image.
+      BASE_DIGEST=$(sed -nE 's/^[[:space:]]*imageDigest = "(sha256:[0-9a-f]{64})";$/\1/p' pin.nix | head -1 || true)
+      BASE_HASH=$(sed -nE 's/^[[:space:]]*imageHash = "(sha256-[A-Za-z0-9+/]{43}=");$/\1/p' pin.nix | head -1 || true)
+      if [[ -z "${BASE_DIGEST}" || -z "${BASE_HASH}" ]]; then
+        echo "error: PIN_SCHEMA=oci branches from a base pin.nix carrying imageDigest and imageHash" >&2
+        exit 1
+      fi
+      cat > pin.nix <<EOF
+{
+  imageDigest = "${BASE_DIGEST}";
+  imageHash = "${BASE_HASH}";
 }
 EOF
       ;;

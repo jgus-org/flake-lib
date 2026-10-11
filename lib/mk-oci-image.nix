@@ -16,7 +16,9 @@ let
         passthru = rec {
           inherit (pin) imageDigest;
           imageName = settings.finalImageName;
-          imageTag = settings.finalImageTag or (pkgs.lib.removePrefix "sha256:" pin.imageDigest);
+          # A branch seeded before its image resolved carries no version and stays tagged by digest.
+          imageTag =
+            settings.finalImageTag or pin.version or (pkgs.lib.removePrefix "sha256:" pin.imageDigest);
           copyTo = pkgs.writeShellApplication {
             name = "copy-to";
             runtimeInputs = [ contract.skopeo ];

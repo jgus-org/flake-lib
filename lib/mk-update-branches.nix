@@ -22,9 +22,6 @@ assert ! (source ? versions) || (source.type == "oci" && source.versions.type ==
 let
   ownedFiles = pkgs.lib.unique (branchOwnedFiles ++ extraBranchOwnedFiles);
   versionSource = source.versions or source;
-  # How the source that drives discovery names its versions: GitHub Releases, or
-  # plain git tags. An upstream shipping tags without Releases has nothing for the
-  # Releases API to enumerate, so the flake says which one it tracks.
   versionSourceTrack = versionSource.track or "release";
 in
 assert builtins.elem versionSourceTrack [ "release" "tag" ];

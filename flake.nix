@@ -286,7 +286,21 @@
         '';
         update-branches-test-gh = pkgs.writeShellApplication {
           name = "gh";
-          text = ''printf '%s\n' "''${TEST_VERSIONS}"'';
+          text = ''
+            # Discovery consults one endpoint per source, so record which one a tracking
+            # mode reached for rather than only what came back from it.
+            endpoint="''${3:-}"
+            if [[ -n "''${TEST_GH_ENDPOINTS:-}" ]]; then
+              printf '%s\n' "''${endpoint}" >> "''${TEST_GH_ENDPOINTS}"
+            fi
+            if [[ "''${endpoint}" == */tags ]]; then
+              if [[ -n "''${TEST_TAGS_VERSIONS:-}" ]]; then
+                printf '%s\n' "''${TEST_TAGS_VERSIONS}"
+              fi
+            else
+              printf '%s\n' "''${TEST_VERSIONS}"
+            fi
+          '';
         };
         update-branches-test-nix = pkgs.writeShellApplication {
           name = "nix";

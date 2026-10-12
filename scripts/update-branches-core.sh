@@ -16,7 +16,8 @@
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
 #   SOURCE_TYPE          pypi | github | github-release-asset | oci  (gitlab leaves are single-branch, no orchestrator)
-#   VERSION_SOURCE_TYPE  the source whose releases drive discovery; for an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
+#   VERSION_SOURCE_TYPE  the source whose named versions drive discovery; for an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
+#   VERSION_TRACK        github vocabulary: release (GitHub Releases) | tag (git tags). A github source's versions live in exactly one of those, and only the flake knows which. Defaults to release.
 #   PYPI_NAME            [pypi]
 #   PYPI_FORMAT          sdist | wheel  [pypi]
 #   GH_OWNER/GH_REPO     [github, github-release-asset, oci with source.versions]
@@ -29,6 +30,7 @@
 set -euo pipefail
 : "${MINIMUM_TRACKING_VERSION:?required env var}"
 MIN_VERSION_COMPONENTS="${MIN_VERSION_COMPONENTS:-3}"
+VERSION_TRACK="${VERSION_TRACK:-release}"
 GH_TAG_PREFIXES="${GH_TAG_PREFIXES:-[\"v\",\"V\",\"\"]}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
@@ -174,21 +176,49 @@ run_with_transient_retry() {
   done
 }
 
+# The API holding a source's version names. Derived rather than remembered across
+# the enumeration, which runs in a subshell and so cannot report it back.
+discovery_endpoint() {
+  case "${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}" in
+    pypi) printf '%s' "https://pypi.org/pypi/${PYPI_NAME}/json" ;;
+    github)
+      if [[ "${VERSION_TRACK}" == "tag" ]]; then
+        printf '%s' "/repos/${GH_OWNER}/${GH_REPO}/tags"
+      else
+        printf '%s' "/repos/${GH_OWNER}/${GH_REPO}/releases"
+      fi
+      ;;
+    github-release-asset) printf '%s' "/repos/${GH_OWNER}/${GH_REPO}/releases" ;;
+    *) printf '%s' "the upstream API" ;;
+  esac
+}
+
 list_upstream_versions() {
-  local DISCOVERY_TYPE="${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}"
+  local DISCOVERY_TYPE="${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}" endpoint
+  endpoint=$(discovery_endpoint)
   case "${DISCOVERY_TYPE}" in
     pypi)
       # Only enumerate releases the flake can actually fetch: sdist -> a source tarball; wheel -> a universal py3-none-any wheel (the one mk-pypi-package builds). Releases lacking it are skipped.
       if [ "${PYPI_FORMAT:-sdist}" = "wheel" ]; then
-        retry curl -sSfL "https://pypi.org/pypi/${PYPI_NAME}/json" \
+        retry curl -sSfL "${endpoint}" \
           | jq -r '.releases | to_entries[] | select(.value | any(.packagetype == "bdist_wheel" and (.filename | endswith("-py3-none-any.whl")))) | .key'
       else
-        retry curl -sSfL "https://pypi.org/pypi/${PYPI_NAME}/json" \
+        retry curl -sSfL "${endpoint}" \
           | jq -r '.releases | to_entries[] | select(.value | any(.packagetype == "sdist")) | .key'
       fi
       ;;
-    github | github-release-asset)
-      retry gh api --paginate "/repos/${GH_OWNER}/${GH_REPO}/releases" --jq '.[].tag_name'
+    github)
+      # A github source names its versions either as GitHub Releases or as plain git
+      # tags, and an upstream that ships tags without Releases has an empty releases
+      # list. Only the flake's tracking mode says which endpoint holds its names.
+      if [[ "${VERSION_TRACK}" == "tag" ]]; then
+        retry gh api --paginate "${endpoint}" --jq '.[].name'
+      else
+        retry gh api --paginate "${endpoint}" --jq '.[].tag_name'
+      fi
+      ;;
+    github-release-asset)
+      retry gh api --paginate "${endpoint}" --jq '.[].tag_name'
       ;;
     *)
       echo "error: update-branches cannot enumerate versions for source type ${DISCOVERY_TYPE}" >&2
@@ -464,7 +494,7 @@ discover_versions() {
   echo "Querying upstream..." >&2
   mapfile -t raw_versions < <(list_upstream_versions)
   if (( ${#raw_versions[@]} == 0 )); then
-    echo "error: list_upstream_versions returned no rows (auth issue?)" >&2
+    echo "error: upstream discovery found no version names at $(discovery_endpoint) for source type ${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}} tracking ${VERSION_TRACK}" >&2
     return 1
   fi
   # Canonical versions drive sorting and branch naming. The upstream version is

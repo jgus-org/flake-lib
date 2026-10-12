@@ -142,6 +142,8 @@ invoke_update() {
     PIN_SCHEMA="${PIN_SCHEMA:-version-only}" \
     SOURCE_TYPE="${SOURCE_TYPE:-github}" \
     VERSION_SOURCE_TYPE="${VERSION_SOURCE_TYPE:-}" \
+    VERSION_TRACK="${VERSION_TRACK:-release}" \
+    TEST_GH_ENDPOINTS="${CASE_ROOT}/gh-endpoints" \
     TEST_VERSIONS="${VERSIONS}" \
     TEST_FAILED_VERSIONS="${FAILED_VERSIONS}" \
     TEST_FAILED_REFRESH_VERSIONS="${FAILED_REFRESH_VERSIONS}" \
@@ -741,3 +743,26 @@ assert_missing_ref v1
 [[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
 grep -Fqx -- "- \`v1.2.0\`: update-version failed (exit 1)" "${GITHUB_STEP_SUMMARY}"
 unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE GITHUB_STEP_SUMMARY
+
+# A github source tracked by tags enumerates git tags, not GitHub Releases: an upstream shipping tags without releases has an empty releases list, and discovering from it tracks nothing.
+initialize_repository
+export VERSION_TRACK=tag TEST_TAGS_VERSIONS=$'v1.6.0\nv1.5.0\nnot-a-version'
+PLAN=$(run_command '9.9.9' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.6.0","1.5.0"]' ]]
+grep -Fqx -- '/repos/example/example/tags' "${CASE_ROOT}/gh-endpoints"
+unset VERSION_TRACK TEST_TAGS_VERSIONS
+
+# Without a tracking mode the github vocabulary names releases, which is what the updater's own default is.
+initialize_repository
+export TEST_TAGS_VERSIONS=$'v9.9.9'
+PLAN=$(run_command '1.2.0' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.0"]' ]]
+grep -Fqx -- '/repos/example/example/releases' "${CASE_ROOT}/gh-endpoints"
+unset TEST_TAGS_VERSIONS
+
+# An empty enumeration says which endpoint was queried and how the source tracks, rather than guessing at why it came back empty.
+initialize_repository
+export VERSION_TRACK=tag TEST_TAGS_VERSIONS=''
+run_failed_update '' '["v",""]' '' '' list
+grep -Fq -- 'error: upstream discovery found no version names at /repos/example/example/tags for source type github tracking tag' "${CASE_ROOT}/update.log"
+unset VERSION_TRACK TEST_TAGS_VERSIONS

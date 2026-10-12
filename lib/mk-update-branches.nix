@@ -22,7 +22,10 @@ assert ! (source ? versions) || (source.type == "oci" && source.versions.type ==
 let
   ownedFiles = pkgs.lib.unique (branchOwnedFiles ++ extraBranchOwnedFiles);
   versionSource = source.versions or source;
+  versionSourceTrack = versionSource.track or "release";
 in
+assert builtins.elem versionSourceTrack [ "release" "tag" ];
+assert versionSource.type != "github-release-asset" || versionSourceTrack == "release";
 pkgs.writeShellApplication {
   name = "update-branches";
   # VERSION_OVERRIDES is a JSON string (quotes/braces) consumed via jq at runtime; the generated export trips SC2089/SC2090 (false positive).
@@ -31,6 +34,7 @@ pkgs.writeShellApplication {
   runtimeEnv = {
     SOURCE_TYPE = source.type;
     VERSION_SOURCE_TYPE = versionSource.type;
+    VERSION_TRACK = versionSourceTrack;
     PYPI_NAME = source.pname or "";
     PYPI_FORMAT = source.format or "sdist";
     GH_OWNER = versionSource.owner or "";

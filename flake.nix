@@ -302,6 +302,41 @@
             fi
           '';
         };
+        update-branches-test-curl = pkgs.writeShellApplication {
+          name = "curl";
+          runtimeInputs = [ pkgs.jq ];
+          text = ''
+            # GitLab names the page that follows in a response header, so the fake writes
+            # the header dump the orchestrator asked for as well as the body it reads.
+            headers=""
+            url=""
+            while [[ $# -gt 0 ]]; do
+              if [[ "''${1}" == "-D" ]]; then
+                headers="''${2}"
+                shift 2
+              else
+                url="''${1}"
+                shift
+              fi
+            done
+            if [[ -n "''${TEST_GITLAB_ENDPOINTS:-}" ]]; then
+              printf '%s\n' "''${url}" >> "''${TEST_GITLAB_ENDPOINTS}"
+            fi
+            names="''${TEST_GITLAB_TAGS:-}"
+            page="''${url##*page=}"
+            if [[ "''${page}" != "1" ]]; then
+              names="''${TEST_GITLAB_TAGS_NEXT:-}"
+            fi
+            if [[ -n "''${headers}" ]]; then
+              if [[ ( "''${page}" == "1" || -n "''${TEST_GITLAB_ALWAYS_NEXT_PAGE:-}" ) && -n "''${TEST_GITLAB_NEXT_PAGE:-}" ]]; then
+                printf 'HTTP/2 200\r\nX-Next-Page: %s\r\n\r\n' "''${TEST_GITLAB_NEXT_PAGE}" > "''${headers}"
+              else
+                printf 'HTTP/2 200\r\n\r\n' > "''${headers}"
+              fi
+            fi
+            printf '%s\n' "''${names}" | jq -R -s 'split("\n") | map(select(length > 0) | {name: .})'
+          '';
+        };
         update-branches-test-nix = pkgs.writeShellApplication {
           name = "nix";
           runtimeInputs = [ pkgs.git pkgs.gnugrep ];
@@ -513,6 +548,7 @@
               pkgs.jq
               (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ]))
               update-branches-test-gh
+              update-branches-test-curl
               update-branches-test-nix
             ];
             CASCADE_PY = ./scripts/cascade.py;

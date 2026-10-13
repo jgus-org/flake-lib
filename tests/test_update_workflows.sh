@@ -11,6 +11,14 @@ set -euo pipefail
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
+# This suite runs the script through bash for determinism; flake.nix's package wrapper
+# execs it directly, so a missing executable bit breaks every producer's run and nothing
+# here would notice.
+[[ -x "${UPDATE_WORKFLOWS}" ]] || {
+  printf 'refresher script is not executable, so the package wrapper cannot exec it: %s\n' "${UPDATE_WORKFLOWS}" >&2
+  exit 1
+}
+
 rev_of() { printf '%s%.0s' "${1}" {1..40}; }
 
 initialize_repository() {

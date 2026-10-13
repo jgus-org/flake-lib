@@ -339,8 +339,19 @@
         };
         update-branches-test-nix = pkgs.writeShellApplication {
           name = "nix";
-          runtimeInputs = [ pkgs.git pkgs.gnugrep ];
+          runtimeInputs = [ pkgs.git pkgs.gnugrep pkgs.jq ];
           text = ''
+            if [[ "''${1}" == "flake" && "''${2:-}" == "metadata" ]]; then
+              printf '{ "path": "%s" }\n' "''${TEST_NIX_TEMPLATE_SOURCE:?fixture: no template source}"
+              exit 0
+            fi
+            if [[ "''${1}" == "flake" && "''${2:-}" == "update" && "''${3:-}" == "flake-lib" ]]; then
+              node=$(jq -r '.nodes.root.inputs["flake-lib"]' flake.lock)
+              jq --arg n "''${node}" --arg rev "''${TEST_NIX_FLAKE_LIB_REV:?fixture: no flake-lib revision to advance to}" \
+                '.nodes[$n].locked.rev = $rev' flake.lock > flake.lock.next
+              mv flake.lock.next flake.lock
+              exit 0
+            fi
             if [[ "''${1}" == "flake" ]]; then
               CURRENT_BRANCH=$(git branch --show-current)
               for FAILED_VERSION in ''${TEST_FAILED_REFRESH_VERSIONS:-}; do

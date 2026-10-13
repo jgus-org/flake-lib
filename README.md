@@ -238,7 +238,9 @@ nix's libraries instead of runtime `LD_LIBRARY_PATH` assembly. Application
 flakes that vendor opaque wheelhouses (freetoken-style) skip autoPatchelf and
 resolve native libraries from the wrapper environment instead.
 
-`templates/` holds `workflow.yml`, which a consuming repo installs as `.github/workflows/update.yml`.
+`templates/workflows/` holds the workflow files a consuming repo installs under
+`.github/workflows/` under the same names. A producer refreshes them with
+`update-branches workflows`; see below.
 
 
 ### Split update-branches jobs
@@ -250,6 +252,7 @@ maintenance across jobs:
 update-branches list
 update-branches refresh --base-sha SHA --version CANONICAL --upstream-version RAW
 update-branches publish --base-sha SHA --versions-json JSON
+update-branches workflows
 ```
 
 `list` writes exactly one compact JSON object to stdout; progress goes to stderr:
@@ -259,13 +262,32 @@ update-branches publish --base-sha SHA --versions-json JSON
 ```
 
 `versions` is ordered newest first and `newestStable` is either the first stable
-entry or `null`. A refresh invocation does not query upstream: it creates or
+entry or `null`. Under Actions, where `GITHUB_OUTPUT` names a file, `list` also
+appends that manifest as `base_sha`, `versions`, `newest_stable`, and
+`maintenance` outputs, so the workflow that fans out over it carries no version
+logic of its own. `maintenance` is `versions` without `newestStable`, which is
+refreshed as its own fast path rather than twice.
+
+A refresh invocation does not query upstream: it creates or
 merges exactly one `v<version>` branch from `baseSha`, then updates and pushes
 that branch. Publication consumes the unchanged `versions` array, considers only
 exact refs containing `baseSha`, and updates aggregates independently. When the
 highest candidate is a prerelease but an aggregate is stable, the aggregate
 advances to the highest successful stable candidate. Invoking `update-branches`
 without arguments retains the compatible all-in-one behavior.
+
+`workflows` advances this flake's `flake-lib` input and installs every
+`templates/workflows/*.yml` that revision ships over the workflow of the same
+name, carrying this flake's `MINIMUM_TRACKING_VERSION` across instead of resetting
+it to the template's default, then commits and pushes the result and reports it as
+the `sha` output. It is the first job of the installed workflow, so the library a
+run's scripts come from and the workflow that invokes them move as one commit
+rather than drifting apart: the run reads its own workflow file before this job
+can rewrite it, but every later job checks out the reported SHA and builds from the
+newer revision. A workflow cannot start a run for the commit it pushes — a push
+made with `GITHUB_TOKEN` triggers nothing — so the handoff happens within the run.
+An unchanged `flake-lib` input pushes nothing and reports no SHA, which leaves the
+rest of the run on the revision it started from.
 
 The workflow template uses the newest stable entry as a fast path, refreshes all
 remaining exact versions in a parallel matrix, and runs a final publisher even

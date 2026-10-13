@@ -1,5 +1,5 @@
 # Generates the `update-branches` orchestrator package. The executable supports
-# `list`, one-version `refresh`, and independent `publish` modes; see README.md.
+# `list`, one-version `refresh`, independent `publish`, and `workflows` modes; see README.md.
 #   pinSchema        : pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
 #   branchOwnedFiles : files update-version mutates (diffed, added, committed per branch). Defaults to the pin plus the python wheelhouse artifact set; unmatched patterns are skipped.
 #   extraBranchOwnedFiles : additional branchOwnedFiles beyond the default, for consumers that vendored extra per-branch artifacts

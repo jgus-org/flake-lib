@@ -15,12 +15,13 @@
 # any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
-#   SOURCE_TYPE          pypi | github | github-release-asset | oci  (gitlab leaves are single-branch, no orchestrator)
+#   SOURCE_TYPE          pypi | github | github-release-asset | gitlab | oci
 #   VERSION_SOURCE_TYPE  the source whose named versions drive discovery; for an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
 #   VERSION_TRACK        github vocabulary: release (GitHub Releases) | tag (git tags). A github source's versions live in exactly one of those, and only the flake knows which. Defaults to release.
 #   PYPI_NAME            [pypi]
 #   PYPI_FORMAT          sdist | wheel  [pypi]
 #   GH_OWNER/GH_REPO     [github, github-release-asset, oci with source.versions]
+#   GITLAB_OWNER/GITLAB_REPO  [gitlab] A gitlab source's version names are the project's git tags, which is where its updater resolves a release from too, so tracking mode says nothing about where to look.
 #   PIN_SCHEMA           pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
 #   BRANCH_OWNED_FILES   space-separated files update-version mutates per branch
 #   VERSION_OVERRIDES    JSON map raw version -> canonical version
@@ -47,6 +48,11 @@ if [[ ! "${PUSH_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${TRANSIENT_MAX_ATTEMPTS}"
   echo "error: retry attempt counts must be positive integers" >&2
   exit 2
 fi
+
+# GitLab pages by number and names the page that follows in a response header, so there is
+# no --paginate equivalent to hand the enumeration to. The cap bounds how many pages are
+# fetched, whatever the API keeps naming.
+GITLAB_MAX_PAGES="${GITLAB_MAX_PAGES:-20}"
 
 # Buffers output and emits it only on success, so a consumer never sees partial data from an attempt that died mid-stream (e.g. gh --paginate failing between pages).
 retry() {
@@ -189,8 +195,37 @@ discovery_endpoint() {
       fi
       ;;
     github-release-asset) printf '%s' "/repos/${GH_OWNER}/${GH_REPO}/releases" ;;
+    gitlab)
+      printf '%s' "https://gitlab.com/api/v4/projects/${GITLAB_OWNER}%2F${GITLAB_REPO}/repository/tags"
+      ;;
     *) printf '%s' "the upstream API" ;;
   esac
+}
+
+list_gitlab_tags() {
+  local endpoint="${1}" page=1 next headers_file pages=0
+  headers_file=$(mktemp)
+  while :; do
+    pages=$((pages + 1))
+    if (( pages > GITLAB_MAX_PAGES )); then
+      rm -f "${headers_file}"
+      echo "error: gitlab tag enumeration did not end within ${GITLAB_MAX_PAGES} pages" >&2
+      exit 1
+    fi
+    # curl truncates the dump as it opens it, so clear it the same way: a next-page
+    # named by the previous response must not be read as this response's.
+    : > "${headers_file}"
+    retry curl -sSfL -D "${headers_file}" \
+      "${endpoint}?per_page=100&page=${page}" | jq -r '.[].name'
+    # curl -L dumps every response's headers into the file, so the page the last one
+    # names is the one to follow.
+    next=$(sed -nE 's/^[Xx]-[Nn]ext-[Pp]age:[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' "${headers_file}" | tail -1)
+    if [[ -z "${next}" ]]; then
+      rm -f "${headers_file}"
+      return 0
+    fi
+    page="${next}"
+  done
 }
 
 list_upstream_versions() {
@@ -219,6 +254,9 @@ list_upstream_versions() {
       ;;
     github-release-asset)
       retry gh api --paginate "${endpoint}" --jq '.[].tag_name'
+      ;;
+    gitlab)
+      list_gitlab_tags "${endpoint}"
       ;;
     *)
       echo "error: update-branches cannot enumerate versions for source type ${DISCOVERY_TYPE}" >&2
@@ -485,14 +523,22 @@ use_base_sha() {
 }
 
 discover_versions() {
-  local v canon
+  local v canon raw_output
   local -a raw_versions=() all_versions=() sorted_versions=()
   local -A seen=()
   tracked=()
   orig_of=()
 
   echo "Querying upstream..." >&2
-  mapfile -t raw_versions < <(list_upstream_versions)
+  # A process substitution's failure is invisible to mapfile, so capture the output
+  # instead: an enumeration that stops partway would otherwise be taken for upstream's
+  # whole version list, and the versions it never reached would go unbranched.
+  if ! raw_output=$(list_upstream_versions); then
+    return 1
+  fi
+  if [[ -n "${raw_output}" ]]; then
+    mapfile -t raw_versions <<<"${raw_output}"
+  fi
   if (( ${#raw_versions[@]} == 0 )); then
     echo "error: upstream discovery found no version names at $(discovery_endpoint) for source type ${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}} tracking ${VERSION_TRACK}" >&2
     return 1

@@ -26,6 +26,9 @@ let
 in
 assert builtins.elem versionSourceTrack [ "release" "tag" ];
 assert versionSource.type != "github-release-asset" || versionSourceTrack == "release";
+# Where a source's version names live is a github-only choice: a gitlab project's are
+# its git tags, which is also where its updater resolves a release from.
+assert versionSourceTrack != "tag" || versionSource.type == "github";
 pkgs.writeShellApplication {
   name = "update-branches";
   # VERSION_OVERRIDES is a JSON string (quotes/braces) consumed via jq at runtime; the generated export trips SC2089/SC2090 (false positive).
@@ -39,6 +42,8 @@ pkgs.writeShellApplication {
     PYPI_FORMAT = source.format or "sdist";
     GH_OWNER = versionSource.owner or "";
     GH_REPO = versionSource.repo or "";
+    GITLAB_OWNER = versionSource.owner or "";
+    GITLAB_REPO = versionSource.repo or "";
     GH_TAG_PREFIXES = builtins.toJSON (if versionSource ? tagPrefix then [ versionSource.tagPrefix ] else [ "v" "V" "" ]);
     PIN_SCHEMA = pinSchema;
     BRANCH_OWNED_FILES = pkgs.lib.concatStringsSep " " ownedFiles;

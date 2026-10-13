@@ -136,6 +136,8 @@ invoke_update() {
     BRANCH_OWNED_FILES="${BRANCH_OWNED_FILES_OVERRIDE:-pin.nix flake.lock}" \
     GH_OWNER=example \
     GH_REPO=example \
+    GITLAB_OWNER="${GITLAB_OWNER:-example}" \
+    GITLAB_REPO="${GITLAB_REPO:-example}" \
     GH_TAG_PREFIXES="${TAG_PREFIXES}" \
     MINIMUM_TRACKING_VERSION="${MINIMUM_TRACKING_VERSION:-1.0.0}" \
     MIN_VERSION_COMPONENTS=3 \
@@ -766,3 +768,35 @@ export VERSION_TRACK=tag TEST_TAGS_VERSIONS=''
 run_failed_update '' '["v",""]' '' '' list
 grep -Fq -- 'error: upstream discovery found no version names at /repos/example/example/tags for source type github tracking tag' "${CASE_ROOT}/update.log"
 unset VERSION_TRACK TEST_TAGS_VERSIONS
+
+# A gitlab project names its versions in its git tags, the same place its updater resolves a release from, so discovery queries that endpoint instead of GitHub's.
+initialize_repository
+export SOURCE_TYPE=gitlab TEST_GITLAB_ENDPOINTS="${CASE_ROOT}/gitlab-endpoints" TEST_GITLAB_TAGS=$'v4.7.2\nv4.7.1'
+PLAN=$(run_command '4.7.0' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["4.7.2","4.7.1"]' ]]
+grep -Fqx -- 'https://gitlab.com/api/v4/projects/example%2Fexample/repository/tags?per_page=100&page=1' "${CASE_ROOT}/gitlab-endpoints"
+[[ ! -s "${CASE_ROOT}/gh-endpoints" ]]
+unset SOURCE_TYPE TEST_GITLAB_ENDPOINTS TEST_GITLAB_TAGS
+
+# GitLab pages by number and names the page that follows in a response header, so the enumeration ends only when a page stops pointing onward.
+initialize_repository
+export SOURCE_TYPE=gitlab TEST_GITLAB_ENDPOINTS="${CASE_ROOT}/gitlab-endpoints"
+export TEST_GITLAB_TAGS=$'v4.7.2' TEST_GITLAB_NEXT_PAGE=2 TEST_GITLAB_TAGS_NEXT=$'v4.7.1\nv4.7.0'
+PLAN=$(run_command '4.6.0' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["4.7.2","4.7.1","4.7.0"]' ]]
+grep -Fqx -- 'https://gitlab.com/api/v4/projects/example%2Fexample/repository/tags?per_page=100&page=2' "${CASE_ROOT}/gitlab-endpoints"
+unset SOURCE_TYPE TEST_GITLAB_ENDPOINTS TEST_GITLAB_TAGS TEST_GITLAB_NEXT_PAGE TEST_GITLAB_TAGS_NEXT
+
+# An empty tag enumeration says which gitlab endpoint was queried rather than guessing at why it came back empty.
+initialize_repository
+export SOURCE_TYPE=gitlab TEST_GITLAB_TAGS=''
+run_failed_update '' '["v",""]' '' '' list
+grep -Fq -- 'error: upstream discovery found no version names at https://gitlab.com/api/v4/projects/example%2Fexample/repository/tags for source type gitlab tracking release' "${CASE_ROOT}/update.log"
+unset SOURCE_TYPE TEST_GITLAB_TAGS
+
+# An API that never stops pointing at a next page ends the run rather than letting the walk go on forever.
+initialize_repository
+export SOURCE_TYPE=gitlab GITLAB_MAX_PAGES=2 TEST_GITLAB_TAGS=$'v4.7.2' TEST_GITLAB_NEXT_PAGE=2 TEST_GITLAB_ALWAYS_NEXT_PAGE=1
+run_failed_update '' '["v",""]' '' '' list
+grep -Fq -- 'error: gitlab tag enumeration did not end within 2 pages' "${CASE_ROOT}/update.log"
+unset SOURCE_TYPE GITLAB_MAX_PAGES TEST_GITLAB_TAGS TEST_GITLAB_NEXT_PAGE TEST_GITLAB_ALWAYS_NEXT_PAGE

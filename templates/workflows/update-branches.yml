@@ -1,4 +1,6 @@
-# Installed and refreshed by `nix run .#update-workflows`; edit it in
+# Installed and refreshed by `nix run github:jgus-org/flake-lib/v1#update-workflows`: the
+# tool is taken from flake-lib's own flake URL rather than from this repository, because
+# there is nothing producer-specific in it to re-declare. Edit it in
 # jgus-org/flake-lib's templates/workflows, not here. The workflow below updates
 # itself: a run reads this file when it starts, so the first job refreshes it and
 # commits that revision, and every later job checks out that commit. The scripts it
@@ -35,7 +37,7 @@ jobs:
 
       - name: Update workflows from flake-lib templates
         id: update
-        run: nix run .#update-workflows
+        run: nix run github:jgus-org/flake-lib/v1#update-workflows
 
   discover:
     needs: workflows

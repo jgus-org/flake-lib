@@ -16,12 +16,12 @@ flake-lib.lib.mkLeafFlake {
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
   pin     = import ./pin.nix;
 }
-# => packages.<system> = { <attr>; update-version; update-workflows; update-branches; default; }
+# => packages.<system> = { <attr>; update-version; update-branches; default; }
 
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; buildAttr; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; artifactHook ? null; verification ? if buildFailureHash == null then "evaluate" else "build"; markerEnvironment ? {}; artifactFingerprint ? ""; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
-flake-lib.lib.mkUpdateWorkflows { pkgs; }                                # the same tool for every flake; nothing about the flake is baked into it
+flake-lib.lib.mkUpdateWorkflows { pkgs; }                                # publishes the workflow refresher; producers invoke flake-lib's own instance by flake URL rather than re-exporting it
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
 flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
@@ -99,7 +99,6 @@ source = {
 image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
 update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
 update-branches = flake-lib.lib.mkUpdateBranches { inherit pkgs source; pinSchema = "oci"; };
-update-workflows = flake-lib.lib.mkUpdateWorkflows { inherit pkgs; };
 ```
 
 A versioned producer pins no `tag`: it publishes its image under its version, so the registry reference is the release version with any GitHub version prefix removed, which is also the version recorded in the pin. Invoking its `update-version` with no arguments resolves the newest upstream release through GitHub's `releases/latest` endpoint, which excludes drafts and prereleases; publish the whole tree with `update-branches`, whose `pinSchema = "oci"` seeds a new exact branch from the base pin's `imageDigest` and `imageHash` alone. A seed claims no version, because `mkOciImage` asserts the digest's shape at evaluation and the branch must not name a release before its image has been resolved. The updater then writes that branch's own version, and reuses the already-pinned content when the resolved image is the one the branch was seeded with. Several releases sharing one image digest is a correct pairing rather than a stale pin, and a version branch counts as unchanged only once its pin names the version it is being resolved for.
@@ -244,7 +243,9 @@ resolve native libraries from the wrapper environment instead.
 `.github/workflows/` under the same names: `update-branches.yml` drives the
 orchestrator for a source with named releases, `update-version.yml` moves one
 current pin for a source tracked by commit. A producer refreshes whichever it has
-installed with `update-workflows`; see below.
+installed by running `nix run github:jgus-org/flake-lib/v1#update-workflows` --
+flake-lib's own instance of the tool, rather than a copy each producer republishes;
+see below.
 
 
 ### Split update-branches jobs
@@ -291,19 +292,20 @@ when their output identifies a transient network failure.
 ### Refresh installed workflows (`update-workflows`)
 
 Workflow files are copies of flake-lib's templates, so on their own they cannot
-follow the templates: flake-lib moves and the installed copy does not.
-`mkUpdateWorkflows` generates the tool that closes that gap, and it is the first
-job of every workflow flake-lib ships.
+follow the templates: flake-lib moves and the installed copy does not. The
+`update-workflows` package closes that gap, and is the first job of every workflow
+flake-lib ships:
 
-It needs nothing the flake has to declare — no source, no build attribute — so
-every producer can publish it beside its updater, whether that updater is the
-branches orchestrator or the single-version one:
-
-```nix
-update-workflows = flake-lib.lib.mkUpdateWorkflows { inherit pkgs; };
+```console
+nix run github:jgus-org/flake-lib/v1#update-workflows
 ```
 
-`mkLeafFlake` publishes it under that name already.
+Producers invoke flake-lib's own instance rather than republishing one through their
+own `packages`. Nothing about the calling flake is baked into the tool -- it reads the
+lock and the installed workflows -- so a re-export is boilerplate, and a re-export is
+also self-defeating: `nix run .#update-workflows` evaluates the *program* at the
+revision the flake currently locks, which leaves the tool doing the adopting one
+revision behind the templates it installs.
 
 The tool reads the `flake-lib` input out of `flake.lock`, advances it, and
 overwrites each workflow in `.github/workflows` whose name a template of that

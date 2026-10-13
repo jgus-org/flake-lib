@@ -1,10 +1,11 @@
 #!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#jq nixpkgs#gnused nixpkgs#nix nixpkgs#coreutils --command bash
 
 # Installs this repository's GitHub Actions workflows from the templates shipped by the
-# flake-lib revision its lock names, then advances that lock, so a repository's CI moves
-# with the library it locks instead of drifting from it. Both halves land in one commit:
-# a workflow that tracks flake-lib N would otherwise refresh the scripts it invokes from
-# revision N as well, and the run would be green against a library nobody else uses.
+# newest flake-lib revision its declared input can reach, and advances the lock to that
+# revision in the same commit, so a repository's CI moves with the library it locks instead
+# of drifting from it. Both halves land in one commit: a workflow that tracks flake-lib N
+# would otherwise refresh the scripts it invokes from revision N as well, and the run would
+# be green against a library nobody else uses.
 #
 # Which workflows a repository has is the author's decision; this keeps the installed ones
 # current and never adds, removes, or renames one. A workflow whose name flake-lib has no

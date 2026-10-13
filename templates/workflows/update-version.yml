@@ -3,10 +3,12 @@
 # and the history of previous versions is this branch's own commit log. A producer that
 # tracks named releases gets templates/workflows/update-branches.yml instead of this one.
 #
-# Installed and refreshed by `nix run .#update-workflows`; edit it in
-# jgus-org/flake-lib's templates/workflows, not here. The workflow below updates itself:
-# a run reads this file when it starts, so the first job refreshes it and commits that
-# revision, and the job after it checks out that commit.
+# Installed and refreshed by `nix run github:jgus-org/flake-lib/v1#update-workflows`: the
+# tool is taken from flake-lib's own flake URL rather than from this repository, because
+# there is nothing producer-specific in it to re-declare. Edit it in jgus-org/flake-lib's
+# templates/workflows, not here. The workflow below updates itself: a run reads this file
+# when it starts, so the first job refreshes it and commits that revision, and the job
+# after it checks out that commit.
 #
 # BUILD_ATTR belongs to the repository rather than to the template, so update-workflows
 # carries the installed value across a refresh instead of resetting it.
@@ -42,7 +44,7 @@ jobs:
 
       - name: Update workflows from flake-lib templates
         id: update
-        run: nix run .#update-workflows
+        run: nix run github:jgus-org/flake-lib/v1#update-workflows
 
   update:
     needs: workflows

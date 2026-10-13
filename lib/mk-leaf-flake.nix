@@ -1,5 +1,5 @@
-# Assembles a leaf flake's per-system outputs (package, update-version, update-workflows, optional update-branches) from a source/package/pin spec.
-{ mkPypiPackage, mkUpdateVersion, mkUpdateBranches, mkUpdateWorkflows }:
+# Assembles a leaf flake's per-system outputs (package, update-version, optional update-branches) from a source/package/pin spec.
+{ mkPypiPackage, mkUpdateVersion, mkUpdateBranches }:
 { nixpkgs
 , flake-utils
 , source
@@ -25,14 +25,13 @@ flake-utils.lib.eachDefaultSystem (system:
     pinSchema = if source.type == "pypi" then "pypi" else "github";
     update-version = mkUpdateVersion { inherit pkgs source siblings siblingRefsInPin verification; buildAttr = package.attr; };
     update-branches = mkUpdateBranches { inherit pkgs source pinSchema branchOwnedFiles; };
-    update-workflows = mkUpdateWorkflows { inherit pkgs; };
   in
   {
     packages =
       {
         ${package.attr} = pkg;
         default = pkg;
-        inherit update-version update-workflows;
+        inherit update-version;
       }
       // pkgs.lib.optionalAttrs branches { inherit update-branches; };
   })

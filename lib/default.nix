@@ -11,7 +11,7 @@ let
   mkOciImage = import ./mk-oci-image.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
-  mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkUpdateWorkflows; };
+  mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches; };
   pythonWheelhouse = import ./python-wheelhouse.nix { inherit pythonEnvironments; };
   depsCore = ../scripts/deps_core.py;
 

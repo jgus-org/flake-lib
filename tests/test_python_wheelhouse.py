@@ -564,6 +564,17 @@ class PythonWheelhouseTests(unittest.TestCase):
         self.assertIn("fakenative==2.1.0", requirements_in)
         self.assertNotIn("fakepkg==1.0.0", requirements_in)
 
+    def test_no_emit_extends_uv_compile_without_filtering_requests(self) -> None:
+        spec = self.spec_with([CURRENT])
+        spec["noEmit"] = ["fakenative"]
+        stdout, root = run_hook(self.work, self.index_url, spec, self.common_env)
+
+        compile_lines = [line for line in self.log.read_text().splitlines() if line.startswith("uv pip compile")]
+        self.assertTrue(compile_lines)
+        for line in compile_lines:
+            self.assertIn("--no-emit-package fakenative", line)
+        self.assertIn("fakenative==2.1.0", (root / "requirements.in").read_text())
+
     def test_source_file_only_filter(self) -> None:
         spec = self.spec_with([CURRENT])
         spec["sources"] = [

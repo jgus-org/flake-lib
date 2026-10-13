@@ -31,7 +31,7 @@ flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
 flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + systems + targets
 flake-lib.lib.platformTags     { pythonVersion; platform; }              # "3.13" + "x86_64-manylinux_2_28" -> uv/pip tag attrs
-flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; pythonVersions ? pythonEnvironments.pythonVersions; systems ? pythonEnvironments.systems; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; fingerprint; }
+flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; noEmit ? []; pythonVersions ? pythonEnvironments.pythonVersions; systems ? pythonEnvironments.systems; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; fingerprint; }
 flake-lib.lib.wheelhouseArtifactPaths { root; pythonVersion; system; pythonVersions ? pythonEnvironments.pythonVersions; } # -> { requirementsLock; wheelManifest; }
 flake-lib.lib.mkWheelhouse     { pkgs; wheels; }                         # target-qualified wheels JSON path or list -> { files; wheelhouse; }
 flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
@@ -212,6 +212,15 @@ exactly, unlike uv's resolver), and recorded per wheel as `name`, `version`,
 Requirements-file directives such as `-r` and `-c` are rejected; flatten
 included requirements and constraints into the declared source file before
 using it as a wheelhouse source.
+
+`noEmit` names packages that stay in the resolution graph but are omitted from
+the emitted lock and wheelhouse (`uv pip compile --no-emit-package`): the
+graph keeps honoring their metadata, and their own dependencies still resolve
+and are emitted. This serves environments that layer wheels over a stack the
+deployment provides separately — a consumer supplying CUDA-enabled `torch`
+from its own package set still needs `torch`'s dependents resolved against
+`torch`'s metadata, while a lock that carried `torch` itself would install a
+second, mismatched copy beside the provided one.
 
 At eval time `mkWheelhouse` turns a target-qualified manifest into a hash-pinned wheelhouse. `wheelhouseArtifactPaths` selects exactly one committed manifest from the composed interpreter version and Nix target system. `installWheelhouse` installs it into an application derivation:
 

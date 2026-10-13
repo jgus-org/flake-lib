@@ -3,6 +3,7 @@ let
   mkPypiPackage = import ./mk-pypi-package.nix;
   mkUpdateVersion = import ./mk-update-version.nix;
   mkUpdateBranches = import ./mk-update-branches.nix;
+  mkUpdateWorkflows = import ./mk-update-workflows.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
   mkJsDepsHook = import ./mk-js-deps-hook.nix;
   mkComposedHook = import ./mk-composed-hook.nix;
@@ -10,7 +11,7 @@ let
   mkOciImage = import ./mk-oci-image.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
-  mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches; };
+  mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkUpdateWorkflows; };
   pythonWheelhouse = import ./python-wheelhouse.nix { inherit pythonEnvironments; };
   depsCore = ../scripts/deps_core.py;
 
@@ -29,6 +30,6 @@ let
       pkgs.${name};
 in
 {
-  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
+  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkUpdateWorkflows mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
   inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse;
 }

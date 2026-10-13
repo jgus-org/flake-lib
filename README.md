@@ -16,11 +16,12 @@ flake-lib.lib.mkLeafFlake {
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
   pin     = import ./pin.nix;
 }
-# => packages.<system> = { <attr>; update-version; update-branches; default; }
+# => packages.<system> = { <attr>; update-version; update-workflows; update-branches; default; }
 
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; buildAttr; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; artifactHook ? null; verification ? if buildFailureHash == null then "evaluate" else "build"; markerEnvironment ? {}; artifactFingerprint ? ""; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
+flake-lib.lib.mkUpdateWorkflows { pkgs; }                                # the same tool for every flake; nothing about the flake is baked into it
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
 flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
@@ -98,6 +99,7 @@ source = {
 image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
 update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
 update-branches = flake-lib.lib.mkUpdateBranches { inherit pkgs source; pinSchema = "oci"; };
+update-workflows = flake-lib.lib.mkUpdateWorkflows { inherit pkgs; };
 ```
 
 A versioned producer pins no `tag`: it publishes its image under its version, so the registry reference is the release version with any GitHub version prefix removed, which is also the version recorded in the pin. Invoking its `update-version` with no arguments resolves the newest upstream release through GitHub's `releases/latest` endpoint, which excludes drafts and prereleases; publish the whole tree with `update-branches`, whose `pinSchema = "oci"` seeds a new exact branch from the base pin's `imageDigest` and `imageHash` alone. A seed claims no version, because `mkOciImage` asserts the digest's shape at evaluation and the branch must not name a release before its image has been resolved. The updater then writes that branch's own version, and reuses the already-pinned content when the resolved image is the one the branch was seeded with. Several releases sharing one image digest is a correct pairing rather than a stale pin, and a version branch counts as unchanged only once its pin names the version it is being resolved for.
@@ -239,8 +241,10 @@ flakes that vendor opaque wheelhouses (freetoken-style) skip autoPatchelf and
 resolve native libraries from the wrapper environment instead.
 
 `templates/workflows/` holds the workflow files a consuming repo installs under
-`.github/workflows/` under the same names. A producer refreshes them with
-`update-branches workflows`; see below.
+`.github/workflows/` under the same names: `update-branches.yml` drives the
+orchestrator for a source with named releases, `update-version.yml` moves one
+current pin for a source tracked by commit. A producer refreshes whichever it has
+installed with `update-workflows`; see below.
 
 
 ### Split update-branches jobs
@@ -252,7 +256,6 @@ maintenance across jobs:
 update-branches list
 update-branches refresh --base-sha SHA --version CANONICAL --upstream-version RAW
 update-branches publish --base-sha SHA --versions-json JSON
-update-branches workflows
 ```
 
 `list` writes exactly one compact JSON object to stdout; progress goes to stderr:
@@ -276,19 +279,6 @@ highest candidate is a prerelease but an aggregate is stable, the aggregate
 advances to the highest successful stable candidate. Invoking `update-branches`
 without arguments retains the compatible all-in-one behavior.
 
-`workflows` advances this flake's `flake-lib` input and installs every
-`templates/workflows/*.yml` that revision ships over the workflow of the same
-name, carrying this flake's `MINIMUM_TRACKING_VERSION` across instead of resetting
-it to the template's default, then commits and pushes the result and reports it as
-the `sha` output. It is the first job of the installed workflow, so the library a
-run's scripts come from and the workflow that invokes them move as one commit
-rather than drifting apart: the run reads its own workflow file before this job
-can rewrite it, but every later job checks out the reported SHA and builds from the
-newer revision. A workflow cannot start a run for the commit it pushes — a push
-made with `GITHUB_TOKEN` triggers nothing — so the handoff happens within the run.
-An unchanged `flake-lib` input pushes nothing and reports no SHA, which leaves the
-rest of the run on the revision it started from.
-
 The workflow template uses the newest stable entry as a fast path, refreshes all
 remaining exact versions in a parallel matrix, and runs a final publisher even
 when a maintenance job fails. Both publishers and every exact job reuse the
@@ -297,6 +287,41 @@ re-reads the remote after every failed push: an already-applied desired SHA is
 accepted, an unchanged ref is retried, and a different concurrent update is
 never overwritten. Branch update commands receive one additional attempt only
 when their output identifies a transient network failure.
+
+### Refresh installed workflows (`update-workflows`)
+
+Workflow files are copies of flake-lib's templates, so on their own they cannot
+follow the templates: flake-lib moves and the installed copy does not.
+`mkUpdateWorkflows` generates the tool that closes that gap, and it is the first
+job of every workflow flake-lib ships.
+
+It needs nothing the flake has to declare — no source, no build attribute — so
+every producer can publish it beside its updater, whether that updater is the
+branches orchestrator or the single-version one:
+
+```nix
+update-workflows = flake-lib.lib.mkUpdateWorkflows { inherit pkgs; };
+```
+
+`mkLeafFlake` publishes it under that name already.
+
+The tool reads the `flake-lib` input out of `flake.lock`, advances it, and
+overwrites each workflow in `.github/workflows` whose name a template of that
+revision ships. It does not add or rename a workflow: which workflows a repo has
+is the author's decision, and one flake-lib has no template for is left alone.
+Values the repository owns rather than flake-lib — the tracking floor, the build
+attribute — are read from the file about to be replaced and written back into the
+new one, so a refresh carries them instead of resetting them to the template's
+default. The advanced input and the refreshed workflows are committed together,
+because a workflow that tracks flake-lib N would otherwise be refreshing the
+scripts it invokes from revision N too.
+
+The commit is pushed and reported as the `sha` output, which the run's remaining
+jobs check out. Without that handoff the update would only pay off a day later —
+a workflow is read when its run starts, and a push made with `GITHUB_TOKEN`
+triggers nothing — so the run that moves a workflow builds from the workflow it
+just wrote. When flake-lib is already at its newest revision, nothing is pushed
+and no `sha` is reported, which leaves the run on the revision it started from.
 
 ## Versioning
 

@@ -1,0 +1,140 @@
+#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#coreutils nixpkgs#git nixpkgs#gnused nixpkgs#jq --command bash
+
+set -euo pipefail
+
+# The workflow refresher is exercised against a local bare remote, a flake.lock naming
+# flake-lib, and the fake nix that advances the lock to whatever revision it is told to.
+# The templates come from a synthetic flake-lib source tree, because what matters is the
+# repository's own state afterwards: which files a run installs, which values it carries,
+# and which commit it reports for the rest of the run to build from.
+
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "${TEST_ROOT}"' EXIT
+
+rev_of() { printf '%s%.0s' "${1}" {1..40}; }
+
+initialize_repository() {
+  CASE_ROOT=$(mktemp -d "${TEST_ROOT}/case.XXXXXX")
+  REMOTE="${CASE_ROOT}/remote.git"
+  CHECKOUT="${CASE_ROOT}/checkout"
+  LOCKED_REV=$(rev_of a)
+
+  git init -q --bare "${REMOTE}"
+  git init -q -b main "${CHECKOUT}"
+  git -C "${CHECKOUT}" remote add origin "${REMOTE}"
+  jq -nc --arg rev "${LOCKED_REV}" '{
+    nodes: {
+      root: {inputs: {"flake-lib": "flake-lib"}},
+      "flake-lib": {locked: {type: "github", owner: "jgus-org", repo: "flake-lib", rev: $rev}}
+    }
+  }' >"${CHECKOUT}/flake.lock"
+  git -C "${CHECKOUT}" add flake.lock
+  git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'Track flake-lib'
+  git -C "${CHECKOUT}" push -q -u origin main
+}
+
+install_workflow() {
+  local NAME="${1}" BODY="${2}"
+  mkdir -p "${CHECKOUT}/.github/workflows"
+  printf '%s\n' "${BODY}" >"${CHECKOUT}/.github/workflows/${NAME}"
+  git -C "${CHECKOUT}" add ".github/workflows/${NAME}"
+  git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm "Install ${NAME}"
+  git -C "${CHECKOUT}" push -q origin main
+}
+
+write_template() {
+  local NAME="${1}" BODY="${2}"
+  mkdir -p "${TEMPLATE_SOURCE}/templates/workflows"
+  printf '%s\n' "${BODY}" >"${TEMPLATE_SOURCE}/templates/workflows/${NAME}"
+}
+
+run_refresher() {
+  (
+    cd "${CHECKOUT}"
+    TEST_NIX_TEMPLATE_SOURCE="${TEMPLATE_SOURCE}" \
+    TEST_NIX_FLAKE_LIB_REV="${ADVANCE_TO_REV}" \
+    GITHUB_OUTPUT="${OUTPUTS}" \
+    PUSH_RETRY_DELAY_SECONDS=0 \
+    bash "${UPDATE_WORKFLOWS}"
+  )
+}
+
+assert_committed_subject() {
+  git --git-dir="${REMOTE}" log -1 --format=%s refs/heads/main | grep -qxF -- "${1}"
+}
+
+# A refresh replaces the template's own text, carries the values this repository owns
+# instead of resetting them to the template's defaults, leaves a workflow flake-lib has
+# no template for exactly as it is, and installs nothing the repository did not choose.
+TEMPLATE_SOURCE=$(mktemp -d "${TEST_ROOT}/flake-lib-src.XXXXXX")
+initialize_repository
+install_workflow update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "3.1.4.1"'
+install_workflow update-version.yml 'jobs:
+  update:
+    env:
+      BUILD_ATTR: "wine-wineland"'
+install_workflow release.yml 'name: release'
+write_template update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "0.0.0"
+jobs:
+  discover: {}'
+write_template update-version.yml 'jobs:
+  update:
+    env:
+      BUILD_ATTR: "default"'
+write_template needs-rebase.yml 'jobs:
+  label: {}'
+ADVANCE_TO_REV=$(rev_of b)
+OUTPUTS="${CASE_ROOT}/outputs"
+run_refresher
+grep -Fq 'MINIMUM_TRACKING_VERSION: "3.1.4.1"' "${CHECKOUT}/.github/workflows/update-branches.yml"
+grep -Fq 'discover: {}' "${CHECKOUT}/.github/workflows/update-branches.yml"
+grep -Fq 'BUILD_ATTR: "wine-wineland"' "${CHECKOUT}/.github/workflows/update-version.yml"
+grep -Fq 'name: release' "${CHECKOUT}/.github/workflows/release.yml"
+[[ ! -e "${CHECKOUT}/.github/workflows/needs-rebase.yml" ]]
+[[ "$(git --git-dir="${REMOTE}" show refs/heads/main:flake.lock | jq -r '.nodes["flake-lib"].locked.rev')" == "${ADVANCE_TO_REV}" ]]
+assert_committed_subject "Update workflows from flake-lib ${ADVANCE_TO_REV}"
+[[ "$(sed -nE 's/^sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
+
+# Templates identical to what is installed still advance the locked flake-lib: the scripts
+# a workflow invokes come from that revision, so a scripts-only fix is not discarded
+# because no workflow file changed. The commit says so rather than claiming a refresh.
+initialize_repository
+install_workflow update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "2.0.0"'
+write_template update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "2.0.0"'
+ADVANCE_TO_REV=$(rev_of c)
+OUTPUTS="${CASE_ROOT}/outputs"
+run_refresher
+grep -Fq 'MINIMUM_TRACKING_VERSION: "2.0.0"' "${CHECKOUT}/.github/workflows/update-branches.yml"
+assert_committed_subject "Advance flake-lib to ${ADVANCE_TO_REV}"
+[[ "$(sed -nE 's/^sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
+
+# A repository whose workflows are all its own advances the input and leaves them alone,
+# which is the same commit-with-a-SHA handoff rather than a silent no-op.
+initialize_repository
+install_workflow pages.yml 'on: push'
+write_template update-branches.yml 'jobs: {}'
+ADVANCE_TO_REV=$(rev_of d)
+OUTPUTS="${CASE_ROOT}/outputs"
+run_refresher
+grep -Fq 'on: push' "${CHECKOUT}/.github/workflows/pages.yml"
+assert_committed_subject "Advance flake-lib to ${ADVANCE_TO_REV}"
+[[ "$(sed -nE 's/^sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
+
+# flake-lib already at its newest revision pushes nothing and reports no SHA, leaving the
+# rest of the run on the revision it started from.
+initialize_repository
+install_workflow update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "1.0.0"'
+write_template update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "9.9.9"'
+UNCHANGED_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
+ADVANCE_TO_REV="${LOCKED_REV}"
+OUTPUTS="${CASE_ROOT}/outputs"
+run_refresher
+[[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${UNCHANGED_SHA}" ]]
+grep -Fq 'MINIMUM_TRACKING_VERSION: "1.0.0"' "${CHECKOUT}/.github/workflows/update-branches.yml"
+[[ ! -s "${OUTPUTS}" ]]

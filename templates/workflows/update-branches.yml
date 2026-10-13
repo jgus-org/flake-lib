@@ -1,4 +1,4 @@
-# Installed and refreshed by `nix run .#update-branches -- workflows`; edit it in
+# Installed and refreshed by `nix run .#update-workflows`; edit it in
 # jgus-org/flake-lib's templates/workflows, not here. The workflow below updates
 # itself: a run reads this file when it starts, so the first job refreshes it and
 # commits that revision, and every later job checks out that commit. The scripts it
@@ -35,7 +35,7 @@ jobs:
 
       - name: Update workflows from flake-lib templates
         id: update
-        run: nix run .#update-branches -- workflows
+        run: nix run .#update-workflows
 
   discover:
     needs: workflows

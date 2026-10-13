@@ -31,6 +31,7 @@
         exampleSource = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };
         update-version = lib.mkUpdateVersion { inherit pkgs; source = exampleSource; buildAttr = "iso639-lang"; };
         update-branches = lib.mkUpdateBranches { inherit pkgs; source = exampleSource; pinSchema = "pypi"; };
+        update-workflows = lib.mkUpdateWorkflows { inherit pkgs; };
         update-version-pypi-cargo = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
@@ -564,16 +565,33 @@
             ];
             CASCADE_PY = ./scripts/cascade.py;
             DEPS_CORE = ./scripts/deps_core.py;
+            GIT_PUSH_LIB = ./scripts/git-push.sh;
             UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
           } ''
           bash ${./tests/test_update_branches.sh}
           touch $out
         '';
+        update-workflows-tests = pkgs.runCommand "update-workflows-tests"
+          {
+            nativeBuildInputs = [
+              pkgs.bash
+              pkgs.coreutils
+              pkgs.git
+              pkgs.gnused
+              pkgs.jq
+              update-branches-test-nix
+            ];
+            GIT_PUSH_LIB = ./scripts/git-push.sh;
+            UPDATE_WORKFLOWS = ./scripts/update-workflows.sh;
+          } ''
+          bash ${./tests/test_update_workflows.sh}
+          touch $out
+        '';
       in
       {
-        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
+        packages = { inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
         checks = {
-          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
+          inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
@@ -581,6 +599,7 @@
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
           inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration huggingface-model-manager-tests;
           inherit update-version-tests;
+          inherit update-workflows-tests;
           inherit oci-image-tests;
         };
       });

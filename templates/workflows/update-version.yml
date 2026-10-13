@@ -1,0 +1,88 @@
+# Update workflow for a producer whose upstream has no named releases, so there is
+# nothing to branch on: the published pin is the revision the branch currently names,
+# and the history of previous versions is this branch's own commit log. A producer that
+# tracks named releases gets templates/workflows/update-branches.yml instead of this one.
+#
+# Installed and refreshed by `nix run .#update-workflows`; edit it in
+# jgus-org/flake-lib's templates/workflows, not here. The workflow below updates itself:
+# a run reads this file when it starts, so the first job refreshes it and commits that
+# revision, and the job after it checks out that commit.
+#
+# BUILD_ATTR belongs to the repository rather than to the template, so update-workflows
+# carries the installed value across a refresh instead of resetting it.
+#
+# Everything the run changed is committed together. Scratch output the updater leaves
+# behind must be in .gitignore, since staging is unrestricted.
+
+name: Update version
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.update.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Update workflows from flake-lib templates
+        id: update
+        run: nix run .#update-workflows
+
+  update:
+    needs: workflows
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      BUILD_ATTR: "default"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.workflows.outputs.sha || github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Bump nixpkgs
+        run: nix flake update
+
+      - name: Bump the tracked revision
+        env:
+          # gh CLI reads GH_TOKEN, not GITHUB_TOKEN; required for github-source flakes.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: nix run .#update-version
+
+      # The updater exits early when the upstream commit has not moved, so this runs
+      # unconditionally: nixpkgs can have moved underneath a pin that did not, and a
+      # run that only pins files without building them says nothing about the result.
+      - name: Build the package
+        run: nix build --no-link -L ".#${BUILD_ATTR}"
+
+      - name: Commit and push whatever the run changed
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -m "auto: bump the tracked revision"
+          # The checkout above is detached at the commit the first job pushed, so the
+          # branch to update comes from the ref the run started on, not from HEAD.
+          git push --quiet origin "HEAD:${GITHUB_REF_NAME}"

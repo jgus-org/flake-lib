@@ -2,9 +2,7 @@
 
 # Per-version branch orchestrator. It supports both a backwards-compatible
 # all-in-one invocation and job-splittable discovery, exact-refresh, and
-# aggregate-publication commands. It also installs the repository's own workflow
-# files from flake-lib's templates, so a producer's CI moves with the library it
-# locks instead of drifting from it.
+# aggregate-publication commands.
 #
 # For each upstream version >= $MINIMUM_TRACKING_VERSION, ensures:
 #   - an exact branch `v<M>.<m>.<p>` exists and its pin is hash-validated
@@ -40,13 +38,11 @@ mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
 cd "${FLAKE_ROOT}"
 
-PUSH_MAX_ATTEMPTS="${PUSH_MAX_ATTEMPTS:-5}"
-PUSH_RETRY_DELAY_SECONDS="${PUSH_RETRY_DELAY_SECONDS:-5}"
 TRANSIENT_MAX_ATTEMPTS="${TRANSIENT_MAX_ATTEMPTS:-2}"
 TRANSIENT_RETRY_DELAY_SECONDS="${TRANSIENT_RETRY_DELAY_SECONDS:-5}"
 GITHUB_REF_MAX_ATTEMPTS="${GITHUB_REF_MAX_ATTEMPTS:-3}"
 GITHUB_REF_RETRY_DELAY_SECONDS="${GITHUB_REF_RETRY_DELAY_SECONDS:-30}"
-if [[ ! "${PUSH_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${TRANSIENT_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${GITHUB_REF_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+if [[ ! "${TRANSIENT_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${GITHUB_REF_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: retry attempt counts must be positive integers" >&2
   exit 2
 fi
@@ -55,6 +51,9 @@ fi
 # no --paginate equivalent to hand the enumeration to. The cap bounds how many pages are
 # fetched, whatever the API keeps naming.
 GITLAB_MAX_PAGES="${GITLAB_MAX_PAGES:-20}"
+
+# shellcheck source=/dev/null
+source "${GIT_PUSH_LIB:?required env var}"
 
 # Buffers output and emits it only on success, so a consumer never sees partial data from an attempt that died mid-stream (e.g. gh --paginate failing between pages).
 retry() {
@@ -70,54 +69,6 @@ retry() {
     fi
   done
   echo "  ${1} failed after 5 attempts" >&2
-  return 1
-}
-
-remote_ref_sha() {
-  local ref="${1}" output
-  if ! output=$(git ls-remote --heads origin "refs/heads/${ref}"); then
-    return 1
-  fi
-  printf '%s\n' "${output%%[[:space:]]*}"
-}
-
-# A failed push can be ambiguous: the server may have updated the ref before
-# returning an error. Re-read the remote before retrying. Treat the desired SHA
-# as success, retry only while the ref remains at the expected SHA, and never
-# overwrite a genuinely different concurrent update.
-push_ref() {
-  local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}"
-  local attempt desired_sha remote_sha="" query_exit=0
-  desired_sha=$(git rev-parse --verify "${source}^{commit}")
-
-  for ((attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++)); do
-    if [[ "${mode}" == lease ]]; then
-      if git push --force-with-lease="refs/heads/${ref}:${expected_sha}" --quiet origin "${desired_sha}:refs/heads/${ref}"; then
-        return 0
-      fi
-    elif git push --quiet origin "${desired_sha}:refs/heads/${ref}"; then
-      return 0
-    fi
-
-    query_exit=0
-    remote_sha=$(remote_ref_sha "${ref}") || query_exit=$?
-    if (( query_exit == 0 )); then
-      if [[ "${remote_sha}" == "${desired_sha}" ]]; then
-        echo "  ${ref} reached ${desired_sha:0:8} despite the push error; continuing."
-        return 0
-      fi
-      if [[ "${remote_sha}" != "${expected_sha}" ]]; then
-        echo "error: ${ref} changed concurrently (expected ${expected_sha:-absent}, found ${remote_sha:-absent}); refusing to overwrite it" >&2
-        return 1
-      fi
-    fi
-
-    if (( attempt < PUSH_MAX_ATTEMPTS )); then
-      echo "  push of ${ref} failed (attempt ${attempt}/${PUSH_MAX_ATTEMPTS}); retrying in ${PUSH_RETRY_DELAY_SECONDS}s..." >&2
-      sleep "${PUSH_RETRY_DELAY_SECONDS}"
-    fi
-  done
-  echo "error: push of ${ref} failed after ${PUSH_MAX_ATTEMPTS} attempts" >&2
   return 1
 }
 
@@ -481,7 +432,6 @@ Usage:
   update-branches list
   update-branches refresh --base-sha SHA --version VERSION --upstream-version VERSION
   update-branches publish --base-sha SHA --versions-json JSON
-  update-branches workflows
 EOF
 }
 
@@ -908,83 +858,6 @@ command_list() {
   printf '%s\n' "${JSON}"
 }
 
-WORKFLOW_TEMPLATE_DIR="templates/workflows"
-WORKFLOW_INSTALL_DIR=".github/workflows"
-
-# Installs every workflow template flake-lib ships, including the file this job runs
-# from. A workflow is read when its run starts, so the file this writes takes effect
-# for the next run; the commit it pushes is reported as `sha` so the rest of this run
-# can build from it rather than from the SHA the run started on.
-command_workflows() {
-  local node locked current base flake_lib_src template destination floor sha branch
-  local -a installed=() committed=()
-  node=$(jq -r '.nodes.root.inputs["flake-lib"] // ""' flake.lock)
-  if [[ -z "${node}" ]]; then
-    echo "error: flake.lock has no flake-lib input, so there is no template to install" >&2
-    return 1
-  fi
-  locked=$(jq -r --arg n "${node}" '.nodes[$n].locked | [.owner, .repo, .rev] | join("/")' flake.lock)
-  if ! nix flake update flake-lib; then
-    echo "error: advancing the flake-lib input failed" >&2
-    return 1
-  fi
-  current=$(jq -r --arg n "${node}" '.nodes[$n].locked | [.owner, .repo, .rev] | join("/")' flake.lock)
-  if [[ "${locked}" == "${current}" ]]; then
-    echo "flake-lib is already at its newest revision; no workflow to update."
-    return 0
-  fi
-  flake_lib_src=$(nix flake metadata --no-write-lock-file --json "github:${current}" | jq -r .path)
-  if [[ ! -d "${flake_lib_src}/${WORKFLOW_TEMPLATE_DIR}" ]]; then
-    echo "error: flake-lib ${current} ships no ${WORKFLOW_TEMPLATE_DIR}, so the installed workflows cannot be refreshed from it" >&2
-    return 1
-  fi
-  mkdir -p "${WORKFLOW_INSTALL_DIR}"
-  for template in "${flake_lib_src}/${WORKFLOW_TEMPLATE_DIR}"/*.yml; do
-    [[ -e "${template}" ]] || continue
-    destination="${WORKFLOW_INSTALL_DIR}/${template##*/}"
-    # The tracking floor is this flake's own choice rather than flake-lib's, so it is
-    # carried across the update instead of being reset to the template's default. A
-    # template installed for the first time has no floor of its own to carry.
-    floor=""
-    if [[ -f "${destination}" ]]; then
-      floor=$(sed -nE 's/^[[:space:]]*MINIMUM_TRACKING_VERSION: "(.*)"/\1/p' "${destination}" | head -1)
-    fi
-    if [[ -n "${floor}" ]] && grep -q "MINIMUM_TRACKING_VERSION" "${template}"; then
-      sed -E "s|MINIMUM_TRACKING_VERSION: \"[^\"]*\"|MINIMUM_TRACKING_VERSION: \"${floor}\"|" \
-        "${template}" > "${destination}"
-    else
-      cp "${template}" "${destination}"
-    fi
-    installed+=("${destination}")
-  done
-  if (( ${#installed[@]} == 0 )); then
-    echo "error: flake-lib ${current} has no ${WORKFLOW_TEMPLATE_DIR}/*.yml to install" >&2
-    return 1
-  fi
-  if ! branch=$(git symbolic-ref --quiet --short HEAD); then
-    echo "error: the workflow update commit needs a branch to push to, but HEAD is detached" >&2
-    return 1
-  fi
-  base=$(git rev-parse HEAD)
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-  git add "${installed[@]}" flake.lock
-  if git diff --cached --quiet; then
-    echo "flake-lib ${current} changed neither the installed workflows nor this flake's inputs."
-    return 0
-  fi
-  mapfile -t committed < <(git diff --cached --name-only)
-  git commit -q -m "Update workflows from flake-lib ${current}"
-  sha=$(git rev-parse HEAD)
-  if ! push_ref HEAD "${branch}" "${base}" lease; then
-    return 1
-  fi
-  echo "Committed ${#committed[@]} file(s) from flake-lib ${current}: ${committed[*]}"
-  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-    printf 'sha=%s\n' "${sha}" >> "${GITHUB_OUTPUT}"
-  fi
-}
-
 command_refresh() {
   local BASE="" VERSION="" UPSTREAM=""
   shift
@@ -1058,6 +931,5 @@ case "${1:-}" in
   list) [[ $# == 1 ]] || { usage; exit 2; }; command_list ;;
   refresh) command_refresh "$@" ;;
   publish) command_publish "$@" ;;
-  workflows) [[ $# == 1 ]] || { usage; exit 2; }; command_workflows ;;
   *) usage; exit 2 ;;
 esac

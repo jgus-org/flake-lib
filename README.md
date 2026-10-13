@@ -317,6 +317,20 @@ default. The advanced input and the refreshed workflows are committed together,
 because a workflow that tracks flake-lib N would otherwise be refreshing the
 scripts it invokes from revision N too.
 
+A repository with no workflow named like a template joins that set by naming one:
+
+```console
+nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-version.yml
+```
+
+This installs exactly the named template — creating it, or replacing a hand-written file
+of the same name while keeping the values that belong to the repository — and advances the
+input even when it is already current, since joining does not depend on the revision
+moving. It is the upgrade path for a producer that exists only on GitHub and so has no
+local source to promote from. The tool never picks the publication model, and retiring a
+workflow flake-lib has no template for stays the author's `git rm`; what is still in the
+way is named in the output, because two workflows committing to one branch fight over it.
+
 The commit is pushed and reported as the `sha` output, which the run's remaining
 jobs check out. Without that handoff the update would only pay off a day later —
 a workflow is read when its run starts, and a push made with `GITHUB_TOKEN`

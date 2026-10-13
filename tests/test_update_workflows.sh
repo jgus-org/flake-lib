@@ -55,7 +55,7 @@ run_refresher() {
     TEST_NIX_FLAKE_LIB_REV="${ADVANCE_TO_REV}" \
     GITHUB_OUTPUT="${OUTPUTS}" \
     PUSH_RETRY_DELAY_SECONDS=0 \
-    bash "${UPDATE_WORKFLOWS}"
+    bash "${UPDATE_WORKFLOWS}" "$@"
   )
 }
 
@@ -138,3 +138,77 @@ run_refresher
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${UNCHANGED_SHA}" ]]
 grep -Fq 'MINIMUM_TRACKING_VERSION: "1.0.0"' "${CHECKOUT}/.github/workflows/update-branches.yml"
 [[ ! -s "${OUTPUTS}" ]]
+
+# Adopting is how a repository joins the tracked set, which is the upgrade path for a
+# producer that lives only on GitHub and so has no local source to promote from. The
+# author names the template; the tool installs exactly that one and reports the workflow
+# it cannot refresh that is still in the way, rather than removing it.
+initialize_repository
+install_workflow update.yml 'on:
+  schedule:
+    - cron: "0 7 * * *"
+jobs:
+  update: {}'
+write_template update-version.yml 'on:
+  schedule:
+    - cron: "0 7 * * *"
+jobs:
+  update:
+    env:
+      BUILD_ATTR: "default"'
+ADVANCE_TO_REV=$(rev_of e)
+OUTPUTS="${CASE_ROOT}/outputs"
+RUN_REPORT=$(run_refresher adopt update-version.yml)
+grep -Fq 'BUILD_ATTR: "default"' "${CHECKOUT}/.github/workflows/update-version.yml"
+grep -Fq '.github/workflows/update.yml' <<<"${RUN_REPORT}"
+grep -Fq 'jobs:' "${CHECKOUT}/.github/workflows/update.yml"
+assert_committed_subject "Adopt flake-lib's update-version.yml at ${ADVANCE_TO_REV}"
+[[ "$(sed -nE 's/^sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
+
+# Adopting does not depend on the input moving: a repository joining at the revision it
+# already locks gets the template, which is the case for a producer adopting flake-lib's
+# model without a flake-lib change of its own.
+initialize_repository
+write_template update-version.yml 'jobs:
+  update: {}'
+UNCHANGED_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
+ADVANCE_TO_REV="${LOCKED_REV}"
+OUTPUTS="${CASE_ROOT}/outputs"
+run_refresher adopt update-version.yml >/dev/null
+grep -Fq 'update: {}' "${CHECKOUT}/.github/workflows/update-version.yml"
+assert_committed_subject "Adopt flake-lib's update-version.yml at ${LOCKED_REV}"
+[[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" != "${UNCHANGED_SHA}" ]]
+
+# Adopting over a hand-written workflow of the same name keeps the value that belongs to
+# the repository, exactly as a refresh does.
+initialize_repository
+install_workflow update-version.yml 'jobs:
+  update:
+    env:
+      BUILD_ATTR: "lazylibrarian"'
+write_template update-version.yml 'jobs:
+  update:
+    env:
+      BUILD_ATTR: "default"
+    steps:
+      - run: nix run .#update-version'
+ADVANCE_TO_REV=$(rev_of f)
+OUTPUTS="${CASE_ROOT}/outputs"
+run_refresher adopt update-version.yml >/dev/null
+grep -Fq 'BUILD_ATTR: "lazylibrarian"' "${CHECKOUT}/.github/workflows/update-version.yml"
+grep -Fq 'nix run .#update-version' "${CHECKOUT}/.github/workflows/update-version.yml"
+
+# A name flake-lib ships no template for is refused without a commit, because the
+# alternative is an empty or half-written workflow scheduled against a pin.
+initialize_repository
+write_template update-version.yml 'jobs: {}'
+BEFORE_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
+ADVANCE_TO_REV=$(rev_of g)
+OUTPUTS="${CASE_ROOT}/outputs"
+if REFUSAL=$(run_refresher adopt nightly-scan.yml 2>&1 >/dev/null); then
+  echo 'adopting a template flake-lib does not ship should have failed' >&2
+  exit 1
+fi
+grep -Fq 'templates/workflows/nightly-scan.yml' <<<"${REFUSAL}"
+[[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${BEFORE_SHA}" ]]
+[[ ! -e "${CHECKOUT}/.github/workflows/nightly-scan.yml" ]]

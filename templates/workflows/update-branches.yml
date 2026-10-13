@@ -1,7 +1,9 @@
 # Installed and refreshed by `nix run github:jgus-org/flake-lib/v1#update-workflows`: the
 # tool is taken from flake-lib's own flake URL rather than from this repository, because
-# there is nothing producer-specific in it to re-declare. Edit it in
-# jgus-org/flake-lib's templates/workflows, not here. The workflow below updates
+# there is nothing producer-specific in it to re-declare. A repository that does not have
+# this file yet installs it with
+# `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-branches.yml`.
+# Edit it in jgus-org/flake-lib's templates/workflows, not here. The workflow below updates
 # itself: a run reads this file when it starts, so the first job refreshes it and
 # commits that revision, and every later job checks out that commit. The scripts it
 # invokes therefore move in the same run as the flake-lib input they come from.

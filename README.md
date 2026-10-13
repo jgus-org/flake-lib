@@ -21,7 +21,6 @@ flake-lib.lib.mkLeafFlake {
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; buildAttr; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; artifactHook ? null; verification ? if buildFailureHash == null then "evaluate" else "build"; markerEnvironment ? {}; artifactFingerprint ? ""; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
-flake-lib.lib.mkUpdateWorkflows { pkgs; }                                # publishes the workflow refresher; producers invoke flake-lib's own instance by flake URL rather than re-exporting it
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
 flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }

@@ -31,7 +31,14 @@
         exampleSource = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };
         update-version = lib.mkUpdateVersion { inherit pkgs; source = exampleSource; buildAttr = "iso639-lang"; };
         update-branches = lib.mkUpdateBranches { inherit pkgs; source = exampleSource; pinSchema = "pypi"; };
-        update-workflows = lib.mkUpdateWorkflows { inherit pkgs; };
+        # The tool every producer's workflow invokes by flake URL. Not a lib function:
+        # it takes no inputs from the caller, so a per-producer copy would be identical
+        # boilerplate that also pins the program to the caller's own locked revision.
+        update-workflows = pkgs.writeShellApplication {
+          name = "update-workflows";
+          runtimeEnv = { GIT_PUSH_LIB = ./scripts/git-push.sh; };
+          text = ''exec ${./scripts/update-workflows.sh} "$@"'';
+        };
         update-version-pypi-cargo = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;

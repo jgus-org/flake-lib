@@ -3,7 +3,6 @@ let
   mkPypiPackage = import ./mk-pypi-package.nix;
   mkUpdateVersion = import ./mk-update-version.nix;
   mkUpdateBranches = import ./mk-update-branches.nix;
-  mkUpdateWorkflows = import ./mk-update-workflows.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
   mkJsDepsHook = import ./mk-js-deps-hook.nix;
   mkComposedHook = import ./mk-composed-hook.nix;
@@ -30,6 +29,6 @@ let
       pkgs.${name};
 in
 {
-  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkUpdateWorkflows mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
+  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
   inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse;
 }

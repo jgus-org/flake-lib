@@ -38,13 +38,11 @@ mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
 cd "${FLAKE_ROOT}"
 
-PUSH_MAX_ATTEMPTS="${PUSH_MAX_ATTEMPTS:-5}"
-PUSH_RETRY_DELAY_SECONDS="${PUSH_RETRY_DELAY_SECONDS:-5}"
 TRANSIENT_MAX_ATTEMPTS="${TRANSIENT_MAX_ATTEMPTS:-2}"
 TRANSIENT_RETRY_DELAY_SECONDS="${TRANSIENT_RETRY_DELAY_SECONDS:-5}"
 GITHUB_REF_MAX_ATTEMPTS="${GITHUB_REF_MAX_ATTEMPTS:-3}"
 GITHUB_REF_RETRY_DELAY_SECONDS="${GITHUB_REF_RETRY_DELAY_SECONDS:-30}"
-if [[ ! "${PUSH_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${TRANSIENT_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${GITHUB_REF_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+if [[ ! "${TRANSIENT_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ || ! "${GITHUB_REF_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: retry attempt counts must be positive integers" >&2
   exit 2
 fi
@@ -53,6 +51,9 @@ fi
 # no --paginate equivalent to hand the enumeration to. The cap bounds how many pages are
 # fetched, whatever the API keeps naming.
 GITLAB_MAX_PAGES="${GITLAB_MAX_PAGES:-20}"
+
+# shellcheck source=/dev/null
+source "${GIT_PUSH_LIB:?required env var}"
 
 # Buffers output and emits it only on success, so a consumer never sees partial data from an attempt that died mid-stream (e.g. gh --paginate failing between pages).
 retry() {
@@ -68,54 +69,6 @@ retry() {
     fi
   done
   echo "  ${1} failed after 5 attempts" >&2
-  return 1
-}
-
-remote_ref_sha() {
-  local ref="${1}" output
-  if ! output=$(git ls-remote --heads origin "refs/heads/${ref}"); then
-    return 1
-  fi
-  printf '%s\n' "${output%%[[:space:]]*}"
-}
-
-# A failed push can be ambiguous: the server may have updated the ref before
-# returning an error. Re-read the remote before retrying. Treat the desired SHA
-# as success, retry only while the ref remains at the expected SHA, and never
-# overwrite a genuinely different concurrent update.
-push_ref() {
-  local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}"
-  local attempt desired_sha remote_sha="" query_exit=0
-  desired_sha=$(git rev-parse --verify "${source}^{commit}")
-
-  for ((attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++)); do
-    if [[ "${mode}" == lease ]]; then
-      if git push --force-with-lease="refs/heads/${ref}:${expected_sha}" --quiet origin "${desired_sha}:refs/heads/${ref}"; then
-        return 0
-      fi
-    elif git push --quiet origin "${desired_sha}:refs/heads/${ref}"; then
-      return 0
-    fi
-
-    query_exit=0
-    remote_sha=$(remote_ref_sha "${ref}") || query_exit=$?
-    if (( query_exit == 0 )); then
-      if [[ "${remote_sha}" == "${desired_sha}" ]]; then
-        echo "  ${ref} reached ${desired_sha:0:8} despite the push error; continuing."
-        return 0
-      fi
-      if [[ "${remote_sha}" != "${expected_sha}" ]]; then
-        echo "error: ${ref} changed concurrently (expected ${expected_sha:-absent}, found ${remote_sha:-absent}); refusing to overwrite it" >&2
-        return 1
-      fi
-    fi
-
-    if (( attempt < PUSH_MAX_ATTEMPTS )); then
-      echo "  push of ${ref} failed (attempt ${attempt}/${PUSH_MAX_ATTEMPTS}); retrying in ${PUSH_RETRY_DELAY_SECONDS}s..." >&2
-      sleep "${PUSH_RETRY_DELAY_SECONDS}"
-    fi
-  done
-  echo "error: push of ${ref} failed after ${PUSH_MAX_ATTEMPTS} attempts" >&2
   return 1
 }
 
@@ -889,8 +842,20 @@ command_list() {
   discover_versions
   JSON=$(versions_json)
   NEWEST_STABLE=$(jq -c '[.[] | select(.stable)][0] // null' <<<"${JSON}")
-  jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" --argjson newestStable "${NEWEST_STABLE}" \
-    '{baseSha: $baseSha, versions: $versions, newestStable: $newestStable}'
+  JSON=$(jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" --argjson newestStable "${NEWEST_STABLE}" \
+    '{baseSha: $baseSha, versions: $versions, newestStable: $newestStable}')
+  # Under Actions the fan-out is the workflow's only input, so it is written in the
+  # form the next jobs read rather than having the workflow parse this back apart.
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    jq -r '
+      . as $plan |
+      "base_sha=\(.baseSha)",
+      "versions=\(.versions | tojson)",
+      "newest_stable=\(.newestStable | tojson)",
+      "maintenance=\([.versions[] | select(.version != ($plan.newestStable.version // ""))] | tojson)"
+    ' <<<"${JSON}" >> "${GITHUB_OUTPUT}"
+  fi
+  printf '%s\n' "${JSON}"
 }
 
 command_refresh() {

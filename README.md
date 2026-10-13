@@ -238,7 +238,13 @@ nix's libraries instead of runtime `LD_LIBRARY_PATH` assembly. Application
 flakes that vendor opaque wheelhouses (freetoken-style) skip autoPatchelf and
 resolve native libraries from the wrapper environment instead.
 
-`templates/` holds `workflow.yml`, which a consuming repo installs as `.github/workflows/update.yml`.
+`templates/workflows/` holds the workflow files a consuming repo installs under
+`.github/workflows/` under the same names: `update-branches.yml` drives the
+orchestrator for a source with named releases, `update-version.yml` moves one
+current pin for a source tracked by commit. A producer refreshes whichever it has
+installed by running `nix run github:jgus-org/flake-lib/v1#update-workflows` --
+flake-lib's own instance of the tool, rather than a copy each producer republishes;
+see below.
 
 
 ### Split update-branches jobs
@@ -259,7 +265,13 @@ update-branches publish --base-sha SHA --versions-json JSON
 ```
 
 `versions` is ordered newest first and `newestStable` is either the first stable
-entry or `null`. A refresh invocation does not query upstream: it creates or
+entry or `null`. Under Actions, where `GITHUB_OUTPUT` names a file, `list` also
+appends that manifest as `base_sha`, `versions`, `newest_stable`, and
+`maintenance` outputs, so the workflow that fans out over it carries no version
+logic of its own. `maintenance` is `versions` without `newestStable`, which is
+refreshed as its own fast path rather than twice.
+
+A refresh invocation does not query upstream: it creates or
 merges exactly one `v<version>` branch from `baseSha`, then updates and pushes
 that branch. Publication consumes the unchanged `versions` array, considers only
 exact refs containing `baseSha`, and updates aggregates independently. When the
@@ -275,6 +287,56 @@ re-reads the remote after every failed push: an already-applied desired SHA is
 accepted, an unchanged ref is retried, and a different concurrent update is
 never overwritten. Branch update commands receive one additional attempt only
 when their output identifies a transient network failure.
+
+### Refresh installed workflows (`update-workflows`)
+
+Workflow files are copies of flake-lib's templates, so on their own they cannot
+follow the templates: flake-lib moves and the installed copy does not. The
+`update-workflows` package closes that gap, and is the first job of every workflow
+flake-lib ships:
+
+```console
+nix run github:jgus-org/flake-lib/v1#update-workflows
+```
+
+Producers invoke flake-lib's own instance rather than republishing one through their
+own `packages`. Nothing about the calling flake is baked into the tool -- it reads the
+lock and the installed workflows -- so a re-export is boilerplate, and a re-export is
+also self-defeating: `nix run .#update-workflows` evaluates the *program* at the
+revision the flake currently locks, which leaves the tool doing the adopting one
+revision behind the templates it installs.
+
+The tool reads the `flake-lib` input out of `flake.lock`, advances it, and
+overwrites each workflow in `.github/workflows` whose name a template of that
+revision ships. It does not add or rename a workflow: which workflows a repo has
+is the author's decision, and one flake-lib has no template for is left alone.
+Values the repository owns rather than flake-lib — the tracking floor, the build
+attribute — are read from the file about to be replaced and written back into the
+new one, so a refresh carries them instead of resetting them to the template's
+default. The advanced input and the refreshed workflows are committed together,
+because a workflow that tracks flake-lib N would otherwise be refreshing the
+scripts it invokes from revision N too.
+
+A repository with no workflow named like a template joins that set by naming one:
+
+```console
+nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-version.yml
+```
+
+This installs exactly the named template — creating it, or replacing a hand-written file
+of the same name while keeping the values that belong to the repository — and advances the
+input even when it is already current, since joining does not depend on the revision
+moving. It is the upgrade path for a producer that exists only on GitHub and so has no
+local source to promote from. The tool never picks the publication model, and retiring a
+workflow flake-lib has no template for stays the author's `git rm`; what is still in the
+way is named in the output, because two workflows committing to one branch fight over it.
+
+The commit is pushed and reported as the `sha` output, which the run's remaining
+jobs check out. Without that handoff the update would only pay off a day later —
+a workflow is read when its run starts, and a push made with `GITHUB_TOKEN`
+triggers nothing — so the run that moves a workflow builds from the workflow it
+just wrote. When flake-lib is already at its newest revision, nothing is pushed
+and no `sha` is reported, which leaves the run on the revision it started from.
 
 ## Versioning
 

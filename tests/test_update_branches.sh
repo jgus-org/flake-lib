@@ -800,3 +800,14 @@ export SOURCE_TYPE=gitlab GITLAB_MAX_PAGES=2 TEST_GITLAB_TAGS=$'v4.7.2' TEST_GIT
 run_failed_update '' '["v",""]' '' '' list
 grep -Fq -- 'error: gitlab tag enumeration did not end within 2 pages' "${CASE_ROOT}/update.log"
 unset SOURCE_TYPE GITLAB_MAX_PAGES TEST_GITLAB_TAGS TEST_GITLAB_NEXT_PAGE TEST_GITLAB_ALWAYS_NEXT_PAGE
+
+# Under Actions discovery also writes the fan-out the workflow's later jobs read, so the version logic lives here rather than in the workflow file. The newest stable is the one job it excludes: that version is refreshed by itself, not twice.
+initialize_repository
+export GITHUB_OUTPUT="${CASE_ROOT}/outputs"
+OUTPUTS="${GITHUB_OUTPUT}"
+run_command $'1.2.3\n1.3.0' list
+unset GITHUB_OUTPUT
+[[ "$(sed -nE 's/^base_sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
+[[ "$(sed -nE 's/^versions=//p' "${OUTPUTS}" | jq -c '[.[].version]')" == '["1.3.0","1.2.3"]' ]]
+[[ "$(sed -nE 's/^newest_stable=//p' "${OUTPUTS}" | jq -r '.version')" == "1.3.0" ]]
+[[ "$(sed -nE 's/^maintenance=//p' "${OUTPUTS}" | jq -c '[.[].version]')" == '["1.2.3"]' ]]

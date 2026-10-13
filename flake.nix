@@ -31,6 +31,14 @@
         exampleSource = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };
         update-version = lib.mkUpdateVersion { inherit pkgs; source = exampleSource; buildAttr = "iso639-lang"; };
         update-branches = lib.mkUpdateBranches { inherit pkgs; source = exampleSource; pinSchema = "pypi"; };
+        # The tool every producer's workflow invokes by flake URL. Not a lib function:
+        # it takes no inputs from the caller, so a per-producer copy would be identical
+        # boilerplate that also pins the program to the caller's own locked revision.
+        update-workflows = pkgs.writeShellApplication {
+          name = "update-workflows";
+          runtimeEnv = { GIT_PUSH_LIB = ./scripts/git-push.sh; };
+          text = ''exec ${./scripts/update-workflows.sh} "$@"'';
+        };
         update-version-pypi-cargo = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
@@ -339,8 +347,19 @@
         };
         update-branches-test-nix = pkgs.writeShellApplication {
           name = "nix";
-          runtimeInputs = [ pkgs.git pkgs.gnugrep ];
+          runtimeInputs = [ pkgs.git pkgs.gnugrep pkgs.jq ];
           text = ''
+            if [[ "''${1}" == "flake" && "''${2:-}" == "metadata" ]]; then
+              printf '{ "path": "%s" }\n' "''${TEST_NIX_TEMPLATE_SOURCE:?fixture: no template source}"
+              exit 0
+            fi
+            if [[ "''${1}" == "flake" && "''${2:-}" == "update" && "''${3:-}" == "flake-lib" ]]; then
+              node=$(jq -r '.nodes.root.inputs["flake-lib"]' flake.lock)
+              jq --arg n "''${node}" --arg rev "''${TEST_NIX_FLAKE_LIB_REV:?fixture: no flake-lib revision to advance to}" \
+                '.nodes[$n].locked.rev = $rev' flake.lock > flake.lock.next
+              mv flake.lock.next flake.lock
+              exit 0
+            fi
             if [[ "''${1}" == "flake" ]]; then
               CURRENT_BRANCH=$(git branch --show-current)
               for FAILED_VERSION in ''${TEST_FAILED_REFRESH_VERSIONS:-}; do
@@ -553,16 +572,33 @@
             ];
             CASCADE_PY = ./scripts/cascade.py;
             DEPS_CORE = ./scripts/deps_core.py;
+            GIT_PUSH_LIB = ./scripts/git-push.sh;
             UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
           } ''
           bash ${./tests/test_update_branches.sh}
           touch $out
         '';
+        update-workflows-tests = pkgs.runCommand "update-workflows-tests"
+          {
+            nativeBuildInputs = [
+              pkgs.bash
+              pkgs.coreutils
+              pkgs.git
+              pkgs.gnused
+              pkgs.jq
+              update-branches-test-nix
+            ];
+            GIT_PUSH_LIB = ./scripts/git-push.sh;
+            UPDATE_WORKFLOWS = ./scripts/update-workflows.sh;
+          } ''
+          bash ${./tests/test_update_workflows.sh}
+          touch $out
+        '';
       in
       {
-        packages = { inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
+        packages = { inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
         checks = {
-          inherit update-version update-branches update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
+          inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
@@ -570,6 +606,7 @@
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
           inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration huggingface-model-manager-tests;
           inherit update-version-tests;
+          inherit update-workflows-tests;
           inherit oci-image-tests;
         };
       });

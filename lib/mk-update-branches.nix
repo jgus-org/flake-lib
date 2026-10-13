@@ -53,6 +53,7 @@ pkgs.writeShellApplication {
     MIN_VERSION_COMPONENTS = toString minVersionComponents;
     CASCADE_PY = "${../scripts/cascade.py}";
     DEPS_CORE = "${../scripts/deps_core.py}";
+    GIT_PUSH_LIB = "${../scripts/git-push.sh}";
   };
   text = ''exec ${../scripts/update-branches-core.sh} "$@"'';
 }

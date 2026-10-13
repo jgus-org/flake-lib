@@ -1,3 +1,13 @@
+# Installed and refreshed by `nix run github:jgus-org/flake-lib/v1#update-workflows`: the
+# tool is taken from flake-lib's own flake URL rather than from this repository, because
+# there is nothing producer-specific in it to re-declare. A repository that does not have
+# this file yet installs it with
+# `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-branches.yml`.
+# Edit it in jgus-org/flake-lib's templates/workflows, not here. The workflow below updates
+# itself: a run reads this file when it starts, so the first job refreshes it and
+# commits that revision, and every later job checks out that commit. The scripts it
+# invokes therefore move in the same run as the flake-lib input they come from.
+
 name: Update branches
 
 on:
@@ -16,7 +26,24 @@ env:
   MINIMUM_TRACKING_VERSION: "0.0.0"
 
 jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.update.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Update workflows from flake-lib templates
+        id: update
+        run: nix run github:jgus-org/flake-lib/v1#update-workflows
+
   discover:
+    needs: workflows
+    if: always()
     runs-on: ubuntu-latest
     outputs:
       base_sha: ${{ steps.plan.outputs.base_sha }}
@@ -27,6 +54,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -36,27 +64,17 @@ jobs:
         env:
           # gh CLI reads GH_TOKEN, not GITHUB_TOKEN; required for github-source flakes.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          plan=$(nix run .#update-branches -- list)
-          base_sha=$(jq -r '.baseSha' <<<"${plan}")
-          versions=$(jq -c '.versions' <<<"${plan}")
-          newest_stable=$(jq -c '.newestStable' <<<"${plan}")
-          maintenance=$(jq -c '. as $plan | [.versions[] | select(.version != ($plan.newestStable.version // ""))]' <<<"${plan}")
-          {
-            echo "base_sha=${base_sha}"
-            echo "versions=${versions}"
-            echo "newest_stable=${newest_stable}"
-            echo "maintenance=${maintenance}"
-          } >> "${GITHUB_OUTPUT}"
+        run: nix run .#update-branches -- list
 
   newest-stable:
-    needs: discover
-    if: needs.discover.outputs.newest_stable != 'null'
+    needs: [workflows, discover]
+    if: always() && needs.discover.result == 'success' && needs.discover.outputs.newest_stable != 'null'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -86,7 +104,7 @@ jobs:
             --versions-json "${VERSIONS}"
 
   maintenance:
-    needs: [discover, newest-stable]
+    needs: [workflows, discover, newest-stable]
     if: always() && needs.discover.result == 'success' && needs.discover.outputs.maintenance != '[]'
     strategy:
       fail-fast: false
@@ -97,6 +115,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -114,13 +133,14 @@ jobs:
             --upstream-version "${UPSTREAM_VERSION}"
 
   publish:
-    needs: [discover, newest-stable, maintenance]
+    needs: [workflows, discover, newest-stable, maintenance]
     if: always() && needs.discover.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: DeterminateSystems/nix-installer-action@main

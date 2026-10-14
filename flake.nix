@@ -284,6 +284,33 @@
             ${lib.installWheelhouse { inherit python; target = "$out"; inherit wheelhouse; }}
             PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig, msgpack'
           '';
+        wheelhouse-no-emit-tests =
+          let
+            failures = pkgs.lib.runTests (import ./tests/wheelhouse-no-emit.nix { inherit pkgs; inherit (lib) mkWheelhouse; });
+          in
+          pkgs.lib.throwIf (failures != [ ]) "mkWheelhouse noEmit tests failed"
+            (pkgs.runCommand "wheelhouse-no-emit-tests" { } "touch $out");
+        # The manifest names a wheel the consumer provides itself; the installed tree must not carry it, and
+        # must not need the interpreter-side fixups the vendored copy would have dragged in.
+        python-wheelhouse-no-emit-integration =
+          let
+            wheelhouse = (lib.mkWheelhouse {
+              inherit pkgs;
+              wheels = ./tests/fixtures/mini-wheels.json;
+              noEmit = [ "msgpack" ];
+            }).wheelhouse;
+            python = pkgs.python313;
+          in
+          pkgs.runCommand "python-wheelhouse-no-emit-integration"
+            { nativeBuildInputs = [ pkgs.uv ]; }
+            ''
+              export HOME=$TMPDIR
+              mkdir "$out"
+              ${lib.installWheelhouse { inherit python; target = "$out"; inherit wheelhouse; }}
+              test ! -e "$out/msgpack"
+              ! PYTHONPATH="$out" ${python}/bin/python -c 'import msgpack'
+              PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig'
+            '';
         huggingface-model-manager-tests = pkgs.runCommand "huggingface-model-manager-tests"
           {
             nativeBuildInputs = [ pkgs.python3 huggingface-model-manager ];
@@ -604,7 +631,7 @@
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration huggingface-model-manager-tests;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration wheelhouse-no-emit-tests python-wheelhouse-no-emit-integration huggingface-model-manager-tests;
           inherit update-version-tests;
           inherit update-workflows-tests;
           inherit oci-image-tests;

@@ -74,6 +74,7 @@ let
     { pkgs
     , sources
     , extraRequirements ? [ ]
+    , noEmit ? [ ]
     , pythonVersions ? pythonEnvironments.pythonVersions
     , systems ? pythonEnvironments.systems
     , index ? "https://pypi.org/simple"
@@ -100,7 +101,7 @@ let
           // { inherit system; };
       environments = lib.concatMap (pythonVersion: map (system: environmentFor { inherit pythonVersion system; }) systems) pythonVersions;
       generationSpec = {
-        inherit sources extraRequirements environments;
+        inherit sources extraRequirements noEmit environments;
         generator = {
           script = builtins.hashFile "sha256" ../scripts/python-wheelhouse.py;
           depsCore = builtins.hashFile "sha256" depsCore;

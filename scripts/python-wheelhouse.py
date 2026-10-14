@@ -163,17 +163,21 @@ def target_requirements(requirements_lock: Path, marker_environment: dict[str, s
     return "\n".join(selected) + "\n"
 
 
-def resolve_environment(environment: dict[str, Any], work: Path, requirements_in: Path, index_url: str) -> dict[str, Any]:
+def resolve_environment(
+    environment: dict[str, Any], work: Path, requirements_in: Path, index_url: str, no_emit: list[str]
+) -> dict[str, Any]:
     env_work = work / f"env-{environment['python']}-{environment['system']}"
     env_work.mkdir()
     shutil.copy2(requirements_in, env_work / "requirements.in")
 
+    no_emit_args = [flag for name in no_emit for flag in ("--no-emit-package", name)]
     requirements_lock = env_work / "requirements.lock"
     run(
         "uv", "pip", "compile", "requirements.in",
         "--python-version", environment["uvPythonVersion"],
         "--python-platform", environment["uvPythonPlatform"],
         "--generate-hashes",
+        *no_emit_args,
         "--index-url", index_url,
         "--output-file", requirements_lock.name,
         "--no-header",
@@ -337,7 +341,9 @@ def main() -> None:
         requirements_in.write_text(f"{header}\n" + "\n".join(deduplicated) + "\n")
 
         resolved = {
-            environment_key(environment): resolve_environment(environment, work, requirements_in, index_url)
+            environment_key(environment): resolve_environment(
+                environment, work, requirements_in, index_url, spec.get("noEmit", [])
+            )
             for environment in environments
         }
 

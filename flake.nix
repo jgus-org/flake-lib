@@ -1,5 +1,5 @@
 {
-  description = "Shared library for jgus sub-flakes: per-version-branch orchestrator, update-version machinery, and PyPI package builders.";
+  description = "Shared library for jgus sub-flakes: recurring flake-production patterns — per-version-branch orchestrator, update-version machinery, artifact producers, and the install shapes they share.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -310,6 +310,36 @@
               test ! -e "$out/msgpack"
               ! PYTHONPATH="$out" ${python}/bin/python -c 'import msgpack'
               PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig'
+            '';
+        python-wheelhouse-site-tree-integration =
+          lib.mkWheelhouseSiteTree {
+            inherit pkgs;
+            python = pkgs.python313;
+            wheelhouse = (lib.mkWheelhouse {
+              inherit pkgs;
+              wheels = ./tests/fixtures/native-wheels.json;
+            }).wheelhouse;
+            pname = "python-wheelhouse-site-tree";
+            version = "1";
+            dontUnpack = true;
+            checkImports = [ "numpy" ];
+          };
+        # The import check above only measures a real rewrite if the same wheel cannot import untouched.
+        python-wheelhouse-site-tree-unpatched-import =
+          let
+            python = pkgs.python313;
+            wheel = pkgs.lib.head (lib.mkWheelhouse {
+              inherit pkgs;
+              wheels = ./tests/fixtures/native-wheels.json;
+            }).files;
+          in
+          pkgs.runCommand "python-wheelhouse-site-tree-unpatched-import"
+            { nativeBuildInputs = [ pkgs.unzip python ]; }
+            ''
+              mkdir -p "$out/${python.sitePackages}"
+              unzip -q ${wheel} -d "$out/${python.sitePackages}"
+              test ! -e "$out/${python.sitePackages}/numpy.libs/libstdc++.so.6"
+              ! env -i PYTHONPATH="$out/${python.sitePackages}" ${python}/bin/python -c 'import numpy'
             '';
         huggingface-model-manager-tests = pkgs.runCommand "huggingface-model-manager-tests"
           {
@@ -631,7 +661,7 @@
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration wheelhouse-no-emit-tests python-wheelhouse-no-emit-integration huggingface-model-manager-tests;
+          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration wheelhouse-no-emit-tests python-wheelhouse-no-emit-integration python-wheelhouse-site-tree-integration python-wheelhouse-site-tree-unpatched-import huggingface-model-manager-tests;
           inherit update-version-tests;
           inherit update-workflows-tests;
           inherit oci-image-tests;

@@ -193,7 +193,65 @@ let
 
   installWheelhouse = { python, target, wheelhouse }:
     ''uv pip install --python ${python}/bin/python --target ${target} --no-index --no-deps "${wheelhouse}"/*.whl'';
+
+  # Manylinux wheels name a loader and shared libraries that exist on the machine that built
+  # them and nowhere in the store, so an installed wheelhouse is only a valid store artifact
+  # once its binaries are rewritten. The rewrite is part of the install rather than a hook a
+  # consumer remembers to add, and `checkImports` runs each name in an interpreter with no
+  # environment at all: a tree that imports only under an ambient `LD_LIBRARY_PATH` fails
+  # here instead of at the first import in production.
+  mkWheelhouseSiteTree =
+    { pkgs
+    , python
+    , wheelhouse
+    , checkImports ? [ ]
+    , nativeBuildInputs ? [ ]
+    , buildInputs ? [ ]
+    , ...
+    }@args:
+    let
+      lib = pkgs.lib;
+      inherited = builtins.removeAttrs args [
+        "pkgs"
+        "python"
+        "wheelhouse"
+        "checkImports"
+        "nativeBuildInputs"
+        "buildInputs"
+      ];
+    in
+    pkgs.stdenv.mkDerivation (inherited // {
+      sitePackages = python.sitePackages;
+      nativeBuildInputs = [
+        pkgs.uv
+        pkgs.autoPatchelfHook
+        python
+      ]
+      ++ nativeBuildInputs;
+      buildInputs = [
+        pkgs.stdenv.cc.cc.lib
+        pkgs.zlib
+      ]
+      ++ buildInputs;
+      installPhase = ''
+        runHook preInstall
+        export HOME="$TMPDIR"
+        mkdir -p "$out/$sitePackages"
+        ${installWheelhouse {
+          inherit python wheelhouse;
+          target = "$out/$sitePackages";
+        }}
+        runHook postInstall
+      '';
+      doInstallCheck = checkImports != [ ];
+      installCheckPhase = ''
+        runHook preInstallCheck
+        env -i PYTHONPATH="$out/$sitePackages" ${python}/bin/${python.executable} \
+          -c '${lib.concatStringsSep "; " (map (module: "import ${module}") checkImports)}'
+        runHook postInstallCheck
+      '';
+    });
 in
 {
-  inherit pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse;
+  inherit pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse mkWheelhouseSiteTree;
 }

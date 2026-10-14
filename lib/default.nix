@@ -30,5 +30,5 @@ let
 in
 {
   inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
-  inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse;
+  inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse mkWheelhouseSiteTree;
 }

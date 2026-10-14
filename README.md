@@ -35,6 +35,7 @@ flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; noEmit
 flake-lib.lib.wheelhouseArtifactPaths { root; pythonVersion; system; pythonVersions ? pythonEnvironments.pythonVersions; } # -> { requirementsLock; wheelManifest; }
 flake-lib.lib.mkWheelhouse     { pkgs; wheels; noEmit ? []; }             # target-qualified wheels JSON path or list -> { files; wheelhouse; }
 flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
+flake-lib.lib.mkWheelhouseSiteTree { pkgs; python; wheelhouse; checkImports ? []; nativeBuildInputs ? []; buildInputs ? []; .. } # -> derivation installing a wheelhouse as a site tree, ELF-patched, with a clean-interpreter import check
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.
@@ -243,11 +244,45 @@ installPhase = ''
 '';
 ```
 
-Native manylinux wheels need `autoPatchelfHook` (plus their native library
-dependencies in `buildInputs`) so the installed site-packages links against
-nix's libraries instead of runtime `LD_LIBRARY_PATH` assembly. Application
-flakes that vendor opaque wheelhouses (freetoken-style) skip autoPatchelf and
-resolve native libraries from the wrapper environment instead.
+Native manylinux wheels name a loader and shared libraries that exist on the machine that
+built them and nowhere in the store, so an installed wheelhouse is only a valid store
+artifact once its binaries are rewritten against nix's libraries. That rewrite is the
+install, not an optional addition: `mkWheelhouseSiteTree` builds the derivation, installs
+the wheelhouse into `$out/$sitePackages`, and takes the same attributes as
+`stdenv.mkDerivation` plus `checkImports` — module names imported in an interpreter
+started with no environment at all, so a site tree that loads only under an ambient
+`LD_LIBRARY_PATH` fails its build instead of its first import in production. `buildInputs`
+extends the libraries the rewrite may resolve against.
+
+```nix
+python = pkgs.python3;
+wheelhouse = flake-lib.lib.mkWheelhouse {
+  inherit pkgs;
+  wheels = flake-lib.lib.wheelhouseArtifactPaths {
+    root = ./.;
+    pythonVersion = python.pythonVersion;
+    system = pkgs.system;
+  }.wheelManifest;
+};
+
+comfyuiWheelhouse = flake-lib.lib.mkWheelhouseSiteTree {
+  inherit pkgs python wheelhouse;
+  pname = "comfyui-wheelhouse";
+  version = "1.2.3";
+  dontUnpack = true;
+  checkImports = [ "numpy" "PIL.Image" ];
+  buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+};
+```
+
+An application that installs its own source beside its wheels is the same builder: unpack
+the source, overlay or patch it with `postPatch`, and add the project install to
+`postInstall` targeting `$out/$sitePackages`. `installWheelhouse` remains the snippet for
+a consumer whose layout differs from a site tree.
+
+A library a program `dlopen`s by soname with no `DT_NEEDED` entry (a GPU driver, for
+instance) is not something a rewrite can introduce; that belongs in the wrapper or image
+environment that runs it.
 
 `templates/` holds `workflow.yml`, which a consuming repo installs as `.github/workflows/update.yml`.
 

@@ -159,19 +159,37 @@ let
         wheelManifest = root + "/wheels-${pythonVersion}-${system}.json";
       };
 
-  mkWheelhouse = { pkgs, wheels }:
+  # A wheelhouse is the whole environment only when nothing else populates the
+  # interpreter. `noEmit` names what the consumer's own package set provides instead, so
+  # the artifact this builds carries neither a duplicate of it nor a version that would
+  # shadow it. Either a list of distribution names or a predicate on a name as the
+  # manifest records it; a listed name that matches nothing is reported, not ignored.
+  mkWheelhouse =
+    { pkgs
+    , wheels
+    , noEmit ? [ ]
+    }:
     let
       lib = pkgs.lib;
+      # The manifest carries PEP 503 names; a consumer may spell a name any other way.
+      canonical = name: builtins.replaceStrings [ "_" "." ] [ "-" "-" ] (lib.toLower name);
+      listed = builtins.isList noEmit;
+      wanted = lib.unique (map canonical (if listed then noEmit else [ ]));
       manifest = manifestFromWheels wheels;
+      unmatched = lib.unique (lib.subtractLists (map (wheel: canonical wheel.name) manifest) wanted);
+      excluded = wheel: if listed then lib.elem (canonical wheel.name) wanted else noEmit wheel.name;
+      selected = lib.filter (wheel: !excluded wheel) manifest;
       files = map
         (wheel: pkgs.fetchurl { inherit (wheel) url sha256; name = wheel.filename; })
-        manifest;
+        selected;
       wheelhouse = pkgs.linkFarm "python-wheelhouse" (lib.zipListsWith
         (wheel: path: { name = wheel.filename; inherit path; })
-        manifest
+        selected
         files);
     in
-    { inherit files wheelhouse; };
+    lib.warnIf (listed && unmatched != [ ])
+      "mkWheelhouse: noEmit names [${lib.concatStringsSep ", " unmatched}] match no wheel in the manifest; the exclusion had no effect."
+      { inherit files wheelhouse; };
 
   installWheelhouse = { python, target, wheelhouse }:
     ''uv pip install --python ${python}/bin/python --target ${target} --no-index --no-deps "${wheelhouse}"/*.whl'';

@@ -27,11 +27,13 @@
 #   VERSION_OVERRIDES    JSON map raw version -> canonical version
 #   VERSION_CANON        newline-separated `sed -E` rules mapping raw version -> canonical version
 #   MIN_VERSION_COMPONENTS  fewest dot-separated numeric components a tag may have and still be tracked (default 3)
+#   TRACK_STABLE_ONLY    true: exclude prereleases from the tracked set entirely, so they get no branch, no maintenance job, and no publication (default false)
 
 set -euo pipefail
 : "${MINIMUM_TRACKING_VERSION:?required env var}"
 MIN_VERSION_COMPONENTS="${MIN_VERSION_COMPONENTS:-3}"
 VERSION_TRACK="${VERSION_TRACK:-release}"
+TRACK_STABLE_ONLY="${TRACK_STABLE_ONLY:-false}"
 GH_TAG_PREFIXES="${GH_TAG_PREFIXES:-[\"v\",\"V\",\"\"]}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
@@ -841,6 +843,9 @@ command_list() {
   capture_base_sha
   discover_versions
   JSON=$(versions_json)
+  if [[ "${TRACK_STABLE_ONLY}" == "true" ]]; then
+    JSON=$(jq -c '[.[] | select(.stable)]' <<<"${JSON}")
+  fi
   NEWEST_STABLE=$(jq -c '[.[] | select(.stable)][0] // null' <<<"${JSON}")
   JSON=$(jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" --argjson newestStable "${NEWEST_STABLE}" \
     '{baseSha: $baseSha, versions: $versions, newestStable: $newestStable}')

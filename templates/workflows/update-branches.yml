@@ -22,9 +22,6 @@ concurrency:
   group: update
   cancel-in-progress: false
 
-env:
-  MINIMUM_TRACKING_VERSION: "0.0.0"
-
 jobs:
   workflows:
     runs-on: ubuntu-latest

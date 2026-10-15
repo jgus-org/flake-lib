@@ -329,7 +329,10 @@ without arguments retains the compatible all-in-one behavior.
 The workflow template uses the newest stable entry as a fast path, refreshes all
 remaining exact versions in a parallel matrix, and runs a final publisher even
 when a maintenance job fails. Both publishers and every exact job reuse the
-discovery SHA and version manifest. Ref publication uses bounded retries and
+discovery SHA and version manifest. Every job restores Nix from the shared
+GitHub Actions cache, so a bump reuses the dependency closure an earlier run
+built, and the maintenance matrix bounds its fan-out so a growing release list
+cannot spawn unbounded parallel refreshes. Ref publication uses bounded retries and
 re-reads the remote after every failed push: an already-applied desired SHA is
 accepted, an unchanged ref is retried, and a different concurrent update is
 never overwritten. Branch update commands receive one additional attempt only

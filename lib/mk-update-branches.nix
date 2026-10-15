@@ -6,6 +6,8 @@
 #   versionOverrides : map of raw upstream version -> canonical version, for upstreams whose tag numbering doesn't sort right (e.g. { "0.1.405-beta" = "0.1.40.5-beta"; }). The canonical form drives sorting/branch naming/the pin's version field; the raw form remains what update-version fetches.
 #   versionCanon     : list of `sed -E` expressions applied in order to each raw version to derive its canonical form, for a tag-numbering scheme too general to enumerate in versionOverrides (e.g. every 0.1.XXX-beta hotfix -> 0.1.XX.X-beta). A matching versionOverrides entry takes precedence over these rules.
 #   minVersionComponents : fewest dot-separated numeric components a tag may have and still be tracked (default 3, i.e. X.Y.Z only). Lower it for upstreams with short version tags (e.g. bare datestamps like 20260711162202).
+#   minimumTrackingVersion : lowest upstream version to track, baked into the package (default "0.0.0"). This is the flake's source of truth; the workflow ships no env for it, so a wholesale workflow-file refresh cannot reset it.
+#   trackStableOnly    : true excludes prereleases from branches, maintenance, and publication (default false).
 { pkgs, source, pinSchema
 , branchOwnedFiles ? [
     "pin.nix"
@@ -16,8 +18,10 @@
     "python-readiness.json"
   ]
 , extraBranchOwnedFiles ? [ ]
-, extraHashes ? [ ], versionOverrides ? { }, versionCanon ? [ ], minVersionComponents ? 3 }:
+, extraHashes ? [ ], versionOverrides ? { }, versionCanon ? [ ], minVersionComponents ? 3
+, minimumTrackingVersion ? "0.0.0", trackStableOnly ? false }:
 assert builtins.elem minVersionComponents [ 1 2 3 ];
+assert builtins.isString minimumTrackingVersion;
 assert ! (source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
   ownedFiles = pkgs.lib.unique (branchOwnedFiles ++ extraBranchOwnedFiles);
@@ -54,6 +58,8 @@ pkgs.writeShellApplication {
     CASCADE_PY = "${../scripts/cascade.py}";
     DEPS_CORE = "${../scripts/deps_core.py}";
     GIT_PUSH_LIB = "${../scripts/git-push.sh}";
+    MINIMUM_TRACKING_VERSION = minimumTrackingVersion;
+    TRACK_STABLE_ONLY = pkgs.lib.boolToString trackStableOnly;
   };
   text = ''exec ${../scripts/update-branches-core.sh} "$@"'';
 }

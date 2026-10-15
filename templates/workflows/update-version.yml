@@ -13,9 +13,6 @@
 # when it starts, so the first job refreshes it and commits that revision, and the job
 # after it checks out that commit.
 #
-# BUILD_ATTR belongs to the repository rather than to the template, so update-workflows
-# carries the installed value across a refresh instead of resetting it.
-#
 # Everything the run changed is committed together. Scratch output the updater leaves
 # behind must be in .gitignore, since staging is unrestricted.
 
@@ -58,8 +55,6 @@ jobs:
     needs: workflows
     if: always()
     runs-on: ubuntu-latest
-    env:
-      BUILD_ATTR: "default"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,8 +80,9 @@ jobs:
       # The updater exits early when the upstream commit has not moved, so this runs
       # unconditionally: nixpkgs can have moved underneath a pin that did not, and a
       # run that only pins files without building them says nothing about the result.
+      # A producer's tracked package is exposed as packages.default, which is what builds.
       - name: Build the package
-        run: nix build --no-link -L ".#${BUILD_ATTR}"
+        run: nix build --no-link -L ".#default"
 
       - name: Commit and push whatever the run changed
         run: |

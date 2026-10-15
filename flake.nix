@@ -31,6 +31,13 @@
         exampleSource = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };
         update-version = lib.mkUpdateVersion { inherit pkgs; source = exampleSource; buildAttr = "iso639-lang"; };
         update-branches = lib.mkUpdateBranches { inherit pkgs; source = exampleSource; pinSchema = "pypi"; };
+        update-branches-knobs = lib.mkUpdateBranches {
+          inherit pkgs;
+          source = exampleSource;
+          pinSchema = "pypi";
+          minimumTrackingVersion = "1.2.3";
+          trackStableOnly = true;
+        };
         # The tool every producer's workflow invokes by flake URL. Not a lib function:
         # it takes no inputs from the caller, so a per-producer copy would be identical
         # boilerplate that also pins the program to the caller's own locked revision.
@@ -632,6 +639,13 @@
             GIT_PUSH_LIB = ./scripts/git-push.sh;
             UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
           } ''
+          # The tracking knobs are baked into the package from flake.nix, not the workflow
+          # env: the default package carries the defaults, one that sets the knobs carries
+          # its values. This is what lets the workflow ship no env block for them.
+          grep -Fx "MINIMUM_TRACKING_VERSION=0.0.0" ${update-branches}/bin/update-branches > /dev/null
+          grep -Fx "TRACK_STABLE_ONLY=false" ${update-branches}/bin/update-branches > /dev/null
+          grep -Fx "MINIMUM_TRACKING_VERSION=1.2.3" ${update-branches-knobs}/bin/update-branches > /dev/null
+          grep -Fx "TRACK_STABLE_ONLY=true" ${update-branches-knobs}/bin/update-branches > /dev/null
           bash ${./tests/test_update_branches.sh}
           touch $out
         '';

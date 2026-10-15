@@ -1,4 +1,4 @@
-#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#jq nixpkgs#gnused nixpkgs#nix nixpkgs#coreutils --command bash
+#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#jq nixpkgs#nix nixpkgs#coreutils --command bash
 
 # Installs this repository's GitHub Actions workflows from the templates shipped by the
 # newest flake-lib revision its declared input can reach, and advances the lock to that
@@ -23,8 +23,10 @@
 # out for its remaining jobs, which is what lets a workflow update itself: a push made
 # with GITHUB_TOKEN triggers no run, so nothing else would pick the new file up in time.
 #
-# Values a repository owns rather than flake-lib are carried across the update instead of
-# being reset to the template's default; see CARRIED_ENV_KEYS.
+# A template replaces its workflow wholesale. Anything a repository owns lives in its
+# flake.nix -- the per-producer knobs are constructor arguments to mkUpdateVersion and
+# mkUpdateBranches, baked into the packages the workflow invokes -- so the workflow file
+# carries no repository state and is safe to overwrite in full.
 
 set -euo pipefail
 
@@ -33,7 +35,6 @@ cd "${FLAKE_ROOT}"
 
 TEMPLATE_DIR="templates/workflows"
 WORKFLOW_DIR=".github/workflows"
-CARRIED_ENV_KEYS=(MINIMUM_TRACKING_VERSION BUILD_ATTR)
 
 die() {
   printf 'error: %s\n' "${1}" >&2
@@ -101,26 +102,12 @@ if [[ ! -d "${flake_lib_src}/${TEMPLATE_DIR}" ]]; then
   die "flake-lib ${current_url} ships no ${TEMPLATE_DIR}, so the installed workflows cannot be refreshed from it"
 fi
 
-# The repository's own values, read from the file just before it is replaced.
-carried_values() {
-  local destination="${1}" key value
-  for key in "${CARRIED_ENV_KEYS[@]}"; do
-    value=$(sed -nE "s/^[[:space:]]*${key}: \"(.*)\"[[:space:]]*\$/\1/p" "${destination}" | head -1)
-    [[ -n "${value}" ]] || continue
-    printf '%s\t%s\n' "${key}" "${value}"
-  done
-}
-
 install_from_template() {
-  local template="${1}" destination="${2}" carried='' key value
-  if [[ -e "${destination}" ]]; then
-    carried=$(carried_values "${destination}")
-  fi
+  local template="${1}" destination="${2}"
+  # The template is the whole file: every repository-owned knob is a flake.nix
+  # constructor argument baked into the invoked package, so nothing here is worth
+  # rescuing from the file being replaced.
   cp "${template}" "${destination}"
-  while IFS=$'\t' read -r key value; do
-    [[ -n "${key}" ]] || continue
-    sed -i -E "s|^([[:space:]]*)${key}: \"[^\"]*\"|\1${key}: \"${value}\"|" "${destination}"
-  done <<<"${carried}"
 }
 
 declare -a installed=()

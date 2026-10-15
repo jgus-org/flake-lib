@@ -141,6 +141,7 @@ invoke_update() {
     GH_TAG_PREFIXES="${TAG_PREFIXES}" \
     MINIMUM_TRACKING_VERSION="${MINIMUM_TRACKING_VERSION:-1.0.0}" \
     MIN_VERSION_COMPONENTS=3 \
+    TRACK_STABLE_ONLY="${TRACK_STABLE_ONLY:-false}" \
     PIN_SCHEMA="${PIN_SCHEMA:-version-only}" \
     SOURCE_TYPE="${SOURCE_TYPE:-github}" \
     VERSION_SOURCE_TYPE="${VERSION_SOURCE_TYPE:-}" \
@@ -500,6 +501,22 @@ initialize_repository
 PLAN=$(run_command $'1.2.3-ubuntu1\n1.2.3' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.3","1.2.3-ubuntu1"]' ]]
 jq -e '.newestStable.version == "1.2.3"' <<<"${PLAN}" >/dev/null
+
+# TRACK_STABLE_ONLY removes prereleases from the fan-out the maintenance matrix and publication are built from, so they get neither. Default off keeps them tracked.
+initialize_repository
+VERSIONS=$'1.2.1\n1.2.2\n1.2.3\n1.3.0-rc1'
+[[ "$(jq -c '[.versions[].version]' <<<"$(run_command "${VERSIONS}" list)")" == '["1.3.0-rc1","1.2.3","1.2.2","1.2.1"]' ]]
+commit_specification
+PLAN=$(TRACK_STABLE_ONLY=true run_command "${VERSIONS}" list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.3","1.2.2","1.2.1"]' ]]
+jq -e '.newestStable.version == "1.2.3"' <<<"${PLAN}" >/dev/null
+BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
+VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
+TRACK_STABLE_ONLY=true run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.2.3 --upstream-version 1.2.3
+TRACK_STABLE_ONLY=true run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}"
+assert_same_ref main v1.2.3
+assert_missing_ref v1.3.0-rc1
+assert_missing_ref v1.3
 
 # A temporary server-side push failure retries without rebuilding the branch.
 initialize_repository

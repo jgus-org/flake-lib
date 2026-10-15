@@ -71,13 +71,15 @@ assert_committed_subject() {
   git --git-dir="${REMOTE}" log -1 --format=%s refs/heads/main | grep -qxF -- "${1}"
 }
 
-# A refresh replaces the template's own text, carries the values this repository owns
-# instead of resetting them to the template's defaults, leaves a workflow flake-lib has
-# no template for exactly as it is, and installs nothing the repository did not choose.
+# A refresh replaces each templated workflow wholesale with the template's text: values the
+# repository had placed in the workflow are discarded (they belong in flake.nix now, baked
+# into the invoked package), a workflow flake-lib has no template for is left exactly as it
+# is, and nothing the repository did not choose is installed.
 TEMPLATE_SOURCE=$(mktemp -d "${TEST_ROOT}/flake-lib-src.XXXXXX")
 initialize_repository
 install_workflow update-branches.yml 'env:
-  MINIMUM_TRACKING_VERSION: "3.1.4.1"'
+  MINIMUM_TRACKING_VERSION: "3.1.4.1"
+  TRACK_STABLE_ONLY: "true"'
 install_workflow update-version.yml 'jobs:
   update:
     env:
@@ -89,16 +91,19 @@ jobs:
   discover: {}'
 write_template update-version.yml 'jobs:
   update:
-    env:
-      BUILD_ATTR: "default"'
+    steps:
+      - run: nix build --no-link -L ".#default"'
 write_template needs-rebase.yml 'jobs:
   label: {}'
 ADVANCE_TO_REV=$(rev_of b)
 OUTPUTS="${CASE_ROOT}/outputs"
 run_refresher
-grep -Fq 'MINIMUM_TRACKING_VERSION: "3.1.4.1"' "${CHECKOUT}/.github/workflows/update-branches.yml"
+grep -Fq 'MINIMUM_TRACKING_VERSION: "0.0.0"' "${CHECKOUT}/.github/workflows/update-branches.yml"
 grep -Fq 'discover: {}' "${CHECKOUT}/.github/workflows/update-branches.yml"
-grep -Fq 'BUILD_ATTR: "wine-wineland"' "${CHECKOUT}/.github/workflows/update-version.yml"
+! grep -Fq '3.1.4.1' "${CHECKOUT}/.github/workflows/update-branches.yml"
+! grep -Fq 'TRACK_STABLE_ONLY' "${CHECKOUT}/.github/workflows/update-branches.yml"
+grep -Fq 'nix build --no-link -L ".#default"' "${CHECKOUT}/.github/workflows/update-version.yml"
+! grep -Fq 'wine-wineland' "${CHECKOUT}/.github/workflows/update-version.yml"
 grep -Fq 'name: release' "${CHECKOUT}/.github/workflows/release.yml"
 [[ ! -e "${CHECKOUT}/.github/workflows/needs-rebase.yml" ]]
 [[ "$(git --git-dir="${REMOTE}" show refs/heads/main:flake.lock | jq -r '.nodes["flake-lib"].locked.rev')" == "${ADVANCE_TO_REV}" ]]
@@ -187,8 +192,8 @@ grep -Fq 'update: {}' "${CHECKOUT}/.github/workflows/update-version.yml"
 assert_committed_subject "Adopt flake-lib's update-version.yml at ${LOCKED_REV}"
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" != "${UNCHANGED_SHA}" ]]
 
-# Adopting over a hand-written workflow of the same name keeps the value that belongs to
-# the repository, exactly as a refresh does.
+# Adopting over a hand-written workflow of the same name replaces it wholesale: the
+# template is the whole file, and per-producer knobs belong in flake.nix, not the workflow.
 initialize_repository
 install_workflow update-version.yml 'jobs:
   update:
@@ -196,15 +201,13 @@ install_workflow update-version.yml 'jobs:
       BUILD_ATTR: "lazylibrarian"'
 write_template update-version.yml 'jobs:
   update:
-    env:
-      BUILD_ATTR: "default"
     steps:
       - run: nix run .#update-version'
 ADVANCE_TO_REV=$(rev_of f)
 OUTPUTS="${CASE_ROOT}/outputs"
 run_refresher adopt update-version.yml >/dev/null
-grep -Fq 'BUILD_ATTR: "lazylibrarian"' "${CHECKOUT}/.github/workflows/update-version.yml"
 grep -Fq 'nix run .#update-version' "${CHECKOUT}/.github/workflows/update-version.yml"
+! grep -Fq 'lazylibrarian' "${CHECKOUT}/.github/workflows/update-version.yml"
 
 # A name flake-lib ships no template for is refused without a commit, because the
 # alternative is an empty or half-written workflow scheduled against a pin.

@@ -90,13 +90,6 @@ current_url=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
   | select(.type == "github") | "\(.owner)/\(.repo)/\(.rev)"' flake.lock)
 [[ -n "${current_url}" ]] || die "advancing flake-lib left a lock whose flake-lib input is no longer a github input"
 
-# An already-current flake-lib leaves the refresh with nothing to do. Adopting does not
-# depend on the input moving: the template is wanted whether or not this revision is new.
-if [[ "${MODE}" == refresh && "${locked_url}" == "${current_url}" ]]; then
-  echo "flake-lib is already at its newest revision; no workflow to update."
-  exit 0
-fi
-
 flake_lib_src=$(nix flake metadata --no-write-lock-file --json "github:${current_url}" | jq -r .path)
 if [[ ! -d "${flake_lib_src}/${TEMPLATE_DIR}" ]]; then
   die "flake-lib ${current_url} ships no ${TEMPLATE_DIR}, so the installed workflows cannot be refreshed from it"

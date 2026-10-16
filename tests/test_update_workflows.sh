@@ -137,13 +137,14 @@ grep -Fq 'on: push' "${CHECKOUT}/.github/workflows/pages.yml"
 assert_committed_subject "Advance flake-lib to ${ADVANCE_TO_REV}"
 [[ "$(sed -nE 's/^sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
 
-# flake-lib already at its newest revision pushes nothing and reports no SHA, leaving the
-# rest of the run on the revision it started from.
+# flake-lib already at its newest revision, with every workflow already matching the template
+# that revision ships, pushes nothing and reports no SHA, leaving the rest of the run on the
+# revision it started from.
 initialize_repository
 install_workflow update-branches.yml 'env:
   MINIMUM_TRACKING_VERSION: "1.0.0"'
 write_template update-branches.yml 'env:
-  MINIMUM_TRACKING_VERSION: "9.9.9"'
+  MINIMUM_TRACKING_VERSION: "1.0.0"'
 UNCHANGED_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
 ADVANCE_TO_REV="${LOCKED_REV}"
 OUTPUTS="${CASE_ROOT}/outputs"
@@ -151,6 +152,22 @@ run_refresher
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${UNCHANGED_SHA}" ]]
 grep -Fq 'MINIMUM_TRACKING_VERSION: "1.0.0"' "${CHECKOUT}/.github/workflows/update-branches.yml"
 [[ ! -s "${OUTPUTS}" ]]
+
+# A lock that reached its revision without a refresh ever running -- the pin path advances
+# flake-lib as it commits pins -- still gets the templates that revision ships, because what
+# is compared is the installed file against the locked revision, not the revision the run
+# started on. Without this the repository runs old workflow files against new scripts forever.
+initialize_repository
+install_workflow update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "1.0.0"'
+write_template update-branches.yml 'env:
+  MINIMUM_TRACKING_VERSION: "9.9.9"'
+ADVANCE_TO_REV="${LOCKED_REV}"
+OUTPUTS="${CASE_ROOT}/outputs"
+run_refresher
+grep -Fq 'MINIMUM_TRACKING_VERSION: "9.9.9"' "${CHECKOUT}/.github/workflows/update-branches.yml"
+assert_committed_subject "Update workflows from flake-lib ${LOCKED_REV}"
+[[ "$(sed -nE 's/^sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
 
 # Adopting is how a repository joins the tracked set, which is the upgrade path for a
 # producer that lives only on GitHub and so has no local source to promote from. The

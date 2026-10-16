@@ -419,7 +419,12 @@
             fi
             if [[ "''${1}" == "flake" && "''${2:-}" == "update" && "''${3:-}" == "flake-lib" ]]; then
               node=$(jq -r '.nodes.root.inputs["flake-lib"]' flake.lock)
-              jq --arg n "''${node}" --arg rev "''${TEST_NIX_FLAKE_LIB_REV:?fixture: no flake-lib revision to advance to}" \
+              # Real nix leaves the lock byte-identical when nothing moved. Rewriting it anyway
+              # would make an unchanged lock look like a change to the refresh's commit test.
+              if [[ "$(jq -r --arg n "''${node}" '.nodes[$n].locked.rev' flake.lock)" == "''${TEST_NIX_FLAKE_LIB_REV:?fixture: no flake-lib revision to advance to}" ]]; then
+                exit 0
+              fi
+              jq --arg n "''${node}" --arg rev "''${TEST_NIX_FLAKE_LIB_REV}" \
                 '.nodes[$n].locked.rev = $rev' flake.lock > flake.lock.next
               mv flake.lock.next flake.lock
               exit 0

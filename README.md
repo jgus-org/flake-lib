@@ -366,10 +366,15 @@ The tool reads the `flake-lib` input out of `flake.lock`, advances it, and
 overwrites each workflow in `.github/workflows` whose name a template of that
 revision ships. It does not add or rename a workflow: which workflows a repo has
 is the author's decision, and one flake-lib has no template for is left alone.
-Values the repository owns rather than flake-lib — the tracking floor, the build
-attribute — are read from the file about to be replaced and written back into the
-new one, so a refresh carries them instead of resetting them to the template's
-default. The advanced input and the refreshed workflows are committed together,
+What is compared is the installed file against the template at the revision *now
+locked*, not the revision the run started from — the pin path advances
+`flake-lib` as it commits pins, so a lock can reach a revision without that
+revision's templates having been installed, and a refresh that asked only whether
+the input had moved would leave a repository running old workflow files against
+new scripts indefinitely. Anything a template does not carry is a constructor
+argument in `flake.nix`, baked into the package the workflow invokes, which is why
+a template can replace its workflow file wholesale. The advanced input and the
+refreshed workflows are committed together,
 because a workflow that tracks flake-lib N would otherwise be refreshing the
 scripts it invokes from revision N too.
 
@@ -380,7 +385,7 @@ nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-version.ym
 ```
 
 This installs exactly the named template — creating it, or replacing a hand-written file
-of the same name while keeping the values that belong to the repository — and advances the
+of the same name — and advances the
 input even when it is already current, since joining does not depend on the revision
 moving. It is the upgrade path for a producer that exists only on GitHub and so has no
 local source to promote from. The tool never picks the publication model, and retiring a
@@ -391,8 +396,9 @@ The commit is pushed and reported as the `sha` output, which the run's remaining
 jobs check out. Without that handoff the update would only pay off a day later —
 a workflow is read when its run starts, and a push made with `GITHUB_TOKEN`
 triggers nothing — so the run that moves a workflow builds from the workflow it
-just wrote. When flake-lib is already at its newest revision, nothing is pushed
-and no `sha` is reported, which leaves the run on the revision it started from.
+just wrote. When the input did not move and every installed workflow already matches
+the template at the revision locked, nothing is pushed and no `sha` is reported, which
+leaves the run on the revision it started from.
 
 ## Versioning
 

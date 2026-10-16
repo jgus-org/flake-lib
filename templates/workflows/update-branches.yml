@@ -3,7 +3,11 @@
 # there is nothing producer-specific in it to re-declare. A repository that does not have
 # this file yet installs it with
 # `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-branches.yml`.
-# Edit it in jgus-org/flake-lib's templates/workflows, not here. The workflow below updates
+# Edit it in jgus-org/flake-lib's templates/workflows, not here. Binary caching uses the
+# fleet Attic cache whenever the ATTIC_TOKEN secret resolves -- an organization secret
+# covers every repository at once -- and falls back to the repository's Actions cache
+# without it, so a repository (or a fork pull request) with no token still runs.
+# The workflow below updates
 # itself: a run reads this file when it starts, so the first job refreshes it and
 # commits that revision, and every later job checks out that commit. The scripts it
 # invokes therefore move in the same run as the flake-lib input they come from.
@@ -34,10 +38,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Update workflows from flake-lib templates
         id: update
@@ -61,10 +64,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Discover tracked versions and specification base
         id: plan
@@ -86,10 +88,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Refresh newest stable
         env:
@@ -135,10 +136,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Refresh exact version
         env:
@@ -165,10 +165,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Publish aggregate pointers
         env:

@@ -9,7 +9,11 @@
 # this file yet installs it with
 # `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-version.yml`.
 # Edit it in jgus-org/flake-lib's
-# templates/workflows, not here. The workflow below updates itself: a run reads this file
+# templates/workflows, not here. Binary caching uses the fleet Attic cache whenever
+# the ATTIC_TOKEN secret resolves -- an organization secret covers every repository at
+# once -- and falls back to the repository's Actions cache without it, so a repository
+# (or a fork pull request) with no token still runs. The workflow below updates itself:
+# a run reads this file
 # when it starts, so the first job refreshes it and commits that revision, and the job
 # after it checks out that commit.
 #
@@ -42,10 +46,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Update workflows from flake-lib templates
         id: update
@@ -63,10 +66,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
 
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
-          use-gha-cache: true
-          use-flakehub: false
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Bump nixpkgs
         run: nix flake update

@@ -1,0 +1,79 @@
+name: Fleet Nix cache
+description: >-
+  Substitute from and push to the fleet Attic cache when a usable token is
+  available, and fall back to the repository's Actions cache when it is not.
+
+inputs:
+  token:
+    description: >-
+      Attic token scoped to pull and push the named cache. Without a usable
+      token -- an unset secret, as in a fork pull request -- the Actions cache
+      is used instead and nothing is pushed.
+    required: false
+    default: ''
+  endpoint:
+    description: Attic server endpoint.
+    default: https://nix-cache.gustafson.me
+  cache:
+    description: Attic cache name.
+    default: main
+  publicKey:
+    description: Signing key the cache advertises for its narinfo.
+    default: main:53tAPwNWySllsPc6tdJNtSYSRR1yhkEPxTGuBuDEUuU=
+
+runs:
+  using: composite
+  steps:
+    - id: configure
+      shell: bash
+      env:
+        ATTIC_TOKEN: ${{ inputs.token }}
+        ENDPOINT: ${{ inputs.endpoint }}
+        CACHE: ${{ inputs.cache }}
+        PUBLIC_KEY: ${{ inputs.publicKey }}
+      run: |
+        set -euo pipefail
+        use_actions_cache() {
+          printf 'attic=false\n' >>"${GITHUB_OUTPUT}"
+          echo "${1} Using the Actions cache."
+          exit 0
+        }
+        if [[ -z "${ATTIC_TOKEN}" ]]; then
+          use_actions_cache 'ATTIC_TOKEN is not set.'
+        fi
+        endpoint=${ENDPOINT%/}
+        host=${endpoint#*://}
+        host=${host%%/*}
+        if ! attic=$(nix build --no-link --print-out-paths nixpkgs#attic-client)/bin/attic; then
+          use_actions_cache 'The Attic client could not be built.'
+        fi
+        probe_netrc=${RUNNER_TEMP}/attic-netrc
+        (umask 077 && printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" >"${probe_netrc}")
+        if ! curl -fsS --max-time 20 --netrc-file "${probe_netrc}" \
+          "${endpoint}/${CACHE}/nix-cache-info" >/dev/null; then
+          rm -f "${probe_netrc}"
+          use_actions_cache "The fleet cache at ${endpoint} is unreachable or rejected this token."
+        fi
+        sudo install -d -m 700 /etc/attic-ci/attic
+        probe_config=${RUNNER_TEMP}/attic-config.toml
+        (umask 077 && printf 'default-server = "homelab"\n\n[servers.homelab]\nendpoint = "%s"\ntoken = "%s"\n' \
+          "${endpoint}" "${ATTIC_TOKEN}" >"${probe_config}")
+        sudo install -m 600 -o root -g root "${probe_netrc}" /root/.netrc
+        sudo install -m 600 -o root -g root "${probe_config}" /etc/attic-ci/attic/config.toml
+        rm -f "${probe_netrc}" "${probe_config}"
+        printf '#!/bin/sh\nif [ -r /etc/attic-ci/attic/config.toml ]; then\n  export XDG_CONFIG_HOME=/etc/attic-ci\n  echo "${OUT_PATHS}" | /usr/bin/xargs -r -n 128 %s push homelab:%s || echo "WARNING: binary cache push failed" >&2\nfi\n' \
+          "${attic}" "${CACHE}" |
+          sudo tee /usr/local/bin/attic-push >/dev/null
+        sudo chmod 755 /usr/local/bin/attic-push
+        {
+          printf 'substituters = https://cache.nixos.org %s/%s\n' "${endpoint}" "${CACHE}"
+          printf 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= %s\n' "${PUBLIC_KEY}"
+          printf 'post-build-hook = /usr/local/bin/attic-push\n'
+        } | sudo tee -a /etc/nix/nix.conf >/dev/null
+        printf 'attic=true\n' >>"${GITHUB_OUTPUT}"
+        echo "Substituting from and pushing to ${endpoint}/${CACHE}."
+    - uses: DeterminateSystems/magic-nix-cache-action@main
+      if: steps.configure.outputs.attic != 'true'
+      with:
+        use-gha-cache: true
+        use-flakehub: false

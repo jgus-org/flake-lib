@@ -293,6 +293,12 @@ installed by running `nix run github:jgus-org/flake-lib/v1#update-workflows` --
 flake-lib's own instance of the tool, rather than a copy each producer republishes;
 see below.
 
+Both templates cache through `.github/actions/fleet-nix-cache`, a composite action
+that points Nix at the fleet Attic cache and pushes what a job builds to it whenever
+the `ATTIC_TOKEN` secret resolves -- one organization secret covers every repository
+-- and falls back to the repository's Actions cache when it does not, so repositories
+and fork pull requests without a token behave as before.
+
 
 ### Split update-branches jobs
 

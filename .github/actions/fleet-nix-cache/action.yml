@@ -41,35 +41,37 @@ runs:
         if [[ -z "${ATTIC_TOKEN}" ]]; then
           use_actions_cache 'ATTIC_TOKEN is not set.'
         fi
-        host=${ENDPOINT#*://}
+        endpoint=${ENDPOINT%/}
+        host=${endpoint#*://}
         host=${host%%/*}
         if ! attic=$(nix build --no-link --print-out-paths nixpkgs#attic-client)/bin/attic; then
           use_actions_cache 'The Attic client could not be built.'
         fi
-        printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" |
-          sudo tee /root/.netrc >/dev/null
-        sudo chmod 600 /root/.netrc
-        if ! curl -fsS --max-time 20 --netrc-file /root/.netrc \
-          "${ENDPOINT}/${CACHE}/nix-cache-info" >/dev/null; then
-          sudo rm -f /root/.netrc
-          use_actions_cache "The fleet cache at ${ENDPOINT} is unreachable from this runner."
+        probe_netrc=${RUNNER_TEMP}/attic-netrc
+        (umask 077 && printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" >"${probe_netrc}")
+        if ! curl -fsS --max-time 20 --netrc-file "${probe_netrc}" \
+          "${endpoint}/${CACHE}/nix-cache-info" >/dev/null; then
+          rm -f "${probe_netrc}"
+          use_actions_cache "The fleet cache at ${endpoint} is unreachable or rejected this token."
         fi
         sudo install -d -m 700 /etc/attic-ci/attic
-        printf 'default-server = "homelab"\n\n[servers.homelab]\nendpoint = "%s"\ntoken = "%s"\n' \
-          "${ENDPOINT}" "${ATTIC_TOKEN}" |
-          sudo tee /etc/attic-ci/attic/config.toml >/dev/null
-        sudo chmod 600 /etc/attic-ci/attic/config.toml
-        printf '#!/bin/sh\nif [[ -r /etc/attic-ci/attic/config.toml ]]; then\n  export XDG_CONFIG_HOME=/etc/attic-ci\n  echo "${OUT_PATHS}" | xargs -n 128 %s push homelab:%s || echo "WARNING: binary cache push failed" >&2\nfi\n' \
+        probe_config=${RUNNER_TEMP}/attic-config.toml
+        (umask 077 && printf 'default-server = "homelab"\n\n[servers.homelab]\nendpoint = "%s"\ntoken = "%s"\n' \
+          "${endpoint}" "${ATTIC_TOKEN}" >"${probe_config}")
+        sudo install -m 600 -o root -g root "${probe_netrc}" /root/.netrc
+        sudo install -m 600 -o root -g root "${probe_config}" /etc/attic-ci/attic/config.toml
+        rm -f "${probe_netrc}" "${probe_config}"
+        printf '#!/bin/sh\nif [ -r /etc/attic-ci/attic/config.toml ]; then\n  export XDG_CONFIG_HOME=/etc/attic-ci\n  echo "${OUT_PATHS}" | /usr/bin/xargs -r -n 128 %s push homelab:%s || echo "WARNING: binary cache push failed" >&2\nfi\n' \
           "${attic}" "${CACHE}" |
           sudo tee /usr/local/bin/attic-push >/dev/null
         sudo chmod 755 /usr/local/bin/attic-push
         {
-          printf 'substituters = https://cache.nixos.org %s/%s\n' "${ENDPOINT}" "${CACHE}"
+          printf 'substituters = https://cache.nixos.org %s/%s\n' "${endpoint}" "${CACHE}"
           printf 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= %s\n' "${PUBLIC_KEY}"
           printf 'post-build-hook = /usr/local/bin/attic-push\n'
         } | sudo tee -a /etc/nix/nix.conf >/dev/null
         printf 'attic=true\n' >>"${GITHUB_OUTPUT}"
-        echo "Substituting from and pushing to ${ENDPOINT}/${CACHE}."
+        echo "Substituting from and pushing to ${endpoint}/${CACHE}."
     - uses: DeterminateSystems/magic-nix-cache-action@main
       if: steps.configure.outputs.attic != 'true'
       with:

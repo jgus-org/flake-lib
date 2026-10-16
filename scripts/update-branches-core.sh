@@ -5,7 +5,7 @@
 # aggregate-publication commands.
 #
 # For each upstream version >= $MINIMUM_TRACKING_VERSION, ensures:
-#   - an exact branch `v<M>.<m>.<p>` exists and its pin is hash-validated
+#   - an exact branch `v<M>.<m>.<p>` exists and its pin is hash-validated; validation re-runs only when the branch's flake source changed since the tip last passed it
 #   - aggregate pointer branches `v<M>.<m>`, `v<M>`, `main` are force-pushed to the highest matching exact branch (only the levels shorter than a version's component count; `main` always)
 #
 # Single knob: $MINIMUM_TRACKING_VERSION. Permanent pins are done via git tags (which the action never touches); there is no in-band freeze list.
@@ -589,6 +589,18 @@ remove_worktree() {
   git worktree remove --force "${WT}" >/dev/null 2>&1 || true
 }
 
+# Exact-branch tips advance only through refreshes that passed the version updater or
+# found a tree identical to the verified tip, so a working tree matching the tip's
+# tracked content re-evaluates the exact derivation already verified there. Nix feeds
+# tracked worktree contents to the flake source; untracked files must not look readable
+# to the check either, so a failing listing counts as changed.
+source_unchanged() {
+  local TIP="${1}" UNTRACKED
+  git diff --quiet "${TIP}" || return 1
+  UNTRACKED=$(git ls-files --others --exclude-standard) || return 1
+  [[ -z "${UNTRACKED}" ]]
+}
+
 refresh_version() {
   local v="${1}" upstream="${2}" branch="v${1}" wt update_phase update_exit
   local expected_remote_sha=""
@@ -639,8 +651,12 @@ refresh_version() {
   update_phase="nix flake update"
   update_exit=0
   if run_with_transient_retry "nix flake update for ${branch}" nix flake update --option post-build-hook ""; then
-    update_phase="update-version"
-    run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" ORCHESTRATED_OWNED_FILES="${BRANCH_OWNED_FILES}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
+    if [[ -n "${expected_remote_sha}" ]] && source_unchanged "${expected_remote_sha}"; then
+      echo "  source unchanged since the ${branch} tip; skipping update-version"
+    else
+      update_phase="update-version"
+      run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" ORCHESTRATED_OWNED_FILES="${BRANCH_OWNED_FILES}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
+    fi
   else
     update_exit=$?
   fi

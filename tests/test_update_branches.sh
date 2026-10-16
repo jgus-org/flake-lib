@@ -427,6 +427,41 @@ assert_same_ref main v1.2.0
 assert_contains_specification main
 assert_contains_specification v1.2.0
 
+# A refresh whose worktree still matches the verified tip skips the version updater: a
+# maintenance run on an unmoved specification must not re-run a validation that already
+# passed on this exact tree. The first commit touching the flake source ends the skip.
+initialize_repository
+BASE_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
+run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0
+VERIFIED_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/v1.2.0)
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
+run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0 > "${CASE_ROOT}/skip.log" 2>&1
+grep -Fq 'skipping update-version' "${CASE_ROOT}/skip.log"
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
+assert_ref_sha v1.2.0 "${VERIFIED_SHA}"
+commit_specification
+run_command '1.2.0' refresh --base-sha "${SPECIFICATION_SHA}" --version 1.2.0 --upstream-version 1.2.0
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == $'1.2.0\n1.2.0' ]]
+assert_contains_specification v1.2.0
+
+# A base advanced only by branch-owned changes still merges: the updater must not
+# re-run, but the merge commit must reach the remote, because publication refuses
+# to advance aggregates when no exact ref contains the base.
+initialize_repository
+BASE_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
+run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0
+git -C "${CHECKOUT}" fetch -q origin
+git -C "${CHECKOUT}" reset --hard -q origin/main
+printf '%s\n' advanced > "${CHECKOUT}/flake.lock"
+git -C "${CHECKOUT}" add flake.lock
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'advance the lockfile'
+git -C "${CHECKOUT}" push -q origin main
+OWNED_BASE_SHA=$(git -C "${CHECKOUT}" rev-parse HEAD)
+run_command '1.2.0' refresh --base-sha "${OWNED_BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0 > "${CASE_ROOT}/skip.log" 2>&1
+grep -Fq 'skipping update-version' "${CASE_ROOT}/skip.log"
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
+git --git-dir="${REMOTE}" merge-base --is-ancestor "${OWNED_BASE_SHA}" refs/heads/v1.2.0
+
 initialize_repository
 run_update $'V1.2.2\nv1.2.3'
 assert_same_ref v1.2 v1.2.3
@@ -696,6 +731,10 @@ printf '%s\n' base > "${CHECKOUT}/wheels-3.14-x86_64-linux.json"
 git -C "${CHECKOUT}" add wheels-3.14-x86_64-linux.json
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'system-qualified artifact layout'
 git -C "${CHECKOUT}" push -q origin main
+printf '%s\n' advanced > "${CHECKOUT}/spec-advance.txt"
+git -C "${CHECKOUT}" add spec-advance.txt
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'advance the specification'
+git -C "${CHECKOUT}" push -q origin main
 export TEST_STAGE_OWNED=1
 BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json' run_update '1.2.0'
 [[ "$(git --git-dir="${REMOTE}" show 'refs/heads/v1.2.0:wheels-3.14-x86_64-linux.json')" == migrated ]]
@@ -710,6 +749,10 @@ git -C "${CHECKOUT}" add removed-by-update.txt
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'add removable artifact'
 git -C "${CHECKOUT}" push -q origin v1.2.0
 git -C "${CHECKOUT}" switch -q main
+printf '%s\n' advanced > "${CHECKOUT}/spec-advance.txt"
+git -C "${CHECKOUT}" add spec-advance.txt
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'advance the specification'
+git -C "${CHECKOUT}" push -q origin main
 export TEST_DELETE_OWNED=removed-by-update.txt
 BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock removed-by-update.txt never-existed.txt' run_update '1.2.0'
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:removed-by-update.txt'

@@ -320,7 +320,13 @@ refreshed as its own fast path rather than twice.
 
 A refresh invocation does not query upstream: it creates or
 merges exactly one `v<version>` branch from `baseSha`, then updates and pushes
-that branch. Publication consumes the unchanged `versions` array, considers only
+that branch. Exact-branch tips are tool-managed and advance only through
+refreshes that passed the version updater or found a tree identical to the
+verified tip (a manual push to an exact branch is indistinguishable from
+verified state), so when the merged worktree still matches the verified tip and
+the input refresh moved nothing, the updater is skipped: the tip's exact
+derivation has already been verified, and rebuilding it would prove nothing
+new. Publication consumes the unchanged `versions` array, considers only
 exact refs containing `baseSha`, and updates aggregates independently. When the
 highest candidate is a prerelease but an aggregate is stable, the aggregate
 advances to the highest successful stable candidate. Invoking `update-branches`

@@ -392,7 +392,23 @@ class WaitForDepsTests(unittest.TestCase):
         ):
             status = GATE.main(["--flake-root", str(self.root)])
         self.assertEqual(status, 0)
+        self.assertIn("no GITHUB_TOKEN", stderr.getvalue())
+        self.assertNotIn("GITHUB_REPOSITORY", stderr.getvalue())
         self.assertIn("continuing without waiting", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_missing_repository_names_only_that_gap(self) -> None:
+        self.write_lock(["click-flake"])
+        stdout, stderr = StringIO(), StringIO()
+        with (
+            mock.patch.dict(os.environ, {"GITHUB_TOKEN": "fixture"}, clear=True),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            status = GATE.main(["--flake-root", str(self.root)])
+        self.assertEqual(status, 0)
+        self.assertIn("no GITHUB_REPOSITORY", stderr.getvalue())
+        self.assertNotIn("GITHUB_TOKEN", stderr.getvalue())
         self.assertEqual(stdout.getvalue(), "")
 
     def test_discovery_keeps_only_same_owner_inputs(self) -> None:

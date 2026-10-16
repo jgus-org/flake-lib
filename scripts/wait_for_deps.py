@@ -279,9 +279,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
     repository = os.environ.get("GITHUB_REPOSITORY", "")
-    if not token or "/" not in repository:
+    missing = []
+    if not token:
+        missing.append("no GITHUB_TOKEN")
+    if "/" not in repository:
+        missing.append("no GITHUB_REPOSITORY")
+    if missing:
         warn(
-            "no API token and no GITHUB_REPOSITORY, so a dependency's runs cannot be read: "
+            f"{' and '.join(missing)}, so a dependency's runs cannot be read: "
             "continuing without waiting"
         )
         return 0

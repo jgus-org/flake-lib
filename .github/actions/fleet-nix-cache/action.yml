@@ -70,6 +70,7 @@ runs:
           printf 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= %s\n' "${PUBLIC_KEY}"
           printf 'post-build-hook = /usr/local/bin/attic-push\n'
         } | sudo tee -a /etc/nix/nix.conf >/dev/null
+        sudo systemctl restart nix-daemon
         printf 'attic=true\n' >>"${GITHUB_OUTPUT}"
         echo "Substituting from and pushing to ${endpoint}/${CACHE}."
     - uses: DeterminateSystems/magic-nix-cache-action@main

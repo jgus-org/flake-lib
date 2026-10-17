@@ -1,0 +1,39 @@
+name: Probe Attic hook
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+        with:
+          token: ${{ secrets.ATTIC_TOKEN }}
+
+      - name: Effective configuration
+        run: |
+          echo "--- nix.conf"; cat /etc/nix/nix.conf
+          echo "--- hook file"; cat /usr/local/bin/attic-push
+          echo "--- daemon status"; systemctl is-active nix-daemon; systemctl show nix-daemon -p ExecMainStartTimestamp -p LoadState --no-pager
+
+      - name: Fresh build
+        run: |
+          nix build --impure --no-link --print-out-paths \
+            --expr "derivation { name = \"attic-probe-${{ github.run_id }}-${{ github.run_attempt }}\"; system = builtins.currentSystem; builder = \"/bin/sh\"; args = [ \"-c\" \"date -u > \$out\" ]; }" \
+            | tee "${RUNNER_TEMP}/probe-out"
+
+      - name: Daemon journal
+        run: sudo journalctl -u nix-daemon --no-pager -n 80
+
+      - name: Narinfo
+        env:
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          umask 077
+          printf 'machine nix-cache.gustafson.me\npassword %s\n' "${ATTIC_TOKEN}" > "${RUNNER_TEMP}/n"
+          base=$(basename "$(cat "${RUNNER_TEMP}/probe-out")")
+          curl -s --netrc-file "${RUNNER_TEMP}/n" -o /dev/null -w 'narinfo: %{http_code}\n' \
+            "https://nix-cache.gustafson.me/main/${base}.narinfo"

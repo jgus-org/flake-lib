@@ -28,9 +28,6 @@ concurrency:
 
 jobs:
   workflows:
-    # A push touching .github/workflows/ needs `workflows` on its token, and the refresher
-    # pushes with GITHUB_TOKEN. Without it the bump commit is rejected whole, because the
-    # flake-lib advance rides in the same commit as the refreshed workflow.
     permissions:
       contents: write
       workflows: write

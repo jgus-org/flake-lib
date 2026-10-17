@@ -70,8 +70,9 @@ jobs:
       - name: Wait for dependency updates
         env:
           # Reading another repository's runs and starting a dependency's update both need a
-          # token of their own; with no such secret the gate observes nothing and proceeds.
-          GITHUB_TOKEN: ${{ secrets.FLEET_TOKEN }}
+          # token. This organization secret covers every repository, so no producer declares
+          # anything, and with no such secret the gate observes nothing and proceeds.
+          GITHUB_TOKEN: ${{ secrets.ORG_UPDATE_TOKEN }}
         run: nix run github:jgus-org/flake-lib/v1#wait-for-deps
 
   discover:

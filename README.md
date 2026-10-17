@@ -434,10 +434,12 @@ must not stop the fleet. The report says which of those happened, and says so wh
 dependency's update was started by this run, since that run is not otherwise attributable
 to the consumer that began it.
 
-Reading another repository's runs and starting its update both need a token with Actions
-read and write across the producer repositories; the templates pass one as `FLEET_TOKEN`.
-With no such secret the gate observes nothing and proceeds, in the same shape as the
-Attic cache action's fallback.
+Reading another repository's runs needs Actions read, and starting its update needs
+Actions write — the first repository role that grants "create, edit, run, re-run, and
+cancel GitHub Actions workflows" is Write. The templates pass one organization secret,
+`ORG_UPDATE_TOKEN`, so every producer is covered at once and none of them declares
+anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
+nothing and proceeds, in the same shape as the Attic cache action's fallback.
 
 ## Versioning
 

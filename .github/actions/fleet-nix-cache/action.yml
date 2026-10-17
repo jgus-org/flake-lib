@@ -60,11 +60,12 @@ runs:
           "${endpoint}" "${ATTIC_TOKEN}" >"${probe_config}")
         sudo install -m 600 -o root -g root "${probe_config}" /etc/attic-ci/attic/config.toml
         rm -f "${probe_netrc}" "${probe_config}"
-        # Determinate Nix owns /etc/nix/nix.conf and regenerates it, so user
-        # settings go in the file it includes for that purpose -- and only in
-        # keys its generated file does not set after the include. netrc-file is
-        # one of those, so substitute auth goes into the file it points at.
-        daemon_netrc=$(sudo nix show-config --json | jq -r '."netrc-file" // .netrcFile // "/root/.netrc"')
+        # Determinate Nix owns /etc/nix/nix.conf and regenerates it, so user settings go
+        # in the file it includes for that purpose, and netrc-file is a key its generated
+        # file leaves alone. The path is fixed rather than read back from the daemon: the
+        # nix CLI reaches a job only through $GITHUB_PATH, which sudo's secure_path does
+        # not inherit, so `sudo nix show-config` cannot resolve it here.
+        daemon_netrc=/etc/nix/netrc
         printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" |
           sudo tee -a "${daemon_netrc}" >/dev/null
         sudo chmod 600 "${daemon_netrc}"
@@ -76,6 +77,7 @@ runs:
           printf 'substituters = https://cache.nixos.org %s/%s\n' "${endpoint}" "${CACHE}"
           printf 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= %s\n' "${PUBLIC_KEY}"
           printf 'post-build-hook = /usr/local/bin/attic-push\n'
+          printf 'netrc-file = %s\n' "${daemon_netrc}"
         } | sudo tee /etc/nix/nix.custom.conf >/dev/null
         sudo systemctl restart nix-daemon
         printf 'attic=true\n' >>"${GITHUB_OUTPUT}"

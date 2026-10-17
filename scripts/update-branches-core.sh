@@ -638,9 +638,9 @@ refresh_version() {
   pushd "${wt}" >/dev/null
   update_phase="nix flake update"
   update_exit=0
-  if run_with_transient_retry "nix flake update for ${branch}" nix flake update --option post-build-hook ""; then
+  if run_with_transient_retry "nix flake update for ${branch}" nix flake update; then
     update_phase="update-version"
-    run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" ORCHESTRATED_OWNED_FILES="${BRANCH_OWNED_FILES}" nix run --option post-build-hook "" .#update-version -- "${v}" "${upstream}" || update_exit=$?
+    run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" ORCHESTRATED_OWNED_FILES="${BRANCH_OWNED_FILES}" nix run .#update-version -- "${v}" "${upstream}" || update_exit=$?
   else
     update_exit=$?
   fi

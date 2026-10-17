@@ -77,7 +77,7 @@ RESOLVED_SIBLING_REFS='{}'
 
 evaluate_package() {
   echo "Evaluating ${BUILD_ATTR}..."
-  nix eval --option post-build-hook "" --raw "${FLAKE_ROOT}#${BUILD_ATTR}.drvPath" >/dev/null
+  nix eval --raw "${FLAKE_ROOT}#${BUILD_ATTR}.drvPath" >/dev/null
 }
 
 finish_unchanged() {
@@ -232,7 +232,7 @@ update_flake_lock() {
       OVERRIDE_ARGS+=(--override-input "${INPUT_NAME}" "github:${FLAKE_REPO}/${REF}")
     done
   fi
-  nix flake lock --option post-build-hook "" "${OVERRIDE_ARGS[@]}" "${FLAKE_ROOT}"
+  nix flake lock "${OVERRIDE_ARGS[@]}" "${FLAKE_ROOT}"
   AFTER=$(sha256sum "${FLAKE_ROOT}/flake.lock")
   if [[ "${BEFORE}" != "${AFTER}" ]]; then
     LOCK_CHANGED=1
@@ -444,7 +444,7 @@ revalidate_hash() {
   local field="$1" out rc new
   echo "Validating ${field} via build..."
   set +e
-  out=$(nix build --option post-build-hook "" "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link 2>&1)
+  out=$(nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link 2>&1)
   rc=$?
   set -e
   (( rc == 0 )) && return 0
@@ -915,7 +915,7 @@ evaluate_package
 
 if [[ "${VERIFICATION}" == "build" ]]; then
   echo "Verifying build (${BUILD_ATTR})..."
-  nix build --option post-build-hook "" "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link
+  nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link
 fi
 
 echo

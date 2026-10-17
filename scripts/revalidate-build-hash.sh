@@ -21,7 +21,7 @@ fi
 
 echo "Building ${BUILD_ATTR} to validate ${HASH_FIELD}..."
 set +e
-out=$(nix build --option post-build-hook "" "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link 2>&1)
+out=$(nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link 2>&1)
 rc=$?
 set -e
 
@@ -42,5 +42,5 @@ echo "  ${HASH_FIELD} drift -> ${new_hash}"
 sed -i -E "s|^([[:space:]]*${HASH_FIELD}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${new_hash}\\2|" "${pin}"
 
 echo "Verifying build..."
-nix build --option post-build-hook "" "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link
+nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link
 echo "  ${HASH_FIELD} validated."

@@ -36,9 +36,6 @@ concurrency:
 
 jobs:
   workflows:
-    permissions:
-      contents: write
-      workflows: write
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.update.outputs.sha }}

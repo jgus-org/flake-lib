@@ -58,9 +58,16 @@ runs:
         probe_config=${RUNNER_TEMP}/attic-config.toml
         (umask 077 && printf 'default-server = "homelab"\n\n[servers.homelab]\nendpoint = "%s"\ntoken = "%s"\n' \
           "${endpoint}" "${ATTIC_TOKEN}" >"${probe_config}")
-        sudo install -m 600 -o root -g root "${probe_netrc}" /root/.netrc
         sudo install -m 600 -o root -g root "${probe_config}" /etc/attic-ci/attic/config.toml
         rm -f "${probe_netrc}" "${probe_config}"
+        # Determinate Nix owns /etc/nix/nix.conf and regenerates it, so user
+        # settings go in the file it includes for that purpose -- and only in
+        # keys its generated file does not set after the include. netrc-file is
+        # one of those, so substitute auth goes into the file it points at.
+        daemon_netrc=$(sudo nix show-config --json | jq -r '."netrc-file" // .netrcFile // "/root/.netrc"')
+        printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" |
+          sudo tee -a "${daemon_netrc}" >/dev/null
+        sudo chmod 600 "${daemon_netrc}"
         printf '#!/bin/sh\nif [ -r /etc/attic-ci/attic/config.toml ]; then\n  export XDG_CONFIG_HOME=/etc/attic-ci\n  echo "${OUT_PATHS}" | /usr/bin/xargs -r -n 128 %s push homelab:%s || echo "WARNING: binary cache push failed" >&2\nfi\n' \
           "${attic}" "${CACHE}" |
           sudo tee /usr/local/bin/attic-push >/dev/null
@@ -69,7 +76,7 @@ runs:
           printf 'substituters = https://cache.nixos.org %s/%s\n' "${endpoint}" "${CACHE}"
           printf 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= %s\n' "${PUBLIC_KEY}"
           printf 'post-build-hook = /usr/local/bin/attic-push\n'
-        } | sudo tee -a /etc/nix/nix.conf >/dev/null
+        } | sudo tee /etc/nix/nix.custom.conf >/dev/null
         sudo systemctl restart nix-daemon
         printf 'attic=true\n' >>"${GITHUB_OUTPUT}"
         echo "Substituting from and pushing to ${endpoint}/${CACHE}."

@@ -400,6 +400,47 @@ just wrote. When the input did not move and every installed workflow already mat
 the template at the revision locked, nothing is pushed and no `sha` is reported, which
 leaves the run on the revision it started from.
 
+### Order a producer after its dependencies (`wait-for-deps`)
+
+A producer whose flake takes inputs from other producers must not pin them before their
+own update has published: the sibling resolver derives a ref from the upstream's declared
+requirements and assumes the sibling already published it, so a dependency that has not run
+yet yields either a silently unpinned input or a red run.
+
+Spacing the schedules apart approximates that ordering, and cannot hold: scheduled runs are
+delayed by queue pressure, a dependency's build can overrun the gap, and the gap has to be
+maintained by hand as the graph changes. `wait-for-deps` observes the ordering instead:
+
+```console
+nix run github:jgus-org/flake-lib/v1#wait-for-deps
+```
+
+The edges are the inputs the repository already declares — every github input in
+`flake.lock` owned by this repository's own owner, excluding `flake-lib` itself. They are
+never declared a second time, and the graph cannot cycle, because a flake's inputs are
+acyclic by construction. A leaf producer takes no such input and reports nothing to wait
+for.
+
+For each dependency, in this order: a completed update run within the freshness window
+means it is done; a recent run that ended badly is reported and skipped; a queued or
+running update is waited for; anything else is started with `workflow_dispatch` and then
+waited for. Dependencies are waited for concurrently, so the wait is the slowest
+dependency rather than their sum, and a chain of them resolves in real dependency depth
+rather than in fixed slots.
+
+Every failure to establish ordering ends in continuing without waiting, and the exit status
+is always success: a dependency that cannot be observed, that fails, or that never finishes
+must not stop the fleet. The report says which of those happened, and says so when the
+dependency's update was started by this run, since that run is not otherwise attributable
+to the consumer that began it.
+
+Reading another repository's runs needs Actions read, and starting its update needs
+Actions write — the first repository role that grants "create, edit, run, re-run, and
+cancel GitHub Actions workflows" is Write. The templates pass one organization secret,
+`ORG_UPDATE_TOKEN`, so every producer is covered at once and none of them declares
+anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
+nothing and proceeds, in the same shape as the Attic cache action's fallback.
+
 ## Versioning
 
 Hand-versioned via git tags (`vX.Y.Z`) with a moving `v1` aggregate branch. Breaking

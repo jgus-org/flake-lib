@@ -46,6 +46,13 @@
           runtimeEnv = { GIT_PUSH_LIB = ./scripts/git-push.sh; };
           text = ''exec ${./scripts/update-workflows.sh} "$@"'';
         };
+        # Ordering is observed from the consumer side, so like the refresher this takes nothing
+        # from the caller: its edges are the caller's own flake inputs, read from its lock.
+        wait-for-deps = pkgs.writeShellApplication {
+          name = "wait-for-deps";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''exec python3 ${./scripts/wait_for_deps.py} "$@"'';
+        };
         update-version-pypi-cargo = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
@@ -670,6 +677,14 @@
           bash ${./tests/test_update_workflows.sh}
           touch $out
         '';
+        wait-for-deps-tests = pkgs.runCommand "wait-for-deps-tests"
+          {
+            nativeBuildInputs = [ pkgs.python3 ];
+            WAIT_FOR_DEPS = ./scripts/wait_for_deps.py;
+          } ''
+          python3 ${./tests/test_wait_for_deps.py}
+          touch $out
+        '';
         workflow-templates = pkgs.runCommand "workflow-templates-check"
           { nativeBuildInputs = [ pkgs.yq-go ]; } ''
           for f in ${./templates/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
@@ -679,7 +694,7 @@
         '';
       in
       {
-        packages = { inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
+        packages = { inherit update-version update-branches update-workflows wait-for-deps update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
         checks = {
           inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
@@ -689,7 +704,7 @@
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
           inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration wheelhouse-no-emit-tests python-wheelhouse-no-emit-integration python-wheelhouse-site-tree-integration python-wheelhouse-site-tree-unpatched-import huggingface-model-manager-tests;
           inherit update-version-tests;
-          inherit update-workflows-tests workflow-templates;
+          inherit update-workflows-tests wait-for-deps-tests workflow-templates;
           inherit oci-image-tests;
         };
       });

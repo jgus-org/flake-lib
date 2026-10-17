@@ -46,8 +46,37 @@ jobs:
         id: update
         run: nix run github:jgus-org/flake-lib/v1#update-workflows
 
-  discover:
+  # A producer whose flake takes inputs from other producers here must not pin them before
+  # their own update has published. The edges are this repository's flake inputs, so nothing
+  # below is producer-specific, and a leaf producer's run reports nothing to wait for. A
+  # dependency that cannot be observed, that ended badly, or that never finishes is reported
+  # and skipped: ordering is worth waiting for, not worth stalling the fleet on.
+  deps:
     needs: workflows
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.workflows.outputs.sha || github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+        with:
+          token: ${{ secrets.ATTIC_TOKEN }}
+
+      - name: Wait for dependency updates
+        env:
+          # Reading another repository's runs and starting a dependency's update both need a
+          # token. This organization secret covers every repository, so no producer declares
+          # anything, and with no such secret the gate observes nothing and proceeds.
+          GITHUB_TOKEN: ${{ secrets.ORG_UPDATE_TOKEN }}
+        run: nix run github:jgus-org/flake-lib/v1#wait-for-deps
+
+  discover:
+    needs: [workflows, deps]
     if: always()
     runs-on: ubuntu-latest
     outputs:

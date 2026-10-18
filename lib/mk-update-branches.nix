@@ -55,9 +55,9 @@ pkgs.writeShellApplication {
     VERSION_OVERRIDES = builtins.toJSON versionOverrides;
     VERSION_CANON = pkgs.lib.concatStringsSep "\n" versionCanon;
     MIN_VERSION_COMPONENTS = toString minVersionComponents;
-    CASCADE_PY = "${../scripts/cascade.py}";
-    DEPS_CORE = "${../scripts/deps_core.py}";
-    GIT_PUSH_LIB = "${../scripts/git-push.sh}";
+    CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
+    DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
+    GIT_PUSH_LIB = "${pkgs.copyPathToStore ../scripts/git-push.sh}";
     MINIMUM_TRACKING_VERSION = minimumTrackingVersion;
     TRACK_STABLE_ONLY = pkgs.lib.boolToString trackStableOnly;
   };

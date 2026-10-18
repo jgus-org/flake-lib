@@ -89,8 +89,8 @@ pkgs.writeShellApplication {
     MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
     ARTIFACT_FINGERPRINT = artifactFingerprint;
     NIX_PATH = "nixpkgs=${pkgs.path}";
-    CASCADE_PY = "${../scripts/cascade.py}";
-    DEPS_CORE = "${../scripts/deps_core.py}";
+    CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
+    DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
   };
   text = ''exec ${../scripts/update-version.sh} "$@"'';
 }

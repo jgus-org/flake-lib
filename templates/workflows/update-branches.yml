@@ -5,8 +5,8 @@
 # `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-branches.yml`.
 # Edit it in jgus-org/flake-lib's templates/workflows, not here. Binary caching uses the
 # fleet Attic cache whenever the ATTIC_TOKEN secret resolves -- an organization secret
-# covers every repository at once -- and falls back to the repository's Actions cache
-# without it, so a repository (or a fork pull request) with no token still runs.
+# covers every repository at once -- and a repository, or a fork pull request, with no
+# token runs on the public cache alone.
 # The workflow below updates
 # itself: a run reads this file when it starts, so the first job refreshes it and
 # commits that revision, and every later job checks out that commit. The scripts it
@@ -36,7 +36,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
 
       - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
@@ -63,7 +63,7 @@ jobs:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
 
       - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
@@ -93,7 +93,7 @@ jobs:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
 
       - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
@@ -117,7 +117,7 @@ jobs:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
 
       - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
@@ -165,7 +165,7 @@ jobs:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
 
       - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
@@ -194,7 +194,7 @@ jobs:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
 
       - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:

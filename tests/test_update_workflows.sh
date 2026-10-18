@@ -240,3 +240,40 @@ fi
 grep -Fq 'templates/workflows/nightly-scan.yml' <<<"${REFUSAL}"
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${BEFORE_SHA}" ]]
 [[ ! -e "${CHECKOUT}/.github/workflows/nightly-scan.yml" ]]
+
+# The push is made as another actor while actions/checkout's credential is still installed
+# for the repository URL. extraHeader is a multivar, so a layered key puts two Authorization
+# headers on the wire and the server refuses the request outright; the push has to present
+# exactly one, and it has to be ours. Which key git would send for a URL is urlmatch, so the
+# isolation is measurable without a network.
+source "${GIT_PUSH_LIB}"
+
+CREDENTIAL_CASE=$(mktemp -d "${TEST_ROOT}/credential.XXXXXX")
+git init -q "${CREDENTIAL_CASE}"
+git -C "${CREDENTIAL_CASE}" remote add origin https://github.com/o/r
+RUN_CREDENTIAL='AUTHORIZATION: basic UnVuQ3JlZGVudGlhbA=='
+OUR_CREDENTIAL='AUTHORIZATION: basic T3VyQ3JlZGVudGlhbA=='
+{
+  printf '[http "https://github.com/o/r/"]\n\textraheader = %s\n' "${RUN_CREDENTIAL}"
+  printf '[http "https://github.com/o/r.git/"]\n\textraheader = %s\n' "${OUR_CREDENTIAL}"
+} >"${CREDENTIAL_CASE}/config"
+
+PUSH_URL=$(cd "${CREDENTIAL_CASE}" && push_url)
+[[ "${PUSH_URL}" == https://github.com/o/r.git ]]
+[[ "$(cd "${CREDENTIAL_CASE}" && git config --file config --get-urlmatch http.extraheader "${PUSH_URL}/info/refs")" == "${OUR_CREDENTIAL}" ]]
+
+# The URL the run credential is scoped to is the shape that fails: ours would have gone out
+# beside it, which is why the push does not use it.
+[[ "$(cd "${CREDENTIAL_CASE}" && git config --file config --get-urlmatch http.extraheader https://github.com/o/r/info/refs)" == "${RUN_CREDENTIAL}" ]]
+
+EXPECTED_KEY='http.https://github.com/o/r.git/.extraheader'
+EXPECTED_VALUE="AUTHORIZATION: basic $(printf 'x-access-token:push-token' | base64 | tr -d '\n')"
+mapfile -t CREDENTIAL_ARGS < <(cd "${CREDENTIAL_CASE}" && push_credential_args 'push-token')
+[[ "${CREDENTIAL_ARGS[0]}" == '-c' && "${CREDENTIAL_ARGS[1]}" == "${EXPECTED_KEY}=${EXPECTED_VALUE}" ]]
+
+# With no push token nothing is layered, and a remote that is not HTTPS has no installed
+# header to route around, so it is pushed by name.
+[[ -z "$(cd "${CREDENTIAL_CASE}" && push_credential_args '')" ]]
+git -C "${CREDENTIAL_CASE}" remote set-url origin 'git@github.com:o/r.git'
+[[ "$(cd "${CREDENTIAL_CASE}" && push_url)" == origin ]]
+[[ -z "$(cd "${CREDENTIAL_CASE}" && push_credential_args 'push-token')" ]]

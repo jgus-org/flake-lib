@@ -32,7 +32,7 @@ jobs:
     outputs:
       sha: ${{ steps.update.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -58,7 +58,7 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +87,7 @@ jobs:
       newest_stable: ${{ steps.plan.outputs.newest_stable }}
       maintenance: ${{ steps.plan.outputs.maintenance }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
@@ -111,7 +111,7 @@ jobs:
     if: always() && needs.discover.result == 'success' && needs.discover.outputs.newest_stable != 'null'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
@@ -159,7 +159,7 @@ jobs:
         entry: ${{ fromJson(needs.discover.outputs.maintenance) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
@@ -188,7 +188,7 @@ jobs:
     if: always() && needs.discover.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.workflows.outputs.sha || github.sha }}

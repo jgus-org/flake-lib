@@ -1,14 +1,15 @@
 name: Fleet Nix cache
 description: >-
   Substitute from and push to the fleet Attic cache when a usable token is
-  available, and fall back to the repository's Actions cache when it is not.
+  available, and leave the run on the public cache when it is not.
 
 inputs:
   token:
     description: >-
       Attic token scoped to pull and push the named cache. Without a usable
-      token -- an unset secret, as in a fork pull request -- the Actions cache
-      is used instead and nothing is pushed.
+      token -- an unset secret, as in a fork pull request -- nothing here is
+      configured, so the run substitutes from the public cache and pushes
+      nothing.
     required: false
     default: ''
   endpoint:
@@ -24,8 +25,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - id: configure
-      shell: bash
+    - shell: bash
       env:
         ATTIC_TOKEN: ${{ inputs.token }}
         ENDPOINT: ${{ inputs.endpoint }}
@@ -33,26 +33,25 @@ runs:
         PUBLIC_KEY: ${{ inputs.publicKey }}
       run: |
         set -euo pipefail
-        use_actions_cache() {
-          printf 'attic=false\n' >>"${GITHUB_OUTPUT}"
-          echo "${1} Using the Actions cache."
+        without_fleet_cache() {
+          echo "${1} Substituting from the public cache only."
           exit 0
         }
         if [[ -z "${ATTIC_TOKEN}" ]]; then
-          use_actions_cache 'ATTIC_TOKEN is not set.'
+          without_fleet_cache 'ATTIC_TOKEN is not set.'
         fi
         endpoint=${ENDPOINT%/}
         host=${endpoint#*://}
         host=${host%%/*}
         if ! attic=$(nix build --no-link --print-out-paths nixpkgs#attic-client)/bin/attic; then
-          use_actions_cache 'The Attic client could not be built.'
+          without_fleet_cache 'The Attic client could not be built.'
         fi
         probe_netrc=${RUNNER_TEMP}/attic-netrc
         (umask 077 && printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" >"${probe_netrc}")
         if ! curl -fsS --max-time 20 --netrc-file "${probe_netrc}" \
           "${endpoint}/${CACHE}/nix-cache-info" >/dev/null; then
           rm -f "${probe_netrc}"
-          use_actions_cache "The fleet cache at ${endpoint} is unreachable or rejected this token."
+          without_fleet_cache "The fleet cache at ${endpoint} is unreachable or rejected this token."
         fi
         sudo install -d -m 700 /etc/attic-ci/attic
         probe_config=${RUNNER_TEMP}/attic-config.toml
@@ -60,13 +59,13 @@ runs:
           "${endpoint}" "${ATTIC_TOKEN}" >"${probe_config}")
         sudo install -m 600 -o root -g root "${probe_config}" /etc/attic-ci/attic/config.toml
         rm -f "${probe_netrc}" "${probe_config}"
-        # Determinate Nix owns /etc/nix/nix.conf and regenerates it, so user settings go in
-        # the file it includes for that purpose. It also sets netrc-file below that include,
-        # and the last assignment wins, so the credentials belong in the file its own
-        # netrc-file names: substituting a different path leaves the cache anonymous.
-        daemon_netrc=/nix/var/determinate/netrc
+        # The installer writes /etc/nix/nix.conf before this action runs and regenerates it
+        # never, so the settings and the netrc path are appended to it: the last assignment
+        # wins, and the credentials live in a file only this action writes.
+        daemon_netrc=/etc/nix/attic-netrc
         printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" |
-          sudo tee -a "${daemon_netrc}" >/dev/null
+          sudo tee "${daemon_netrc}" >/dev/null
+        sudo chown root:root "${daemon_netrc}"
         sudo chmod 600 "${daemon_netrc}"
         printf '#!/bin/sh\nif [ -r /etc/attic-ci/attic/config.toml ]; then\n  export XDG_CONFIG_HOME=/etc/attic-ci\n  echo "${OUT_PATHS}" | /usr/bin/xargs -r -n 128 %s push homelab:%s || echo "WARNING: binary cache push failed" >&2\nfi\n' \
           "${attic}" "${CACHE}" |
@@ -76,12 +75,7 @@ runs:
           printf 'substituters = https://cache.nixos.org %s/%s\n' "${endpoint}" "${CACHE}"
           printf 'trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= %s\n' "${PUBLIC_KEY}"
           printf 'post-build-hook = /usr/local/bin/attic-push\n'
-        } | sudo tee /etc/nix/nix.custom.conf >/dev/null
+          printf 'netrc-file = %s\n' "${daemon_netrc}"
+        } | sudo tee -a /etc/nix/nix.conf >/dev/null
         sudo systemctl restart nix-daemon
-        printf 'attic=true\n' >>"${GITHUB_OUTPUT}"
         echo "Substituting from and pushing to ${endpoint}/${CACHE}."
-    - uses: DeterminateSystems/magic-nix-cache-action@main
-      if: steps.configure.outputs.attic != 'true'
-      with:
-        use-gha-cache: true
-        use-flakehub: false

@@ -4,10 +4,12 @@ on:
 permissions:
   contents: read
 jobs:
-  probe:
+  push:
     runs-on: ubuntu-latest
+    outputs:
+      store_path: ${{ steps.build.outputs.store_path }}
     steps:
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
 
       - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
@@ -17,25 +19,56 @@ jobs:
         run: |
           echo "--- nix.conf"; cat /etc/nix/nix.conf
           echo "--- hook file"; cat /usr/local/bin/attic-push
-          echo "--- daemon status"; systemctl is-active nix-daemon; systemctl show nix-daemon -p ExecMainStartTimestamp -p LoadState --no-pager
+          echo "--- netrc"
+          sudo ls -l --time-style=full-iso /etc/nix/attic-netrc
+          sudo awk '{ for (i = 1; i <= NF; i++) if ($i == "password") $(i + 1) = "<redacted>" } 1' \
+            /etc/nix/attic-netrc
+          echo "--- resolved settings"
+          nix config show | grep -E 'netrc-file|substituters|post-build-hook'
+          echo "--- daemon"; systemctl show nix-daemon -p ExecMainStartTimestamp -p LoadState --no-pager
+
+      - name: Bare nixpkgs resolves
+        run: nix shell nixpkgs#jq --command jq --version
 
       - name: Fresh build
+        id: build
         run: |
-          nix build --impure --no-link --print-out-paths \
-            --expr "derivation { name = \"attic-probe-${{ github.run_id }}-${{ github.run_attempt }}\"; system = builtins.currentSystem; builder = \"/bin/sh\"; args = [ \"-c\" \"/usr/bin/date -u > \$out\" ]; }" \
-            | tee "${RUNNER_TEMP}/probe-out"
+          path=$(nix build --impure --no-link --print-out-paths \
+            --expr "derivation { name = \"attic-probe-${{ github.run_id }}-${{ github.run_attempt }}\"; system = builtins.currentSystem; builder = \"/bin/sh\"; args = [ \"-c\" \"echo probe > \$out\" ]; }")
+          printf 'store_path=%s\n' "${path}" >>"${GITHUB_OUTPUT}"
+          printf '%s\n' "${path}"
 
       - name: Daemon journal
-        run: sudo journalctl -u nix-daemon --no-pager -n 80
+        run: |
+          echo "--- hook lines"
+          sudo journalctl -u nix-daemon --no-pager |
+            grep -iE 'attic|post-build|hook|push' || echo 'none'
+          echo "--- journal tail"
+          sudo journalctl -u nix-daemon --no-pager -n 25
 
       - name: Narinfo
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
         run: |
           umask 077
-          printf 'machine nix-cache.gustafson.me\npassword %s\n' "${ATTIC_TOKEN}" > "${RUNNER_TEMP}/n"
-          path=$(cat "${RUNNER_TEMP}/probe-out")
-          digest=$(basename "${path}")
-          printf 'store path: %s\n' "${path}"
+          printf 'machine nix-cache.gustafson.me\npassword %s\n' "${ATTIC_TOKEN}" >"${RUNNER_TEMP}/n"
+          digest=$(basename "${{ steps.build.outputs.store_path }}")
           curl -s --netrc-file "${RUNNER_TEMP}/n" -o /dev/null -w 'narinfo: %{http_code}\n' \
             "https://nix-cache.gustafson.me/main/${digest:0:32}.narinfo"
+
+  read:
+    needs: push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cachix/install-nix-action@v31
+
+      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+        with:
+          token: ${{ secrets.ATTIC_TOKEN }}
+
+      - name: Substitute a path only the fleet cache has
+        run: |
+          nix copy --to "file://${RUNNER_TEMP}/from-cache" \
+            "${{ needs.push.outputs.store_path }}"
+          ls -l "${RUNNER_TEMP}/from-cache"
+          test -n "$(find "${RUNNER_TEMP}/from-cache/nar" -type f -print -quit)"

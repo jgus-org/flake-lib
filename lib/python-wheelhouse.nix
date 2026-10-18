@@ -132,7 +132,7 @@ let
           runtimeInputs = with pkgs; [ cacert coreutils git uv artifactPython ];
           runtimeEnv = {
             WHEELHOUSE_SPEC = builtins.toJSON (generationSpec // { inherit fingerprint; });
-            DEPS_CORE = "${depsCore}";
+            DEPS_CORE = "${pkgs.copyPathToStore depsCore}";
           };
           text = ''exec ${artifactPython}/bin/python ${../scripts/python-wheelhouse.py}'';
         };

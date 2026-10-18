@@ -43,7 +43,7 @@
         # boilerplate that also pins the program to the caller's own locked revision.
         update-workflows = pkgs.writeShellApplication {
           name = "update-workflows";
-          runtimeEnv = { GIT_PUSH_LIB = ./scripts/git-push.sh; };
+          runtimeEnv = { GIT_PUSH_LIB = pkgs.copyPathToStore ./scripts/git-push.sh; };
           text = ''exec ${./scripts/update-workflows.sh} "$@"'';
         };
         # Ordering is observed from the consumer side, so like the refresher this takes nothing

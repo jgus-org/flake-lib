@@ -14,6 +14,7 @@ rather than near it.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import io
 import json
@@ -166,6 +167,10 @@ class Producer:
     runs: list[dict[str, Any]] | int = field(default_factory=list)
     archived: bool = False
     logs: dict[int, str] = field(default_factory=dict)
+    # The version the default branch publishes, and the version each release branch pins. A
+    # producer with no pin has no aggregate for the sweep to judge.
+    pin: str | None = None
+    releases: dict[str, str] = field(default_factory=dict)
     reads: int = 0
 
     def __post_init__(self) -> None:
@@ -290,7 +295,33 @@ class Api:
         if rest[:2] == ["actions", "runs"] and len(rest) == 4 and rest[3] == "logs":
             self._logs(handler, name, int(rest[2]) if rest[2].isdigit() else -1)
             return
+        if rest == ["contents", SWEEP.PIN_FILE]:
+            self._pin(handler, name, query)
+            return
+        if rest == ["branches"]:
+            self._branches(handler, name, query)
+            return
         self._refuse(handler, 404)
+
+    def _pin(self, handler: BaseHTTPRequestHandler, name: str, query: dict[str, list[str]]) -> None:
+        producer = self.producers.get(name)
+        if producer is None:
+            self._refuse(handler, 404)
+            return
+        refs = query.get("ref", [""])
+        version = producer.releases.get(refs[0]) if refs[0] else producer.pin
+        if version is None:
+            self._refuse(handler, 404)
+            return
+        text = f'# Auto-managed by `nix run .#update-version`.\n{{\n  version = "{version}";\n}}\n'
+        self._reply(handler, 200, {"name": SWEEP.PIN_FILE, "content": base64.b64encode(text.encode()).decode()})
+
+    def _branches(self, handler: BaseHTTPRequestHandler, name: str, query: dict[str, list[str]]) -> None:
+        producer = self.producers.get(name)
+        if producer is None:
+            self._refuse(handler, 404)
+            return
+        self._page(handler, [{"name": branch} for branch in producer.releases], query)
 
     def _logs(self, handler: BaseHTTPRequestHandler, name: str, identifier: int) -> None:
         text = self._log_text(name, identifier)
@@ -568,7 +599,7 @@ class SweepTests(unittest.TestCase):
         producers = {"librechat-flake": Producer(runs=runs, logs={4: SUBSTITUTER_LOG, 3: CACHE_LOG})}
         report = self.sweep(producers, ["--report-issue"])
         self.assertEqual(report.verdicts(), {"librechat-flake": "infra"})
-        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing")
+        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing their newest release")
         self.assertIn("| `librechat-flake` | infra | 3 |", report.api.created[0]["body"])
 
     def test_an_infra_failure_does_not_excuse_a_producer_that_was_already_failing(self) -> None:
@@ -638,7 +669,7 @@ class SweepTests(unittest.TestCase):
         self.assertIn("credential or access problem", report.line_for("acl-flake"))
         # A refusal does not clear itself with the weather, so it is a standing condition the
         # first time it is seen rather than after three nights of the same outage.
-        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing")
+        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing their newest release")
 
     def test_a_refusal_does_not_excuse_a_producer_that_was_already_failing(self) -> None:
         runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
@@ -654,6 +685,64 @@ class SweepTests(unittest.TestCase):
 
     def test_a_producer_signature_outranks_a_refusal(self) -> None:
         self.assertEqual(SWEEP.evidence_of(f"{REFUSED_LOG}{PUSH_LOG}")[0], "producer")
+
+    def test_an_aggregate_behind_its_newest_release_branch_is_reported(self) -> None:
+        # librechat-flake on 2026-10-19: its aggregate named 0.8.7 while the repository held a
+        # published v0.8.8 whose own pin was 0.8.8, and the updater's newest run was green. Run
+        # status cannot see this, so the sweep reads what the producer actually publishes.
+        producer = Producer(runs=[success(3)], pin="0.8.7", releases={"v0.8.7": "0.8.7", "v0.8.8": "0.8.8"})
+        report = self.sweep({"librechat-flake": producer}, ["--report-issue"])
+        self.assertEqual(
+            report.verdicts(),
+            {"librechat-flake": "behind", "librechat-flake update-branches.yml": "healthy"},
+        )
+        self.assertIn("its aggregate names 0.8.7 while v0.8.8 pins 0.8.8", report.line_for("librechat-flake"))
+        self.assertEqual(report.order()[0], "librechat-flake")
+        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing their newest release")
+
+    def test_an_aggregate_that_names_its_newest_release_is_healthy(self) -> None:
+        producer = Producer(runs=[success(3)], pin="0.8.8", releases={"v0.8.7": "0.8.7", "v0.8.8": "0.8.8"})
+        report = self.sweep({"librechat-flake": producer})
+        self.assertEqual(report.verdicts(), {"librechat-flake": "healthy"})
+
+    def test_a_moving_branch_is_not_a_release(self) -> None:
+        # `v0.8` names no release of its own: its pin is 0.8.7, so it is a moving branch and the
+        # aggregate naming 0.8.7 is current.
+        producer = Producer(runs=[success(3)], pin="0.8.7", releases={"v0.8": "0.8.7"})
+        self.assertEqual(self.sweep({"librechat-flake": producer}).verdicts(), {"librechat-flake": "healthy"})
+
+    def test_a_prerelease_is_not_the_release_an_aggregate_should_name(self) -> None:
+        # Exact and a prerelease are different questions: v0.8.8-rc3 pins 0.8.8-rc3, and the
+        # aggregate is not behind for not having moved to it.
+        producer = Producer(runs=[success(3)], pin="0.8.7", releases={"v0.8.8-rc3": "0.8.8-rc3"})
+        self.assertEqual(self.sweep({"slssteam-flake": producer}).verdicts(), {"slssteam-flake": "healthy"})
+
+    def test_release_versions_are_ordered_as_versions(self) -> None:
+        for producer_name, published, newest in (
+            ("slssteam-flake", "20261001163836", "20261014151919"),
+            ("librechat-flake", "0.8.9", "0.8.10"),
+        ):
+            with self.subTest(producer=producer_name):
+                producer = Producer(runs=[success(3)], pin=published, releases={f"v{newest}": newest})
+                report = self.sweep({producer_name: producer})
+                self.assertEqual(report.verdicts()[producer_name], "behind")
+
+    def test_a_producer_with_no_pin_is_not_judged_for_an_aggregate(self) -> None:
+        report = self.sweep({"no-pin-flake": Producer(runs=[success(3)])})
+        self.assertEqual(report.verdicts(), {"no-pin-flake": "healthy"})
+        self.assertNotIn("aggregate", "\n".join(report.lines))
+
+    def test_a_branch_whose_pin_cannot_be_read_is_not_claimed_as_a_release(self) -> None:
+        self.assertEqual(SWEEP.behind_the_newest_release("0.8.7", ["v0.8.8"], lambda name: None), "")
+
+    def test_the_release_reads_are_bounded(self) -> None:
+        # A producer with a long history of release branches costs the sweep its probe budget and
+        # not one read per branch it has ever published.
+        releases = {f"v0.9.{index}": "0.8.7" for index in range(1, 9)}
+        producer = Producer(runs=[success(3)], pin="0.8.7", releases=releases)
+        report = self.sweep({"many-releases-flake": producer})
+        pins = [path for path in report.api.requests if path.endswith(f"/{SWEEP.PIN_FILE}")]
+        self.assertEqual(len(pins), 1 + SWEEP.BRANCH_PROBES)
 
     def test_a_producer_with_no_updater_runs_is_reported_without_alerting(self) -> None:
         report = self.sweep({"vscode-sops-flake": Producer(runs=[success(1, workflow="publish.yml")])})
@@ -723,7 +812,7 @@ class SweepTests(unittest.TestCase):
             report.verdicts(),
             {"bun-flake update-version.yml": "red", "bun-flake update-branches.yml": "healthy"},
         )
-        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing")
+        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing their newest release")
         self.assertIn("| `bun-flake update-version.yml` | red | 2 |", report.api.created[0]["body"])
 
     def test_runs_that_never_finish_age_into_stale(self) -> None:
@@ -850,7 +939,7 @@ class SweepTests(unittest.TestCase):
         created, edits, comments = report.api.writes()
         self.assertEqual((edits, comments), ([], []))
         self.assertEqual(len(created), 1)
-        self.assertEqual(created[0]["title"], "1 producer updater not publishing")
+        self.assertEqual(created[0]["title"], "1 producer updater not publishing their newest release")
         body = created[0]["body"]
         self.assertEqual(body.splitlines()[0], SWEEP.marker(["bun-flake"]))
         self.assertIn("| `bun-flake` | red | 2 |", body)
@@ -906,7 +995,7 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(report.status, 0)
         comments = report.api.comments
         self.assertEqual([number for number, _ in comments], [7])
-        self.assertIn("1 producer updater not publishing", comments[0][1])
+        self.assertIn("1 producer updater not publishing their newest release", comments[0][1])
         self.assertIn("newly not publishing: bun-flake", comments[0][1])
         self.assertIn("recovered: tidarr-flake", comments[0][1])
         self.assertEqual([number for number, changes in report.api.edits if "body" in changes], [7])
@@ -925,7 +1014,7 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(report.status, 0)
         number, changes = report.api.edits[0]
         self.assertEqual((number, changes["state"]), (7, "open"))
-        self.assertEqual(changes["title"], "1 producer updater not publishing")
+        self.assertEqual(changes["title"], "1 producer updater not publishing their newest release")
 
     def test_a_refused_write_fails_the_run_and_not_the_report(self) -> None:
         producers = {"bun-flake": Producer(runs=[failure(4, age=3600), failure(3, age=86400)])}

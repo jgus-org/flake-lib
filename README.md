@@ -479,8 +479,10 @@ night; and a run that has not finished has no conclusion, so it counts as neithe
 
 | state | means | opens the issue |
 | --- | --- | --- |
+| `behind` | its aggregate names an older release than the newest release branch it holds, which no green run rules out | yes |
 | `red` | at least `--fail-streak` scheduled runs in a row failed (default 2), and the failure was the producer's or unexplained | yes |
 | `stale` | no updater has finished a scheduled run within `--stale-after` (default 3 days): the schedule is gone, or its runs never finish | yes |
+| `denied` | the failure was an endpoint refusing a read (401 or 403) rather than failing to answer: a credential or an access list, which no retry clears | yes, the first time |
 | `infra` | the failure named an endpoint or a substituter rather than the producer's own work: the cache was unreachable, not the updater | after `--infra-streak` in a row (default 3) |
 | `first-failure` | the most recent schedule failed once, which is not yet a standing condition | no |
 | `pending` | no finished scheduled run yet — a fresh install, or a workflow never put on a schedule | no |
@@ -494,19 +496,31 @@ neither, and it reads no producer's options, flags, or configuration: a producer
 being reported by forgetting to set something, which is how the fleet's build-before-publish check
 failed to cover the branches template.
 
-A run's conclusion is not evidence about its producer either, so a run that would be red is asked
-what it failed on. Up to `--cause-probes` recent failures (default 2) have their logs read for a
-build error or a refused push, and for an endpoint or substituter that would not answer:
-`unable to download`, `no substituter that can build it`, `SSL connect error`, `Failed to connect`,
-a connection timeout. A failure that names an endpoint is `infra`, not `red`, because on
-2026-10-19 an unreachable cache put five healthy producers red at once and a report of five broken
-producers where none is broken is a report that gets muted. Two probes rather than one because the
-newest failure being infrastructure only says the last attempt was unlucky: if the attempt before
-it failed for the producer, the producer is still red and the report says so. Only a log that
-positively names an endpoint spares a producer — text that cannot be read, or that matches nothing,
-stays red, because an unexplained failure is the condition the whole sweep is for. The producer's
-own schedule is the retry: the sweep re-dispatches nothing in another repository, which would need
-fleet-wide `actions: write` and could push a commit.
+A run's conclusion is not evidence about its producer either, so every failure the report would
+print — a streak, or a schedule's first failure — is asked what it failed on. Up to
+`--cause-probes` recent failures (default 2) have their logs read for a build error or a refused
+push, and for an endpoint or substituter that would not answer: `unable to download`, `no
+substituter that can build it`, `SSL connect error`, `Failed to connect`, a connection timeout. A
+failure that names an endpoint is `infra`, not `red`, because on 2026-10-19 an unreachable cache
+put five healthy producers red at once and a report of five broken producers where none is broken
+is a report that gets muted. Two probes rather than one because the newest failure being
+infrastructure only says the last attempt was unlucky: if the attempt before it failed for the
+producer, the producer is still red and the report says so. Only a log that positively names an
+endpoint spares a producer — text that cannot be read, or that matches nothing, stays red, because
+an unexplained failure is the condition the whole sweep is for. The producer's own schedule is the
+retry: the sweep re-dispatches nothing in another repository, which would need fleet-wide
+`actions: write` and could push a commit. An endpoint that answers and refuses is a different
+fault from one that does not answer: a 401 or 403 is `denied`, which no retry clears and which is
+a standing condition the first time it is seen rather than after `--infra-streak` of them.
+
+A run that succeeds is not evidence that the producer published what it has, so the version on the
+default branch is read against the repository's release branches. A branch is a release only when
+the pin on that branch is the version in its name, which is what rules out a moving branch like
+`v0.8` sitting at 0.8.7; a prerelease is exact and still not what an aggregate should have moved
+to, so it is passed over. A producer whose aggregate names an older release than its newest
+release branch is `behind`, and it leads the report even when every job is green, because whoever
+consumes that aggregate has the older release either way. A repository with no `pin.nix` has no
+aggregate and is not judged for one, and a release history that cannot be read claims nothing.
 
 The windows are assumptions about the fleet's cadence rather than facts, and each is a knob:
 `--fail-streak`, `--stale-after` (longer than the fleet's slowest schedule, since a producer on a

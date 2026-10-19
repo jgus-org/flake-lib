@@ -17,14 +17,23 @@ its workflow files: when none of its updaters has finished a scheduled run recen
 producer is `stale`, which covers a schedule that was removed and runs that never finish, and
 leaves a file that flake-lib's own templates replaced out of the report.
 
-A run's conclusion is not evidence about the producer, so a run that would be red is asked what
-it failed on: its log is read for a build error or a refused push, and for an endpoint or
-substituter that would not answer. A failure that names an endpoint is `infra` rather than `red`,
+A run's conclusion is not evidence about the producer, so every failure the report would print is
+asked what it failed on: its log is read for a build error or a refused push, and for an endpoint
+or substituter that would not answer. A failure that names an endpoint is `infra` rather than `red`,
 because a binary cache that is unreachable for ten minutes puts every producer in the fleet red
 at once while not one of them is broken, and a report of five broken producers where none is
 broken is a report that gets muted -- which is how caddy comes back. Only the positive answer
 spares a producer: a log that cannot be read, or that matches nothing, stays red. The producer's
-own schedule is the retry, so nothing in another repository is re-dispatched to ask twice.
+own schedule is the retry, so nothing in another repository is re-dispatched to ask twice. An
+endpoint that answers and refuses (401, 403) is `denied`, which no retry clears and which is
+therefore a standing condition the first night rather than the third.
+
+A run that succeeds is not evidence about what the producer published, either. The version on the
+default branch is read against the repository's release branches, and a producer whose aggregate
+names an older release than the newest branch it holds is `behind` and leads the report, because
+its jobs are green and its consumers still have the older release. A branch is a release only
+when its own pin is the version in its name, so a moving `v0.8` is not one, and a prerelease is
+not one either.
 
 The report is one tracking issue in the repository that runs the sweep. The condition is
 standing rather than momentary, so it has to stay visible until it is fixed: the issue is
@@ -38,6 +47,7 @@ not a green fleet.
 from __future__ import annotations
 
 import argparse
+import base64
 import io
 import json
 import os
@@ -48,7 +58,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from collections import Counter
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -73,6 +83,7 @@ DATE_FORMAT = "%Y-%m-%d"
 RED = "red"
 INFRA = "infra"
 DENIED = "denied"
+BEHIND = "behind"
 STALE = "stale"
 FIRST_FAILURE = "first-failure"
 PENDING = "pending"
@@ -84,8 +95,10 @@ HEALTHY = "healthy"
 # run is recent but off-schedule may simply be a fresh install. A producer with no updater
 # history at all is an onboarding gap rather than a broken updater, and it is a third of the
 # fleet, so alerting on it would mute the real signal. A refused read is attention on its own
-# first night, because unlike an outage it does not clear itself.
-ATTENTION_STATES = (RED, STALE, DENIED)
+# first night, because unlike an outage it does not clear itself. A behind aggregate leads the
+# report because it outranks the run that produced it: an updater that publishes an older
+# release than the newest branch it holds is green, and the consumer is still wrong.
+ATTENTION_STATES = (BEHIND, RED, STALE, DENIED)
 WATCH_STATES = (FIRST_FAILURE, PENDING, UNOBSERVED)
 # The verdicts whose failure is worth asking about. A first failure is asked too: the same
 # endpoint that ends a long streak at fourteen takes its first night's run with it, and a report
@@ -166,6 +179,20 @@ CAUSE_PROBES = 2
 # infrastructure itself is stood up in the issue rather than excused as a passing bad night.
 INFRA_STREAK = 3
 TRACE_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+")
+# Whether a producer published what it has. A run that succeeds says the updater worked, not
+# that the aggregate it wrote names the newest release the repository holds, so the version on
+# the default branch is compared against the release branches: `v0.8.8` whose own pin is 0.8.8
+# is a release, while `v0.8` whose pin is 0.8.7 is a moving branch and `v0.8.8-rc3` is a
+# prerelease, exact as its pin is. The two pages and four pins are the cost ceiling: the newest
+# release branch is what is being looked for, and a producer with a long history of old ones
+# should not cost the sweep a page per year of releases.
+PIN_FILE = "pin.nix"
+PIN_VERSION = re.compile(r'^\s*version\s*=\s*"([^"]+)"', re.MULTILINE)
+RELEASE_BRANCH = re.compile(r"^v(\d[0-9A-Za-z.+-]*)$")
+PRERELEASE = re.compile(r"[-+](?:rc|pre|alpha|beta|dev|nightly|snapshot|preview|next|canary)", re.IGNORECASE)
+VERSION_PARTS = re.compile(r"\d+|\D+")
+BRANCH_PAGES = 2
+BRANCH_PROBES = 4
 
 
 class GitHubError(RuntimeError):
@@ -311,6 +338,31 @@ class GitHub:
     def issues(self, repository: str) -> Iterator[list[Any]]:
         return self.pages(f"/repos/{repository}/issues", {"state": "all"})
 
+    def published_version(self, repo: str, ref: str = "") -> str | None:
+        # The default branch answers when no ref is named, so the sweep never has to assume the
+        # branch is called main. A repository with no pin has no aggregate to be behind.
+        try:
+            item = self.get(f"/repos/{repo}/contents/{PIN_FILE}", {"ref": ref} if ref else None)
+        except GitHubError as error:
+            if error.status == 404:
+                return None
+            raise
+        encoded = item.get("content") if isinstance(item, dict) else None
+        if not isinstance(encoded, str):
+            return None
+        found = PIN_VERSION.search(base64.b64decode(encoded).decode(errors="replace"))
+        return found.group(1) if found else None
+
+    def release_branches(self, repo: str) -> list[str]:
+        # Version-named branches, newest first. The names are all that is read here; whether one
+        # is exact about the version it names is answered by the pin on the branch itself.
+        names: list[str] = []
+        for page, batch in enumerate(self.pages(f"/repos/{repo}/branches"), 1):
+            names += [name for item in batch if isinstance(name := item.get("name"), str) if RELEASE_BRANCH.match(name)]
+            if page >= BRANCH_PAGES:
+                break
+        return sorted(names, key=lambda name: version_key(name[1:]), reverse=True)
+
     def create_issue(self, repository: str, title: str, body: str) -> int:
         created = self._call("POST", f"/repos/{repository}/issues", {"title": title, "body": body})
         number = created.get("number") if isinstance(created, dict) else None
@@ -384,6 +436,39 @@ def parse_run(item: Mapping[str, Any]) -> Run | None:
 
 def date_of(moment: datetime) -> str:
     return moment.strftime(DATE_FORMAT)
+
+
+def version_key(version: str) -> tuple[tuple[int, int, str], ...]:
+    """Order version strings, so 0.8.10 outranks 0.8.9 and a later datestamp outranks an earlier one.
+
+    A string compare gets both shapes wrong in opposite directions: "0.8.10" sorts under "0.8.9",
+    and the fleet's version-less producers use 14-digit timestamps where that happens to work
+    only until the year turns.
+    """
+    return tuple(
+        (0, int(part), "") if part.isdigit() else (1, 0, part.lower()) for part in VERSION_PARTS.findall(version)
+    )
+
+
+def behind_the_newest_release(published: str, branches: Sequence[str], pinned: Callable[[str], str | None]) -> str:
+    """Name the newest release branch whose version the aggregate does not name, or nothing.
+
+    A branch counts only when the version in its name is the version in its own pin, which is
+    what separates a release from a moving branch like `v0.8` sitting at 0.8.7. A prerelease is
+    exact and still not what an aggregate should have moved to, so it is passed over without
+    being read.
+    """
+    probes = 0
+    for name in branches:
+        version = name[1:]
+        if version_key(version) <= version_key(published):
+            return ""
+        if PRERELEASE.search(version) or probes >= BRANCH_PROBES:
+            continue
+        probes += 1
+        if pinned(name) == version:
+            return name
+    return ""
 
 
 def newest(runs: Sequence[Run]) -> Run:
@@ -586,6 +671,30 @@ def explain(client: GitHub, verdict: Verdict, config: Config) -> Verdict:
     return replace(verdict, state=cause, detail=f"{detail}: {evidence}", attention=attention)
 
 
+def behind_aggregate(client: GitHub, repo: str) -> Verdict | None:
+    """Report a producer whose aggregate names an older release than the newest branch it holds.
+
+    A scheduled run that succeeds proves the updater ran, not that it published the newest
+    release the repository has: the fleet's aggregate can sit a release behind a branch the same
+    producer pushed and green-lit, and a consumer of that aggregate is wrong while every job is
+    green. A repository with no pin has no aggregate, so nothing is said about it; a release
+    history that cannot be read is not evidence of a producer being behind either.
+    """
+    try:
+        published = client.published_version(repo)
+        if published is None:
+            return None
+        behind = behind_the_newest_release(
+            published, client.release_branches(repo), lambda name: client.published_version(repo, name)
+        )
+    except GitHubError as error:
+        print(f"warning: {repo}'s releases cannot be read, so its aggregate is not judged ({error})", file=sys.stderr)
+        return None
+    if not behind:
+        return None
+    return Verdict(repo, "", BEHIND, f"its aggregate names {published} while {behind} pins {behind[1:]}")
+
+
 def sweep(client: GitHub, config: Config, now: datetime) -> list[Verdict] | None:
     try:
         producers = discover_producers(client, config)
@@ -603,6 +712,8 @@ def sweep(client: GitHub, config: Config, now: datetime) -> list[Verdict] | None
             verdicts.append(Verdict(repo, "", UNOBSERVED, f"its runs cannot be read ({error})"))
             continue
         verdicts += [explain(client, verdict, config) for verdict in classify_producer(repo, runs, config, now)]
+        if (lagging := behind_aggregate(client, repo)) is not None:
+            verdicts.append(lagging)
     print(f"{len(producers)} {config.suffix} repositories swept in {config.org}")
     return verdicts
 
@@ -649,8 +760,9 @@ def attention_of(verdicts: Sequence[Verdict]) -> tuple[str, ...]:
 
 def issue_title(count: int) -> str:
     # The title names the consequence rather than the state: a silent updater belongs in the
-    # same table as a red one, and the frozen tree is what the maintainer has to act on.
-    return f"{count} producer {'updater' if count == 1 else 'updaters'} not publishing"
+    # same table as a red one and as one that publishes an older release, and the frozen tree is
+    # what the maintainer has to act on.
+    return f"{count} producer {'updater' if count == 1 else 'updaters'} not publishing their newest release"
 
 
 def marker(attention: Sequence[str]) -> str:
@@ -678,9 +790,10 @@ def issue_body(verdicts: Sequence[Verdict], attention: Sequence[str]) -> str:
     parts = [
         marker(attention),
         "",
-        f"{len(attention)} producers' scheduled update has stopped publishing. A producer "
-        "publishes the tree its last green run built, so its `main` keeps passing `nix build` "
-        "while no new version is published.",
+        f"{len(attention)} producers' scheduled update has stopped publishing, or publishes an "
+        "older release than the newest their own repository holds. A producer publishes the tree "
+        "its last green run built, so its `main` keeps passing `nix build` while no new version "
+        "is published.",
         "",
         "| updater | state | failed runs | what the sweep saw | latest run |",
         "| --- | --- | --- | --- | --- |",
@@ -723,7 +836,7 @@ def run_link() -> str:
 def change_comment(before: Sequence[str], after: Sequence[str], link: str) -> str:
     newly = sorted(set(after) - set(before))
     recovered = sorted(set(before) - set(after))
-    words = [f"{len(after)} producer {'updater' if len(after) == 1 else 'updaters'} not publishing"]
+    words = [f"{len(after)} producer {'updater' if len(after) == 1 else 'updaters'} not publishing their newest release"]
     if before and len(before) != len(after):
         words.append(f"was {len(before)}")
     if newly:

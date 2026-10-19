@@ -2,8 +2,21 @@
 let
   inherit (pkgs) lib;
   manifest = builtins.fromJSON (builtins.readFile ./fixtures/mini-wheels.json);
-  selection = noEmit: (mkWheelhouse { inherit pkgs noEmit; wheels = ./fixtures/mini-wheels.json; }).files;
-  kept = predicate: map (wheel: pkgs.fetchurl { inherit (wheel) url sha256; name = wheel.filename; }) (lib.filter predicate manifest);
+  selection =
+    noEmit:
+    (mkWheelhouse {
+      inherit pkgs noEmit;
+      wheels = ./fixtures/mini-wheels.json;
+    }).files;
+  kept =
+    predicate:
+    map (
+      wheel:
+      pkgs.fetchurl {
+        inherit (wheel) url sha256;
+        name = wheel.filename;
+      }
+    ) (lib.filter predicate manifest);
   notNamed = names: wheel: !lib.elem wheel.name names;
 in
 {
@@ -12,11 +25,19 @@ in
     expected = kept (notNamed [ "attrs" ]);
   };
   testOmitsEveryName = {
-    expr = selection [ "attrs" "iniconfig" "msgpack" ];
+    expr = selection [
+      "attrs"
+      "iniconfig"
+      "msgpack"
+    ];
     expected = [ ];
   };
   testCanonicalizesSpelling = {
-    expr = map (spelling: selection [ spelling ]) [ "Attrs" "attrs" "ATTRS" ];
+    expr = map (spelling: selection [ spelling ]) [
+      "Attrs"
+      "attrs"
+      "ATTRS"
+    ];
     expected = [
       (kept (notNamed [ "attrs" ]))
       (kept (notNamed [ "attrs" ]))

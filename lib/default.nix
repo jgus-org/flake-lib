@@ -10,25 +10,60 @@ let
   mkOciImage = import ./mk-oci-image.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
-  mkLeafFlake = import ./mk-leaf-flake.nix { inherit mkPypiPackage mkUpdateVersion mkUpdateBranches; };
+  mkLeafFlake = import ./mk-leaf-flake.nix {
+    inherit mkPypiPackage mkUpdateVersion mkUpdateBranches;
+  };
   pythonWheelhouse = import ./python-wheelhouse.nix { inherit pythonEnvironments; };
   depsCore = ../scripts/deps_core.py;
 
-  warnIfNewerMajor = { pkgs, name, lib ? pkgs.lib }:
+  warnIfNewerMajor =
+    {
+      pkgs,
+      name,
+      lib ? pkgs.lib,
+    }:
     let
       parts = builtins.match "([^0-9]*)([0-9]+)(.*)" name;
       prefix = builtins.elemAt parts 0;
       current = lib.toInt (builtins.elemAt parts 1);
       suffix = builtins.elemAt parts 2;
-      majorOf = n: let m = builtins.match "${prefix}([0-9]+)${suffix}" n; in if m == null then null else lib.toInt (builtins.head m);
-      newest = builtins.foldl' (a: b: if b > a then b else a) current
-        (builtins.filter (x: x != null) (map majorOf (builtins.attrNames pkgs)));
+      majorOf =
+        n:
+        let
+          m = builtins.match "${prefix}([0-9]+)${suffix}" n;
+        in
+        if m == null then null else lib.toInt (builtins.head m);
+      newest = builtins.foldl' (a: b: if b > a then b else a) current (
+        builtins.filter (x: x != null) (map majorOf (builtins.attrNames pkgs))
+      );
     in
     lib.warnIf (newest > current)
       "warnIfNewerMajor: ${name} is pinned, but nixpkgs has ${prefix}${toString newest}${suffix}. Consider migrating."
       pkgs.${name};
 in
 {
-  inherit mkPypiPackage mkUpdateVersion mkUpdateBranches mkRevalidateHash mkJsDepsHook mkComposedHook mkHuggingFaceModelManager mkOciImage mkLeafFlake versionMatchesComparison evalMarkerTree depsCore warnIfNewerMajor;
-  inherit (pythonWheelhouse) pythonEnvironments platformTags mkPythonWheelhouse wheelhouseArtifactPaths mkWheelhouse installWheelhouse mkWheelhouseSiteTree;
+  inherit
+    mkPypiPackage
+    mkUpdateVersion
+    mkUpdateBranches
+    mkRevalidateHash
+    mkJsDepsHook
+    mkComposedHook
+    mkHuggingFaceModelManager
+    mkOciImage
+    mkLeafFlake
+    versionMatchesComparison
+    evalMarkerTree
+    depsCore
+    warnIfNewerMajor
+    ;
+  inherit (pythonWheelhouse)
+    pythonEnvironments
+    platformTags
+    mkPythonWheelhouse
+    wheelhouseArtifactPaths
+    mkWheelhouse
+    installWheelhouse
+    mkWheelhouseSiteTree
+    ;
 }

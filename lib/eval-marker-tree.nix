@@ -9,12 +9,20 @@ in
 bindings:
 let
   evaluateComparison =
-    { variable, operator, literal }:
+    {
+      variable,
+      operator,
+      literal,
+    }:
     let
-      observed = bindings.${variable} or (throw "evalMarkerTree: no binding for marker variable ${variable}");
+      observed =
+        bindings.${variable} or (throw "evalMarkerTree: no binding for marker variable ${variable}");
     in
     if builtins.elem variable versionVariables then
-      versionMatchesComparison observed { inherit operator; version = literal; }
+      versionMatchesComparison observed {
+        inherit operator;
+        version = literal;
+      }
     else if operator == "==" || operator == "===" then
       observed == literal
     else if operator == "!=" then

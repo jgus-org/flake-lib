@@ -4,33 +4,71 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      treefmt-nix,
+    }:
     let
       pythonEnvironments = {
-        pythonVersions = [ "3.13" "3.14" ];
+        pythonVersions = [
+          "3.13"
+          "3.14"
+        ];
         systems = flake-utils.lib.defaultSystems;
         targets = {
-          x86_64-linux = { uvPlatform = "x86_64-manylinux_2_28"; };
-          aarch64-linux = { uvPlatform = "aarch64-manylinux_2_28"; };
-          x86_64-darwin = { uvPlatform = "x86_64-apple-darwin"; };
-          aarch64-darwin = { uvPlatform = "aarch64-apple-darwin"; };
+          x86_64-linux = {
+            uvPlatform = "x86_64-manylinux_2_28";
+          };
+          aarch64-linux = {
+            uvPlatform = "aarch64-manylinux_2_28";
+          };
+          x86_64-darwin = {
+            uvPlatform = "x86_64-apple-darwin";
+          };
+          aarch64-darwin = {
+            uvPlatform = "aarch64-apple-darwin";
+          };
         };
       };
     in
     {
       lib = import ./lib { inherit pythonEnvironments; };
     }
-    //
-    flake-utils.lib.eachDefaultSystem (system:
+    // flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs { inherit system; };
         inherit (self) lib;
+        treefmtEval = treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.nix";
+          programs.nixfmt.enable = true;
+          programs.shfmt.enable = true;
+        };
         # Building the generators fetches nothing — writeShellApplication only shellchecks the exec wrappers.
-        exampleSource = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };
-        update-version = lib.mkUpdateVersion { inherit pkgs; source = exampleSource; buildAttr = "iso639-lang"; };
-        update-branches = lib.mkUpdateBranches { inherit pkgs; source = exampleSource; pinSchema = "pypi"; };
+        exampleSource = {
+          type = "pypi";
+          pname = "iso639_lang";
+          format = "sdist";
+        };
+        update-version = lib.mkUpdateVersion {
+          inherit pkgs;
+          source = exampleSource;
+          buildAttr = "iso639-lang";
+        };
+        update-branches = lib.mkUpdateBranches {
+          inherit pkgs;
+          source = exampleSource;
+          pinSchema = "pypi";
+        };
         update-branches-knobs = lib.mkUpdateBranches {
           inherit pkgs;
           source = exampleSource;
@@ -43,7 +81,9 @@
         # boilerplate that also pins the program to the caller's own locked revision.
         update-workflows = pkgs.writeShellApplication {
           name = "update-workflows";
-          runtimeEnv = { GIT_PUSH_LIB = pkgs.copyPathToStore ./scripts/git-push.sh; };
+          runtimeEnv = {
+            GIT_PUSH_LIB = pkgs.copyPathToStore ./scripts/git-push.sh;
+          };
           text = ''exec ${./scripts/update-workflows.sh} "$@"'';
         };
         # Ordering is observed from the consumer side, so like the refresher this takes nothing
@@ -68,33 +108,60 @@
         };
         update-version-github = lib.mkUpdateVersion {
           inherit pkgs;
-          source = { type = "github"; owner = "example"; repo = "example"; };
+          source = {
+            type = "github";
+            owner = "example";
+            repo = "example";
+          };
           buildAttr = "example";
           hashMode = "build-failure";
           extraHashes = [ "npmDepsHash" ];
         };
         update-version-github-pnpm = lib.mkUpdateVersion {
           inherit pkgs;
-          source = { type = "github"; owner = "example"; repo = "example"; };
+          source = {
+            type = "github";
+            owner = "example";
+            repo = "example";
+          };
           buildAttr = "example";
           buildFailureHash = "pnpmDepsHash";
         };
         update-version-github-pnpm-go = lib.mkUpdateVersion {
           inherit pkgs;
-          source = { type = "github"; owner = "example"; repo = "example"; };
+          source = {
+            type = "github";
+            owner = "example";
+            repo = "example";
+          };
           buildAttr = "example";
-          buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ];
+          buildFailureHashes = [
+            "pnpmDepsHash"
+            "vendorHash"
+          ];
         };
         update-branches-github-pnpm = lib.mkUpdateBranches {
           inherit pkgs;
-          source = { type = "github"; owner = "example"; repo = "example"; };
+          source = {
+            type = "github";
+            owner = "example";
+            repo = "example";
+          };
           pinSchema = "github-pnpm";
         };
-        revalidate-hash = lib.mkRevalidateHash { inherit pkgs; buildAttr = "example"; };
+        revalidate-hash = lib.mkRevalidateHash {
+          inherit pkgs;
+          buildAttr = "example";
+        };
         # track="commit": default-branch HEAD becomes version 0-unstable-DATE.
         update-version-github-commit = lib.mkUpdateVersion {
           inherit pkgs;
-          source = { type = "github"; owner = "example"; repo = "example"; track = "commit"; };
+          source = {
+            type = "github";
+            owner = "example";
+            repo = "example";
+            track = "commit";
+          };
           buildAttr = "example";
         };
         update-version-huggingface = lib.mkUpdateVersion {
@@ -120,7 +187,13 @@
         };
         update-version-oci = lib.mkUpdateVersion {
           inherit pkgs;
-          source = { type = "oci"; imageName = "registry.example/image"; tag = "latest-sm86"; os = "linux"; arch = "amd64"; };
+          source = {
+            type = "oci";
+            imageName = "registry.example/image";
+            tag = "latest-sm86";
+            os = "linux";
+            arch = "amd64";
+          };
           buildAttr = "image";
         };
         # source.versions opts an OCI producer into the version tree; the image tag is its version, so the spec pins no tag.
@@ -129,7 +202,11 @@
           imageName = "registry.example/image";
           os = "linux";
           arch = "amd64";
-          versions = { type = "github"; owner = "example"; repo = "example"; };
+          versions = {
+            type = "github";
+            owner = "example";
+            repo = "example";
+          };
         };
         update-version-oci-github = lib.mkUpdateVersion {
           inherit pkgs;
@@ -142,10 +219,19 @@
           pinSchema = "oci";
         };
         oci-image-tests = import ./tests/oci-image.nix { inherit pkgs lib; };
-        npm-shipped-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; fetcherVersion = 2; };
+        npm-shipped-hook = lib.mkJsDepsHook {
+          inherit pkgs;
+          manager = "npm";
+          fetcherVersion = 2;
+        };
         wheelhouse-example = lib.mkPythonWheelhouse {
           inherit pkgs;
-          sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+          sources = [
+            {
+              kind = "repo-file";
+              path = "requirements.in";
+            }
+          ];
         };
         huggingface-model-manager = lib.mkHuggingFaceModelManager {
           inherit pkgs;
@@ -164,69 +250,107 @@
           model = { };
         };
         wheelhouse-example-hook = wheelhouse-example.hook;
-        npm-generated-hook = lib.mkJsDepsHook { inherit pkgs; manager = "npm"; source = "generated"; };
-        yarn-hook = lib.mkJsDepsHook { inherit pkgs; manager = "yarn"; };
-        composed-hook = lib.mkComposedHook { inherit pkgs; hooks = [ npm-generated-hook yarn-hook ]; };
+        npm-generated-hook = lib.mkJsDepsHook {
+          inherit pkgs;
+          manager = "npm";
+          source = "generated";
+        };
+        yarn-hook = lib.mkJsDepsHook {
+          inherit pkgs;
+          manager = "yarn";
+        };
+        composed-hook = lib.mkComposedHook {
+          inherit pkgs;
+          hooks = [
+            npm-generated-hook
+            yarn-hook
+          ];
+        };
         hookCheck = name: exe: pkgs.runCommand name { } "test -x ${exe} && touch $out";
-        cascade-tests = pkgs.runCommand "cascade-tests"
-          {
-            nativeBuildInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
-            CASCADE_PY = ./scripts/cascade.py;
-            DEPS_CORE = ./scripts/deps_core.py;
-          } ''
-          python3 ${./tests/test_cascade.py}
-          touch $out
-        '';
-        deps-core-tests = pkgs.runCommand "deps-core-tests"
-          {
-            nativeBuildInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
-            DEPS_CORE = ./scripts/deps_core.py;
-          } ''
-          python3 ${./tests/test_deps_core.py}
-          touch $out
-        '';
+        cascade-tests =
+          pkgs.runCommand "cascade-tests"
+            {
+              nativeBuildInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
+              CASCADE_PY = ./scripts/cascade.py;
+              DEPS_CORE = ./scripts/deps_core.py;
+            }
+            ''
+              python3 ${./tests/test_cascade.py}
+              touch $out
+            '';
+        deps-core-tests =
+          pkgs.runCommand "deps-core-tests"
+            {
+              nativeBuildInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
+              DEPS_CORE = ./scripts/deps_core.py;
+            }
+            ''
+              python3 ${./tests/test_deps_core.py}
+              touch $out
+            '';
         version-matches-comparison-tests =
           let
-            failures = pkgs.lib.runTests (import ./tests/version-matches-comparison.nix { inherit (lib) versionMatchesComparison; });
+            failures = pkgs.lib.runTests (
+              import ./tests/version-matches-comparison.nix { inherit (lib) versionMatchesComparison; }
+            );
           in
-          pkgs.lib.throwIf (failures != [ ]) "versionMatchesComparison tests failed"
-            (pkgs.runCommand "version-matches-comparison-tests" { } "touch $out");
+          pkgs.lib.throwIf (failures != [ ]) "versionMatchesComparison tests failed" (
+            pkgs.runCommand "version-matches-comparison-tests" { } "touch $out"
+          );
         eval-marker-tree-tests =
           let
-            failures = pkgs.lib.runTests (import ./tests/eval-marker-tree.nix { inherit (lib) evalMarkerTree; });
+            failures = pkgs.lib.runTests (
+              import ./tests/eval-marker-tree.nix { inherit (lib) evalMarkerTree; }
+            );
           in
-          pkgs.lib.throwIf (failures != [ ]) "evalMarkerTree tests failed"
-            (pkgs.runCommand "eval-marker-tree-tests" { } "touch $out");
+          pkgs.lib.throwIf (failures != [ ]) "evalMarkerTree tests failed" (
+            pkgs.runCommand "eval-marker-tree-tests" { } "touch $out"
+          );
         wheelhouse-tags-tests =
           let
             failures = pkgs.lib.runTests (import ./tests/wheelhouse-tags.nix { inherit (lib) platformTags; });
           in
-          pkgs.lib.throwIf (failures != [ ]) "platformTags tests failed"
-            (pkgs.runCommand "wheelhouse-tags-tests" { } "touch $out");
+          pkgs.lib.throwIf (failures != [ ]) "platformTags tests failed" (
+            pkgs.runCommand "wheelhouse-tags-tests" { } "touch $out"
+          );
         wheelhouse-environment-tests =
           let
             x86 = lib.mkPythonWheelhouse {
               inherit pkgs;
               pythonVersions = [ "3.13" ];
               systems = [ "x86_64-linux" ];
-              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              sources = [
+                {
+                  kind = "repo-file";
+                  path = "requirements.in";
+                }
+              ];
             };
             arm = lib.mkPythonWheelhouse {
               inherit pkgs;
               pythonVersions = [ "3.13" ];
               systems = [ "aarch64-linux" ];
-              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              sources = [
+                {
+                  kind = "repo-file";
+                  path = "requirements.in";
+                }
+              ];
             };
-            unsupportedSystem = builtins.tryEval (lib.wheelhouseArtifactPaths {
-              root = ./.;
-              pythonVersion = "3.13";
-              system = "armv7-linux";
-            });
-            unsupportedPython = builtins.tryEval (lib.wheelhouseArtifactPaths {
-              root = ./.;
-              pythonVersion = "3.12";
-              system = "x86_64-linux";
-            });
+            unsupportedSystem = builtins.tryEval (
+              lib.wheelhouseArtifactPaths {
+                root = ./.;
+                pythonVersion = "3.13";
+                system = "armv7-linux";
+              }
+            );
+            unsupportedPython = builtins.tryEval (
+              lib.wheelhouseArtifactPaths {
+                root = ./.;
+                pythonVersion = "3.12";
+                system = "x86_64-linux";
+              }
+            );
             customPython = lib.wheelhouseArtifactPaths {
               root = ./.;
               pythonVersion = "3.12";
@@ -244,22 +368,45 @@
             changedMenu = lib.mkPythonWheelhouse {
               inherit pkgs;
               pythonVersions = [ "3.13" ];
-              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              sources = [
+                {
+                  kind = "repo-file";
+                  path = "requirements.in";
+                }
+              ];
             };
             changedSource = lib.mkPythonWheelhouse {
               inherit pkgs;
-              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              sources = [
+                {
+                  kind = "repo-file";
+                  path = "requirements.in";
+                }
+              ];
               extraRequirements = [ "example" ];
             };
             changedIndex = lib.mkPythonWheelhouse {
               inherit pkgs;
-              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              sources = [
+                {
+                  kind = "repo-file";
+                  path = "requirements.in";
+                }
+              ];
               index = "https://index.example.test/simple";
             };
             reordered = lib.mkPythonWheelhouse {
               inherit pkgs;
-              pythonVersions = [ "3.14" "3.13" ];
-              sources = [{ kind = "repo-file"; path = "requirements.in"; }];
+              pythonVersions = [
+                "3.14"
+                "3.13"
+              ];
+              sources = [
+                {
+                  kind = "repo-file";
+                  path = "requirements.in";
+                }
+              ];
             };
           in
           assert wheelhouse-example.fingerprint != changedMenu.fingerprint;
@@ -279,96 +426,137 @@
           assert builtins.baseNameOf artifacts.requirementsLock == "requirements-3.13-aarch64-linux.lock";
           assert builtins.baseNameOf artifacts.wheelManifest == "wheels-3.13-aarch64-linux.json";
           pkgs.runCommand "wheelhouse-consumer-selection-tests" { } "touch $out";
-        python-wheelhouse-tests = pkgs.runCommand "python-wheelhouse-tests"
-          {
-            nativeBuildInputs = [ pkgs.bash (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
-            TEST_BASH = pkgs.bash;
-            WHEELHOUSE_PY = ./scripts/python-wheelhouse.py;
-            DEPS_CORE = ./scripts/deps_core.py;
-          } ''
-          python3 ${./tests/test_python_wheelhouse.py}
-          touch $out
-        '';
+        python-wheelhouse-tests =
+          pkgs.runCommand "python-wheelhouse-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ]))
+              ];
+              TEST_BASH = pkgs.bash;
+              WHEELHOUSE_PY = ./scripts/python-wheelhouse.py;
+              DEPS_CORE = ./scripts/deps_core.py;
+            }
+            ''
+              python3 ${./tests/test_python_wheelhouse.py}
+              touch $out
+            '';
         python-wheelhouse-integration =
           let
-            wheelhouse = (lib.mkWheelhouse { inherit pkgs; wheels = ./tests/fixtures/mini-wheels.json; }).wheelhouse;
+            wheelhouse =
+              (lib.mkWheelhouse {
+                inherit pkgs;
+                wheels = ./tests/fixtures/mini-wheels.json;
+              }).wheelhouse;
             python = pkgs.python313;
           in
           pkgs.runCommand "python-wheelhouse-integration"
             {
-              nativeBuildInputs = [ pkgs.uv pkgs.autoPatchelfHook ];
-              buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.zlib ];
-            } ''
-            export HOME=$TMPDIR
-            mkdir "$out"
-            ${lib.installWheelhouse { inherit python; target = "$out"; inherit wheelhouse; }}
-            PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig, msgpack'
-          '';
+              nativeBuildInputs = [
+                pkgs.uv
+                pkgs.autoPatchelfHook
+              ];
+              buildInputs = [
+                pkgs.stdenv.cc.cc.lib
+                pkgs.zlib
+              ];
+            }
+            ''
+              export HOME=$TMPDIR
+              mkdir "$out"
+              ${lib.installWheelhouse {
+                inherit python;
+                target = "$out";
+                inherit wheelhouse;
+              }}
+              PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig, msgpack'
+            '';
         wheelhouse-no-emit-tests =
           let
-            failures = pkgs.lib.runTests (import ./tests/wheelhouse-no-emit.nix { inherit pkgs; inherit (lib) mkWheelhouse; });
+            failures = pkgs.lib.runTests (
+              import ./tests/wheelhouse-no-emit.nix {
+                inherit pkgs;
+                inherit (lib) mkWheelhouse;
+              }
+            );
           in
-          pkgs.lib.throwIf (failures != [ ]) "mkWheelhouse noEmit tests failed"
-            (pkgs.runCommand "wheelhouse-no-emit-tests" { } "touch $out");
+          pkgs.lib.throwIf (failures != [ ]) "mkWheelhouse noEmit tests failed" (
+            pkgs.runCommand "wheelhouse-no-emit-tests" { } "touch $out"
+          );
         # The manifest names a wheel the consumer provides itself; the installed tree must not carry it, and
         # must not need the interpreter-side fixups the vendored copy would have dragged in.
         python-wheelhouse-no-emit-integration =
           let
-            wheelhouse = (lib.mkWheelhouse {
-              inherit pkgs;
-              wheels = ./tests/fixtures/mini-wheels.json;
-              noEmit = [ "msgpack" ];
-            }).wheelhouse;
+            wheelhouse =
+              (lib.mkWheelhouse {
+                inherit pkgs;
+                wheels = ./tests/fixtures/mini-wheels.json;
+                noEmit = [ "msgpack" ];
+              }).wheelhouse;
             python = pkgs.python313;
           in
-          pkgs.runCommand "python-wheelhouse-no-emit-integration"
-            { nativeBuildInputs = [ pkgs.uv ]; }
-            ''
-              export HOME=$TMPDIR
-              mkdir "$out"
-              ${lib.installWheelhouse { inherit python; target = "$out"; inherit wheelhouse; }}
-              test ! -e "$out/msgpack"
-              ! PYTHONPATH="$out" ${python}/bin/python -c 'import msgpack'
-              PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig'
-            '';
-        python-wheelhouse-site-tree-integration =
-          lib.mkWheelhouseSiteTree {
-            inherit pkgs;
-            python = pkgs.python313;
-            wheelhouse = (lib.mkWheelhouse {
+          pkgs.runCommand "python-wheelhouse-no-emit-integration" { nativeBuildInputs = [ pkgs.uv ]; } ''
+            export HOME=$TMPDIR
+            mkdir "$out"
+            ${lib.installWheelhouse {
+              inherit python;
+              target = "$out";
+              inherit wheelhouse;
+            }}
+            test ! -e "$out/msgpack"
+            ! PYTHONPATH="$out" ${python}/bin/python -c 'import msgpack'
+            PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig'
+          '';
+        python-wheelhouse-site-tree-integration = lib.mkWheelhouseSiteTree {
+          inherit pkgs;
+          python = pkgs.python313;
+          wheelhouse =
+            (lib.mkWheelhouse {
               inherit pkgs;
               wheels = ./tests/fixtures/native-wheels.json;
             }).wheelhouse;
-            pname = "python-wheelhouse-site-tree";
-            version = "1";
-            dontUnpack = true;
-            checkImports = [ "numpy" ];
-          };
+          pname = "python-wheelhouse-site-tree";
+          version = "1";
+          dontUnpack = true;
+          checkImports = [ "numpy" ];
+        };
         # The import check above only measures a real rewrite if the same wheel cannot import untouched.
         python-wheelhouse-site-tree-unpatched-import =
           let
             python = pkgs.python313;
-            wheel = pkgs.lib.head (lib.mkWheelhouse {
-              inherit pkgs;
-              wheels = ./tests/fixtures/native-wheels.json;
-            }).files;
+            wheel =
+              pkgs.lib.head
+                (lib.mkWheelhouse {
+                  inherit pkgs;
+                  wheels = ./tests/fixtures/native-wheels.json;
+                }).files;
           in
           pkgs.runCommand "python-wheelhouse-site-tree-unpatched-import"
-            { nativeBuildInputs = [ pkgs.unzip python ]; }
+            {
+              nativeBuildInputs = [
+                pkgs.unzip
+                python
+              ];
+            }
             ''
               mkdir -p "$out/${python.sitePackages}"
               unzip -q ${wheel} -d "$out/${python.sitePackages}"
               test ! -e "$out/${python.sitePackages}/numpy.libs/libstdc++.so.6"
               ! env -i PYTHONPATH="$out/${python.sitePackages}" ${python}/bin/python -c 'import numpy'
             '';
-        huggingface-model-manager-tests = pkgs.runCommand "huggingface-model-manager-tests"
-          {
-            nativeBuildInputs = [ pkgs.python3 huggingface-model-manager ];
-            MODEL_MANAGER = "${huggingface-model-manager}/bin/huggingface-model-manager";
-          } ''
-          python3 ${./tests/test_huggingface_model_manager.py}
-          touch "$out"
-        '';
+        huggingface-model-manager-tests =
+          pkgs.runCommand "huggingface-model-manager-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.python3
+                huggingface-model-manager
+              ];
+              MODEL_MANAGER = "${huggingface-model-manager}/bin/huggingface-model-manager";
+            }
+            ''
+              python3 ${./tests/test_huggingface_model_manager.py}
+              touch "$out"
+            '';
         update-branches-test-gh = pkgs.writeShellApplication {
           name = "gh";
           text = ''
@@ -424,7 +612,11 @@
         };
         update-branches-test-nix = pkgs.writeShellApplication {
           name = "nix";
-          runtimeInputs = [ pkgs.git pkgs.gnugrep pkgs.jq ];
+          runtimeInputs = [
+            pkgs.git
+            pkgs.gnugrep
+            pkgs.jq
+          ];
           text = ''
             if [[ "''${1}" == "flake" && "''${2:-}" == "metadata" ]]; then
               printf '{ "path": "%s" }\n' "''${TEST_NIX_TEMPLATE_SOURCE:?fixture: no template source}"
@@ -550,7 +742,10 @@
         };
         update-version-test-nix = pkgs.writeShellApplication {
           name = "nix";
-          runtimeInputs = [ pkgs.git pkgs.gnused ];
+          runtimeInputs = [
+            pkgs.git
+            pkgs.gnused
+          ];
           text = ''
             case "''${1}" in
               eval)
@@ -630,102 +825,168 @@
             [[ "''${TEST_OCI_FAIL:-}" != store ]]
           '';
         };
-        update-version-tests = pkgs.runCommand "update-version-tests"
-          {
-            nativeBuildInputs = [
-              pkgs.bash
-              pkgs.coreutils
-              pkgs.git
-              pkgs.gnugrep
-              pkgs.jq
-              update-version-test-gh
-              update-version-test-curl
-              update-version-test-nix
-              update-version-test-prefetch
-              update-version-test-store
-            ];
-            TEST_BASH = pkgs.bash;
-            UPDATE_VERSION = ./scripts/update-version.sh;
-            NIX_PATH = "nixpkgs=${pkgs.path}";
-          } ''
-            grep -Fqx "NIX_PATH='nixpkgs=${pkgs.path}'" ${update-version}/bin/update-version
-            bash ${./tests/test_update_version.sh}
-            OCI_SKOPEO_SOURCE=${./tests/oci-skopeo.sh} bash ${./tests/test_oci.sh}
-            touch "''${out}"
-          '';
-        update-branches-tests = pkgs.runCommand "update-branches-tests"
-          {
-            nativeBuildInputs = [
-              pkgs.bash
-              pkgs.coreutils
-              pkgs.git
-              pkgs.gnused
-              pkgs.jq
-              (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ]))
-              update-branches-test-gh
-              update-branches-test-curl
-              update-branches-test-nix
-            ];
-            CASCADE_PY = ./scripts/cascade.py;
-            DEPS_CORE = ./scripts/deps_core.py;
-            GIT_PUSH_LIB = ./scripts/git-push.sh;
-            UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
-          } ''
-          # The tracking knobs are baked into the package from flake.nix, not the workflow
-          # env: the default package carries the defaults, one that sets the knobs carries
-          # its values. This is what lets the workflow ship no env block for them.
-          grep -Fx "MINIMUM_TRACKING_VERSION=0.0.0" ${update-branches}/bin/update-branches > /dev/null
-          grep -Fx "TRACK_STABLE_ONLY=false" ${update-branches}/bin/update-branches > /dev/null
-          grep -Fx "MINIMUM_TRACKING_VERSION=1.2.3" ${update-branches-knobs}/bin/update-branches > /dev/null
-          grep -Fx "TRACK_STABLE_ONLY=true" ${update-branches-knobs}/bin/update-branches > /dev/null
-          bash ${./tests/test_update_branches.sh}
-          touch $out
-        '';
-        update-workflows-tests = pkgs.runCommand "update-workflows-tests"
-          {
-            nativeBuildInputs = [
-              pkgs.bash
-              pkgs.coreutils
-              pkgs.git
-              pkgs.gnused
-              pkgs.jq
-              update-branches-test-nix
-            ];
-            GIT_PUSH_LIB = ./scripts/git-push.sh;
-            UPDATE_WORKFLOWS = ./scripts/update-workflows.sh;
-          } ''
-          bash ${./tests/test_update_workflows.sh}
-          touch $out
-        '';
-        wait-for-deps-tests = pkgs.runCommand "wait-for-deps-tests"
-          {
-            nativeBuildInputs = [ pkgs.python3 ];
-            WAIT_FOR_DEPS = ./scripts/wait_for_deps.py;
-          } ''
-          python3 ${./tests/test_wait_for_deps.py}
-          touch $out
-        '';
-        workflow-templates = pkgs.runCommand "workflow-templates-check"
-          { nativeBuildInputs = [ pkgs.yq-go ]; } ''
-          for f in ${./templates/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
-            yq eval 'true' "$f" > /dev/null
-          done
-          touch $out
-        '';
+        update-version-tests =
+          pkgs.runCommand "update-version-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.git
+                pkgs.gnugrep
+                pkgs.jq
+                update-version-test-gh
+                update-version-test-curl
+                update-version-test-nix
+                update-version-test-prefetch
+                update-version-test-store
+              ];
+              TEST_BASH = pkgs.bash;
+              UPDATE_VERSION = ./scripts/update-version.sh;
+              NIX_PATH = "nixpkgs=${pkgs.path}";
+            }
+            ''
+              grep -Fqx "NIX_PATH='nixpkgs=${pkgs.path}'" ${update-version}/bin/update-version
+              bash ${./tests/test_update_version.sh}
+              OCI_SKOPEO_SOURCE=${./tests/oci-skopeo.sh} bash ${./tests/test_oci.sh}
+              touch "''${out}"
+            '';
+        update-branches-tests =
+          pkgs.runCommand "update-branches-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.git
+                pkgs.gnused
+                pkgs.jq
+                (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ]))
+                update-branches-test-gh
+                update-branches-test-curl
+                update-branches-test-nix
+              ];
+              CASCADE_PY = ./scripts/cascade.py;
+              DEPS_CORE = ./scripts/deps_core.py;
+              GIT_PUSH_LIB = ./scripts/git-push.sh;
+              UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
+            }
+            ''
+              # The tracking knobs are baked into the package from flake.nix, not the workflow
+              # env: the default package carries the defaults, one that sets the knobs carries
+              # its values. This is what lets the workflow ship no env block for them.
+              grep -Fx "MINIMUM_TRACKING_VERSION=0.0.0" ${update-branches}/bin/update-branches > /dev/null
+              grep -Fx "TRACK_STABLE_ONLY=false" ${update-branches}/bin/update-branches > /dev/null
+              grep -Fx "MINIMUM_TRACKING_VERSION=1.2.3" ${update-branches-knobs}/bin/update-branches > /dev/null
+              grep -Fx "TRACK_STABLE_ONLY=true" ${update-branches-knobs}/bin/update-branches > /dev/null
+              bash ${./tests/test_update_branches.sh}
+              touch $out
+            '';
+        update-workflows-tests =
+          pkgs.runCommand "update-workflows-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.git
+                pkgs.gnused
+                pkgs.jq
+                update-branches-test-nix
+              ];
+              GIT_PUSH_LIB = ./scripts/git-push.sh;
+              UPDATE_WORKFLOWS = ./scripts/update-workflows.sh;
+            }
+            ''
+              bash ${./tests/test_update_workflows.sh}
+              touch $out
+            '';
+        wait-for-deps-tests =
+          pkgs.runCommand "wait-for-deps-tests"
+            {
+              nativeBuildInputs = [ pkgs.python3 ];
+              WAIT_FOR_DEPS = ./scripts/wait_for_deps.py;
+            }
+            ''
+              python3 ${./tests/test_wait_for_deps.py}
+              touch $out
+            '';
+        workflow-templates =
+          pkgs.runCommand "workflow-templates-check" { nativeBuildInputs = [ pkgs.yq-go ]; }
+            ''
+              for f in ${./templates/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
+                yq eval 'true' "$f" > /dev/null
+              done
+              touch $out
+            '';
       in
       {
-        packages = { inherit update-version update-branches update-workflows wait-for-deps update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-pnpm-go update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
+        packages = {
+          inherit
+            update-version
+            update-branches
+            update-workflows
+            wait-for-deps
+            update-version-pypi-cargo
+            update-branches-pypi-cargo
+            update-version-github
+            update-version-github-pnpm
+            update-version-github-pnpm-go
+            update-version-github-commit
+            update-version-huggingface
+            update-version-mutable-url
+            update-version-oci
+            update-version-oci-github
+            update-branches-oci-github
+            update-branches-github-pnpm
+            revalidate-hash
+            ;
+        };
+        formatter = treefmtEval.config.build.wrapper;
         checks = {
-          inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-pnpm-go update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
+          formatting = treefmtEval.config.build.check self;
+          inherit
+            update-version
+            update-branches
+            update-workflows
+            update-version-pypi-cargo
+            update-branches-pypi-cargo
+            update-version-github
+            update-version-github-pnpm
+            update-version-github-pnpm-go
+            update-version-github-commit
+            update-version-huggingface
+            update-version-mutable-url
+            update-version-oci
+            update-version-oci-github
+            update-branches-oci-github
+            update-branches-github-pnpm
+            revalidate-hash
+            ;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
           composed-hook = hookCheck "composed-hook" composed-hook;
           wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
-          inherit cascade-tests deps-core-tests update-branches-tests version-matches-comparison-tests eval-marker-tree-tests wheelhouse-tags-tests wheelhouse-environment-tests wheelhouse-fingerprint-tests wheelhouse-consumer-selection-tests python-wheelhouse-tests python-wheelhouse-integration wheelhouse-no-emit-tests python-wheelhouse-no-emit-integration python-wheelhouse-site-tree-integration python-wheelhouse-site-tree-unpatched-import huggingface-model-manager-tests;
+          inherit
+            cascade-tests
+            deps-core-tests
+            update-branches-tests
+            version-matches-comparison-tests
+            eval-marker-tree-tests
+            wheelhouse-tags-tests
+            wheelhouse-environment-tests
+            wheelhouse-fingerprint-tests
+            wheelhouse-consumer-selection-tests
+            python-wheelhouse-tests
+            python-wheelhouse-integration
+            wheelhouse-no-emit-tests
+            python-wheelhouse-no-emit-integration
+            python-wheelhouse-site-tree-integration
+            python-wheelhouse-site-tree-unpatched-import
+            huggingface-model-manager-tests
+            ;
           inherit update-version-tests;
           inherit update-workflows-tests wait-for-deps-tests workflow-templates;
           inherit oci-image-tests;
         };
-      });
+      }
+    );
 }

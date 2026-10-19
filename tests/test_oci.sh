@@ -8,33 +8,33 @@ export SIBLINGS='[]' VERIFICATION=evaluate
 export OCI_SETTINGS='{"imageName":"registry.example/image","tag":"stable","os":"linux","arch":"amd64","variant":""}'
 export TEST_OCI_COPY_LOG="${TEST_ROOT}/copy.log" TEST_OCI_EVALUATION_LOG="${TEST_ROOT}/eval.log" TEST_OCI_INSPECT_LOG="${TEST_ROOT}/inspect.log"
 export OCI_SKOPEO="${TEST_ROOT}/skopeo"
-sed "1c#!${TEST_BASH}/bin/bash" "${OCI_SKOPEO_SOURCE}" > "${OCI_SKOPEO}"
+sed "1c#!${TEST_BASH}/bin/bash" "${OCI_SKOPEO_SOURCE}" >"${OCI_SKOPEO}"
 chmod +x "${OCI_SKOPEO}"
 
 write_empty_pin() {
-  printf '%s\n' '{ imageDigest = ""; imageHash = ""; }' > "${TEST_ROOT}/pin.nix"
+  printf '%s\n' '{ imageDigest = ""; imageHash = ""; }' >"${TEST_ROOT}/pin.nix"
 }
 
 write_empty_pin
-printf '%s\n' '{"dependency":"old"}' > "${TEST_ROOT}/flake.lock"
+printf '%s\n' '{"dependency":"old"}' >"${TEST_ROOT}/flake.lock"
 bash "${UPDATE_VERSION}"
 grep -Fq "imageDigest = \"sha256:$(printf 'a%.0s' {1..64})\";" "${TEST_ROOT}/pin.nix"
 grep -Eq 'imageHash = "sha256-[A-Za-z0-9+/]{43}=";' "${TEST_ROOT}/pin.nix"
 ! grep -Fq 'version = ' "${TEST_ROOT}/pin.nix"
 grep -Fqx "docker://registry.example/image:stable" "${TEST_OCI_INSPECT_LOG}"
 cp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"
-printf '%s\n' '{"dependency":"new"}' > "${TEST_ROOT}/flake.lock"
+printf '%s\n' '{"dependency":"new"}' >"${TEST_ROOT}/flake.lock"
 cp "${TEST_ROOT}/flake.lock" "${TEST_ROOT}/expected-lock"
 bash "${UPDATE_VERSION}"
 cmp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"
 cmp "${TEST_ROOT}/flake.lock" "${TEST_ROOT}/expected-lock"
-[[ "$(wc -l < "${TEST_OCI_COPY_LOG}")" -eq 1 ]]
-[[ "$(wc -l < "${TEST_OCI_EVALUATION_LOG}")" -eq 2 ]]
+[[ "$(wc -l <"${TEST_OCI_COPY_LOG}")" -eq 1 ]]
+[[ "$(wc -l <"${TEST_OCI_EVALUATION_LOG}")" -eq 2 ]]
 sed -i '$i\  archiveFingerprint = "legacy";' "${TEST_ROOT}/pin.nix"
 bash "${UPDATE_VERSION}"
 cmp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"
 cmp "${TEST_ROOT}/flake.lock" "${TEST_ROOT}/expected-lock"
-[[ "$(wc -l < "${TEST_OCI_COPY_LOG}")" -eq 2 ]]
+[[ "$(wc -l <"${TEST_OCI_COPY_LOG}")" -eq 2 ]]
 
 OCI_SETTINGS='{"imageName":"registry.example/image","tag":"stable","os":"linux","arch":"arm64","variant":"v8"}' bash "${UPDATE_VERSION}"
 grep -Fq "imageDigest = \"sha256:$(printf 'b%.0s' {1..64})\";" "${TEST_ROOT}/pin.nix"
@@ -60,17 +60,17 @@ fi
 
 SENTINEL_HASH="sha256-$(printf 'c%.0s' {1..43})="
 write_seeded_pin() {
-  printf '%s\n' '{' "  imageDigest = \"${1}\";" "  imageHash = \"${SENTINEL_HASH}\";" '}' > "${TEST_ROOT}/pin.nix"
+  printf '%s\n' '{' "  imageDigest = \"${1}\";" "  imageHash = \"${SENTINEL_HASH}\";" '}' >"${TEST_ROOT}/pin.nix"
 }
 
 # A version branch seeded from a base that already carries its image claims its own version and keeps the pinned content.
 write_seeded_pin "sha256:$(printf 'a%.0s' {1..64})"
-COPIES="$(wc -l < "${TEST_OCI_COPY_LOG}")"
+COPIES="$(wc -l <"${TEST_OCI_COPY_LOG}")"
 VERSION_SOURCE_TYPE=github GH_OWNER=example GH_REPO=example bash "${UPDATE_VERSION}" 2026.10.0
 grep -Fq '  version = "2026.10.0";' "${TEST_ROOT}/pin.nix"
 grep -Fq "  imageHash = \"${SENTINEL_HASH}\";" "${TEST_ROOT}/pin.nix"
 grep -Fq "  imageDigest = \"sha256:$(printf 'a%.0s' {1..64})\";" "${TEST_ROOT}/pin.nix"
-[[ "$(wc -l < "${TEST_OCI_COPY_LOG}")" -eq "${COPIES}" ]]
+[[ "$(wc -l <"${TEST_OCI_COPY_LOG}")" -eq ${COPIES} ]]
 [[ "$(tail -1 "${TEST_OCI_INSPECT_LOG}")" == 'docker://registry.example/image:2026.10.0' ]]
 
 # Resolving a version whose image is not the pinned content copies it and writes the version beside it.
@@ -78,7 +78,7 @@ write_seeded_pin "sha256:$(printf 'b%.0s' {1..64})"
 VERSION_SOURCE_TYPE=github GH_OWNER=example GH_REPO=example bash "${UPDATE_VERSION}" 2026.9.4
 grep -Fq '  version = "2026.9.4";' "${TEST_ROOT}/pin.nix"
 grep -Fq "  imageDigest = \"sha256:$(printf 'a%.0s' {1..64})\";" "${TEST_ROOT}/pin.nix"
-[[ "$(wc -l < "${TEST_OCI_COPY_LOG}")" -eq $((COPIES + 1)) ]]
+[[ "$(wc -l <"${TEST_OCI_COPY_LOG}")" -eq $((COPIES + 1)) ]]
 
 # A discovered release tag names the GitHub release, not the image, so the registry ref is its version.
 write_empty_pin

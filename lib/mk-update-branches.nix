@@ -8,27 +8,42 @@
 #   minVersionComponents : fewest dot-separated numeric components a tag may have and still be tracked (default 3, i.e. X.Y.Z only). Lower it for upstreams with short version tags (e.g. bare datestamps like 20260711162202).
 #   minimumTrackingVersion : lowest upstream version to track, baked into the package (default "0.0.0"). This is the flake's source of truth; the workflow ships no env for it, so a wholesale workflow-file refresh cannot reset it.
 #   trackStableOnly    : true excludes prereleases from branches, maintenance, and publication (default false).
-{ pkgs, source, pinSchema
-, branchOwnedFiles ? [
+{
+  pkgs,
+  source,
+  pinSchema,
+  branchOwnedFiles ? [
     "pin.nix"
     "flake.lock"
     "requirements.in"
     "requirements-*.lock"
     "wheels-*.json"
     "python-readiness.json"
-  ]
-, extraBranchOwnedFiles ? [ ]
-, extraHashes ? [ ], versionOverrides ? { }, versionCanon ? [ ], minVersionComponents ? 3
-, minimumTrackingVersion ? "0.0.0", trackStableOnly ? false }:
-assert builtins.elem minVersionComponents [ 1 2 3 ];
+  ],
+  extraBranchOwnedFiles ? [ ],
+  extraHashes ? [ ],
+  versionOverrides ? { },
+  versionCanon ? [ ],
+  minVersionComponents ? 3,
+  minimumTrackingVersion ? "0.0.0",
+  trackStableOnly ? false,
+}:
+assert builtins.elem minVersionComponents [
+  1
+  2
+  3
+];
 assert builtins.isString minimumTrackingVersion;
-assert ! (source ? versions) || (source.type == "oci" && source.versions.type == "github");
+assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
   ownedFiles = pkgs.lib.unique (branchOwnedFiles ++ extraBranchOwnedFiles);
   versionSource = source.versions or source;
   versionSourceTrack = versionSource.track or "release";
 in
-assert builtins.elem versionSourceTrack [ "release" "tag" ];
+assert builtins.elem versionSourceTrack [
+  "release"
+  "tag"
+];
 assert versionSource.type != "github-release-asset" || versionSourceTrack == "release";
 # Where a source's version names live is a github-only choice: a gitlab project's are
 # its git tags, which is also where its updater resolves a release from.
@@ -36,7 +51,10 @@ assert versionSourceTrack != "tag" || versionSource.type == "github";
 pkgs.writeShellApplication {
   name = "update-branches";
   # VERSION_OVERRIDES is a JSON string (quotes/braces) consumed via jq at runtime; the generated export trips SC2089/SC2090 (false positive).
-  excludeShellChecks = [ "SC2089" "SC2090" ];
+  excludeShellChecks = [
+    "SC2089"
+    "SC2090"
+  ];
   runtimeInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
   runtimeEnv = {
     SOURCE_TYPE = source.type;
@@ -48,7 +66,16 @@ pkgs.writeShellApplication {
     GH_REPO = versionSource.repo or "";
     GITLAB_OWNER = versionSource.owner or "";
     GITLAB_REPO = versionSource.repo or "";
-    GH_TAG_PREFIXES = builtins.toJSON (if versionSource ? tagPrefix then [ versionSource.tagPrefix ] else [ "v" "V" "" ]);
+    GH_TAG_PREFIXES = builtins.toJSON (
+      if versionSource ? tagPrefix then
+        [ versionSource.tagPrefix ]
+      else
+        [
+          "v"
+          "V"
+          ""
+        ]
+    );
     PIN_SCHEMA = pinSchema;
     BRANCH_OWNED_FILES = pkgs.lib.concatStringsSep " " ownedFiles;
     EXTRA_HASHES = builtins.toJSON extraHashes;

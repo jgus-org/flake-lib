@@ -1,7 +1,10 @@
 { platformTags }:
 {
   testManylinux = {
-    expr = platformTags { pythonVersion = "3.13"; platform = "x86_64-manylinux_2_28"; };
+    expr = platformTags {
+      pythonVersion = "3.13";
+      platform = "x86_64-manylinux_2_28";
+    };
     expected = {
       python = "3.13";
       uvPythonVersion = "3.13";
@@ -55,7 +58,10 @@
     };
   };
   testDarwinAarch64 = {
-    expr = platformTags { pythonVersion = "3.14"; platform = "aarch64-apple-darwin"; };
+    expr = platformTags {
+      pythonVersion = "3.14";
+      platform = "aarch64-apple-darwin";
+    };
     expected = {
       python = "3.14";
       uvPythonVersion = "3.14";
@@ -63,7 +69,9 @@
       pipPythonVersion = "314";
       pipPlatforms = [ "macosx_14_0_arm64" ];
       pipAbi = "cp314";
-      uvEnvironment = { MACOSX_DEPLOYMENT_TARGET = "14.0"; };
+      uvEnvironment = {
+        MACOSX_DEPLOYMENT_TARGET = "14.0";
+      };
       markerEnvironment = {
         implementation_name = "cpython";
         implementation_version = "3.14.0";
@@ -80,19 +88,41 @@
     };
   };
   testDarwinX8664 = {
-    expr = (platformTags { pythonVersion = "3.13"; platform = "x86_64-apple-darwin"; }).pipPlatforms;
+    expr =
+      (platformTags {
+        pythonVersion = "3.13";
+        platform = "x86_64-apple-darwin";
+      }).pipPlatforms;
     expected = [ "macosx_14_0_x86_64" ];
   };
   testBadPythonVersion = {
-    expr = builtins.tryEval (platformTags { pythonVersion = "three"; platform = "x86_64-linux"; });
-    expected = { success = false; value = false; };
+    expr = builtins.tryEval (platformTags {
+      pythonVersion = "three";
+      platform = "x86_64-linux";
+    });
+    expected = {
+      success = false;
+      value = false;
+    };
   };
   testBadPlatform = {
-    expr = builtins.tryEval (platformTags { pythonVersion = "3.13"; platform = "x86_64 manylinux"; });
-    expected = { success = false; value = false; };
+    expr = builtins.tryEval (platformTags {
+      pythonVersion = "3.13";
+      platform = "x86_64 manylinux";
+    });
+    expected = {
+      success = false;
+      value = false;
+    };
   };
   testBadVendor = {
-    expr = builtins.tryEval (platformTags { pythonVersion = "3.13"; platform = "x86_64-windows"; });
-    expected = { success = false; value = false; };
+    expr = builtins.tryEval (platformTags {
+      pythonVersion = "3.13";
+      platform = "x86_64-windows";
+    });
+    expected = {
+      success = false;
+      value = false;
+    };
   };
 }

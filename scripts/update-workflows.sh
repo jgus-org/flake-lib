@@ -56,21 +56,21 @@ USAGE
 MODE=refresh
 ADOPT_TARGET=''
 case ${1:-} in
-  '') ;;
-  adopt)
-    MODE=adopt
-    ADOPT_TARGET=${2:-}
-    [[ -n "${ADOPT_TARGET}" ]] || usage
-    [[ "${ADOPT_TARGET}" != */* ]] ||
-      die "adopt takes a workflow name, not a path: ${ADOPT_TARGET}"
-    case ${ADOPT_TARGET} in
-      *.yml | *.yaml) ;;
-      *) die "adopt takes a workflow name ending in .yml or .yaml, not ${ADOPT_TARGET}" ;;
-    esac
-    shift 2
-    ;;
-  -h | --help) usage ;;
-  *) die "unrecognized argument: ${1}" ;;
+'') ;;
+adopt)
+  MODE=adopt
+  ADOPT_TARGET=${2:-}
+  [[ -n ${ADOPT_TARGET} ]] || usage
+  [[ ${ADOPT_TARGET} != */* ]] ||
+    die "adopt takes a workflow name, not a path: ${ADOPT_TARGET}"
+  case ${ADOPT_TARGET} in
+  *.yml | *.yaml) ;;
+  *) die "adopt takes a workflow name ending in .yml or .yaml, not ${ADOPT_TARGET}" ;;
+  esac
+  shift 2
+  ;;
+-h | --help) usage ;;
+*) die "unrecognized argument: ${1}" ;;
 esac
 [[ ${#} -eq 0 ]] || usage
 
@@ -78,17 +78,17 @@ esac
 source "${GIT_PUSH_LIB:?required env var}"
 
 node=$(jq -r '.nodes.root.inputs["flake-lib"] // ""' flake.lock)
-[[ -n "${node}" ]] || die "flake.lock has no flake-lib input, so there is no template to install"
+[[ -n ${node} ]] || die "flake.lock has no flake-lib input, so there is no template to install"
 locked_url=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
   | select(.type == "github") | "\(.owner)/\(.repo)/\(.rev)"' flake.lock)
-[[ -n "${locked_url}" ]] || die "flake.lock's flake-lib is not a github input, so its templates have no public revision to install from"
+[[ -n ${locked_url} ]] || die "flake.lock's flake-lib is not a github input, so its templates have no public revision to install from"
 
 if ! nix flake update flake-lib; then
   die "advancing the flake-lib input failed"
 fi
 current_url=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
   | select(.type == "github") | "\(.owner)/\(.repo)/\(.rev)"' flake.lock)
-[[ -n "${current_url}" ]] || die "advancing flake-lib left a lock whose flake-lib input is no longer a github input"
+[[ -n ${current_url} ]] || die "advancing flake-lib left a lock whose flake-lib input is no longer a github input"
 
 flake_lib_src=$(nix flake metadata --no-write-lock-file --json "github:${current_url}" | jq -r .path)
 if [[ ! -d "${flake_lib_src}/${TEMPLATE_DIR}" ]]; then
@@ -104,9 +104,9 @@ install_from_template() {
 }
 
 declare -a installed=()
-if [[ "${MODE}" == adopt ]]; then
+if [[ ${MODE} == adopt ]]; then
   template="${flake_lib_src}/${TEMPLATE_DIR}/${ADOPT_TARGET}"
-  if [[ ! -s "${template}" ]]; then
+  if [[ ! -s ${template} ]]; then
     available=$(cd "${flake_lib_src}/${TEMPLATE_DIR}" && printf '%s ' *.yml *.yaml 2>/dev/null || true)
     die "flake-lib ${current_url##*/} ships no ${TEMPLATE_DIR}/${ADOPT_TARGET}; it ships ${available}"
   fi
@@ -119,24 +119,24 @@ if [[ "${MODE}" == adopt ]]; then
   # reported rather than removed: retiring that file is the author's decision.
   others=()
   for other in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
-    [[ -f "${other}" && "${other}" != "${destination}" ]] || continue
+    [[ -f ${other} && ${other} != "${destination}" ]] || continue
     if grep -qE '^[[:space:]]*schedule:' "${other}"; then
       others+=("${other}")
     fi
   done
-  if (( ${#others[@]} > 0 )); then
+  if ((${#others[@]} > 0)); then
     printf 'note: %s also carries a schedule, and a workflow flake-lib has no template for is never refreshed: %s\n' \
       "${MODE}" "${others[*]}"
   fi
 else
   for destination in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
-    [[ -e "${destination}" ]] || continue
+    [[ -e ${destination} ]] || continue
     template="${flake_lib_src}/${TEMPLATE_DIR}/${destination##*/}"
-    [[ -f "${template}" ]] || continue
+    [[ -f ${template} ]] || continue
     install_from_template "${template}" "${destination}"
     installed+=("${destination}")
   done
-  if (( ${#installed[@]} == 0 )); then
+  if ((${#installed[@]} == 0)); then
     echo "no workflow here was installed from flake-lib's ${TEMPLATE_DIR}; only the input advances."
   fi
 fi
@@ -156,7 +156,7 @@ mapfile -t committed < <(git diff --cached --name-only)
 # A template can be byte-identical to what is already installed, in which case the commit
 # is the input advance alone and its subject should not claim otherwise.
 if printf '%s\n' "${committed[@]}" | grep -qvxF flake.lock; then
-  if [[ "${MODE}" == adopt ]]; then
+  if [[ ${MODE} == adopt ]]; then
     subject="Adopt flake-lib's ${ADOPT_TARGET} at ${current_url##*/}"
   else
     subject="Update workflows from flake-lib ${current_url##*/}"
@@ -169,6 +169,6 @@ sha=$(git rev-parse HEAD)
 
 push_ref HEAD "${branch}" "${base}" lease
 echo "Committed ${#committed[@]} file(s) from flake-lib ${current_url}: ${committed[*]}"
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+if [[ -n ${GITHUB_OUTPUT:-} ]]; then
   printf 'sha=%s\n' "${sha}" >>"${GITHUB_OUTPUT}"
 fi

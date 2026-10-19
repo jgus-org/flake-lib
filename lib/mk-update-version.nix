@@ -6,30 +6,42 @@
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
 #   siblings     : sibling-cascade specs
 #   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
-{ pkgs
-, source
-, buildAttr
-, siblings ? [ ]
-, siblingRefsInPin ? false
-, hashMode ? "prefetch"
-, extraHashes ? [ ]
-, buildFailureHash ? if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null
-, buildFailureHashes ? [ ]
-, artifactHook ? null
-, verification ? if buildFailureHash == null && buildFailureHashes == [ ] then "evaluate" else "build"
-, markerEnvironment ? { }
-, artifactFingerprint ? ""
+{
+  pkgs,
+  source,
+  buildAttr,
+  siblings ? [ ],
+  siblingRefsInPin ? false,
+  hashMode ? "prefetch",
+  extraHashes ? [ ],
+  buildFailureHash ?
+    if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
+  buildFailureHashes ? [ ],
+  artifactHook ? null,
+  verification ?
+    if buildFailureHash == null && buildFailureHashes == [ ] then "evaluate" else "build",
+  markerEnvironment ? { },
+  artifactFingerprint ? "",
 }:
-assert builtins.elem verification [ "evaluate" "build" ];
+assert builtins.elem verification [
+  "evaluate"
+  "build"
+];
 assert artifactFingerprint == "" || artifactHook != null;
-assert ! (source ? versions) || (source.type == "oci" && source.versions.type == "github");
+assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
   oci = if source.type == "oci" then import ./oci-image.nix { inherit pkgs source; } else null;
   versionSource = source.versions or source;
   hfManifest = source.manifest or null;
   hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
-  buildFailureFields = pkgs.lib.unique (pkgs.lib.optional (buildFailureHash != null) buildFailureHash ++ buildFailureHashes);
-  effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (artifactFingerprint != "") "artifactFingerprint" ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
+  buildFailureFields = pkgs.lib.unique (
+    pkgs.lib.optional (buildFailureHash != null) buildFailureHash ++ buildFailureHashes
+  );
+  effectiveExtraHashes = pkgs.lib.unique (
+    extraHashes
+    ++ pkgs.lib.optional (artifactFingerprint != "") "artifactFingerprint"
+    ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField
+  );
   defaultMarkerEnvironment = {
     implementation_name = "cpython";
     implementation_version = pkgs.python3.version;
@@ -49,12 +61,27 @@ in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
 assert hfManifestHashField == null || hfManifestHashField != "";
-assert oci == null || (siblings == [ ] && artifactHook == null && extraHashes == [ ] && buildFailureFields == [ ] && hashMode == "prefetch");
+assert
+  oci == null
+  || (
+    siblings == [ ]
+    && artifactHook == null
+    && extraHashes == [ ]
+    && buildFailureFields == [ ]
+    && hashMode == "prefetch"
+  );
 pkgs.writeShellApplication {
   name = "update-version";
   # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
-  excludeShellChecks = [ "SC2016" "SC2089" "SC2090" ];
-  runtimeInputs = [ pkgs.git ] ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
+  excludeShellChecks = [
+    "SC2016"
+    "SC2089"
+    "SC2090"
+  ];
+  runtimeInputs = [
+    pkgs.git
+  ]
+  ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
   runtimeEnv = {
     SOURCE_TYPE = source.type;
     OCI_SETTINGS = if oci == null then "" else builtins.toJSON oci.settings;
@@ -65,7 +92,16 @@ pkgs.writeShellApplication {
     PYPI_FORMAT = source.format or "sdist";
     GH_OWNER = versionSource.owner or "";
     GH_REPO = versionSource.repo or "";
-    GH_TAG_PREFIXES = builtins.toJSON (if versionSource ? tagPrefix then [ versionSource.tagPrefix ] else [ "v" "V" "" ]);
+    GH_TAG_PREFIXES = builtins.toJSON (
+      if versionSource ? tagPrefix then
+        [ versionSource.tagPrefix ]
+      else
+        [
+          "v"
+          "V"
+          ""
+        ]
+    );
     GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)
     GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
     GH_FETCH_SUBMODULES = if (source.fetchSubmodules or false) then "1" else ""; # hash the tree with submodules (src must set fetchSubmodules = true)
@@ -78,13 +114,21 @@ pkgs.writeShellApplication {
     HF_REVISION = source.revision or "main";
     HF_FILES = builtins.toJSON (source.files or [ ]);
     HF_MANIFEST_PATH = if hfManifest == null then "" else hfManifest.path;
-    HF_MANIFEST_INCLUDE = builtins.toJSON (if hfManifest == null then [ ] else hfManifest.include or [ ]);
-    HF_MANIFEST_EXCLUDE = builtins.toJSON (if hfManifest == null then [ ] else hfManifest.exclude or [ ]);
+    HF_MANIFEST_INCLUDE = builtins.toJSON (
+      if hfManifest == null then [ ] else hfManifest.include or [ ]
+    );
+    HF_MANIFEST_EXCLUDE = builtins.toJSON (
+      if hfManifest == null then [ ] else hfManifest.exclude or [ ]
+    );
     HF_MANIFEST_HASH_FIELD = if hfManifestHashField == null then "" else hfManifestHashField;
     BUILD_ATTR = buildAttr;
     HASH_MODE = hashMode;
     EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
-    PIN_HASHES = builtins.toJSON (pkgs.lib.unique (effectiveExtraHashes ++ pkgs.lib.filter (name: name != "sourceHash") buildFailureFields));
+    PIN_HASHES = builtins.toJSON (
+      pkgs.lib.unique (
+        effectiveExtraHashes ++ pkgs.lib.filter (name: name != "sourceHash") buildFailureFields
+      )
+    );
     BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
     VERIFICATION = verification;

@@ -11,17 +11,17 @@ write_empty_pin() {
     '  version = "";' \
     '  sourceRev = "";' \
     '  sourceHash = "";' \
-    '}' > "${TEST_ROOT}/pin.nix"
+    '}' >"${TEST_ROOT}/pin.nix"
 }
 
 run_update() {
   local TRACK="${1}" TAG_PREFIXES="${2}" RELEASE_TAG="${3}" TAGS="${4}"
   local REQUESTED="${5:-}" REQUESTED_REF="${6:-}"
   local -a ARGS=()
-  if [[ -n "${REQUESTED}" ]]; then
+  if [[ -n ${REQUESTED} ]]; then
     ARGS+=("${REQUESTED}")
   fi
-  if [[ -n "${REQUESTED_REF}" ]]; then
+  if [[ -n ${REQUESTED_REF} ]]; then
     ARGS+=("${REQUESTED_REF}")
   fi
   FLAKE_ROOT="${TEST_ROOT}" \
@@ -56,14 +56,14 @@ printf '%s\n' \
   'if [[ -n "${TEST_STALE_ARTIFACT:-}" ]]; then rm -f "${FLAKE_ROOT}/${TEST_STALE_ARTIFACT}"; fi' \
   'printf "%s\n" "artifactFingerprint=${TEST_ARTIFACT_FINGERPRINT}"' \
   'printf "%s\n" "requirementsHash=requirements-hash"' \
-  'printf "%s\n" "wheelManifestHash=manifest-hash"' > "${ARTIFACT_HOOK}"
+  'printf "%s\n" "wheelManifestHash=manifest-hash"' >"${ARTIFACT_HOOK}"
 chmod +x "${ARTIFACT_HOOK}"
 
 printf '%s\n' \
   '{' \
   '  lastModified = "";' \
   '  hash = "";' \
-  '}' > "${TEST_ROOT}/pin.nix"
+  '}' >"${TEST_ROOT}/pin.nix"
 PREFETCH_LOG="${TEST_ROOT}/mutable-prefetch.log"
 MUTABLE_OUTPUT=$(TEST_PREFETCH_LOG="${PREFETCH_LOG}" \
   FLAKE_ROOT="${TEST_ROOT}" \
@@ -85,7 +85,7 @@ MUTABLE_NOOP_OUTPUT=$(TEST_PREFETCH_LOG="${PREFETCH_LOG}" \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}")
 grep -Fq 'Already up to date (main).' <<<"${MUTABLE_NOOP_OUTPUT}"
-[[ "$(wc -l < "${PREFETCH_LOG}")" -eq 1 ]]
+[[ "$(wc -l <"${PREFETCH_LOG}")" -eq 1 ]]
 
 write_empty_pin
 run_update release '["rust-v"]' rust-v1.2.3 ''
@@ -107,7 +107,7 @@ write_empty_pin
 run_update release '["rust-v"]' '' '' 1.2.3 1.2.3
 assert_pin
 
-cat > "${TEST_ROOT}/pin.nix" <<'EOF'
+cat >"${TEST_ROOT}/pin.nix" <<'EOF'
 {
   version = "1.2.3";
   sourceRev = "source-revision";
@@ -137,35 +137,35 @@ NOOP_OUTPUT=$(FLAKE_ROOT="${TEST_ROOT}" \
 grep -Fq 'Already up to date (1.2.3).' <<<"${NOOP_OUTPUT}"
 
 sed -i 's/artifactFingerprint = "exact-fingerprint";/pythonEnvironment = "3.13";/' "${TEST_ROOT}/pin.nix"
-: > "${ARTIFACT_LOG}"
+: >"${ARTIFACT_LOG}"
 TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
-TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
-FLAKE_ROOT="${TEST_ROOT}" \
-SOURCE_TYPE=github \
-GH_OWNER=openai \
-GH_REPO=codex \
-GITLAB_OWNER='' \
-GITLAB_REPO='' \
-GH_TAG_PREFIXES='["v","V",""]' \
-GH_TRACK=release \
-TEST_RELEASE_TAG=v1.2.3 \
-TEST_TAGS='' \
-BUILD_ATTR=codex \
-HASH_MODE=prefetch \
-EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
-PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
-ARTIFACT_FINGERPRINT=exact-fingerprint \
-ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
-VERIFICATION=evaluate \
-SIBLINGS='[]' \
-bash "${UPDATE_VERSION}" 1.2.3
+  TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
+  FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GITLAB_OWNER='' \
+  GITLAB_REPO='' \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  TEST_TAGS='' \
+  BUILD_ATTR=codex \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  ARTIFACT_FINGERPRINT=exact-fingerprint \
+  ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}" 1.2.3
 grep -Fqx github "${ARTIFACT_LOG}"
 grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
 
 run_artifact_git_case() {
   local CASE_ROOT="${1}" ORCHESTRATED_FILES="${2}" EXPECT_TRACKED_FILE="${3}"
   mkdir -p "${CASE_ROOT}"
-  cat > "${CASE_ROOT}/pin.nix" <<'EOF'
+  cat >"${CASE_ROOT}/pin.nix" <<'EOF'
 {
   version = "1.2.3";
   sourceRev = "source-revision";
@@ -175,37 +175,37 @@ run_artifact_git_case() {
   wheelManifestHash = "manifest-hash";
 }
 EOF
-  printf '%s\n' legacy > "${CASE_ROOT}/wheels-3.14.json"
+  printf '%s\n' legacy >"${CASE_ROOT}/wheels-3.14.json"
   git -C "${CASE_ROOT}" init -q
   git -C "${CASE_ROOT}" add pin.nix wheels-3.14.json
   git -C "${CASE_ROOT}" -c user.name=test -c user.email=test@example.com commit -qm initial
   (
     cd "${CASE_ROOT}"
     TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
-    TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
-    TEST_ARTIFACT_FILE=wheels-3.14-x86_64-linux.json \
-    TEST_STALE_ARTIFACT=wheels-3.14.json \
-    TEST_EXPECT_TRACKED_FILE="${EXPECT_TRACKED_FILE}" \
-    FLAKE_ROOT="${CASE_ROOT}" \
-    ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_FILES}" \
-    SOURCE_TYPE=github \
-    GH_OWNER=openai \
-    GH_REPO=codex \
-    GITLAB_OWNER='' \
-    GITLAB_REPO='' \
-    GH_TAG_PREFIXES='["v","V",""]' \
-    GH_TRACK=release \
-    TEST_RELEASE_TAG=v1.2.3 \
-    TEST_TAGS='' \
-    BUILD_ATTR=codex \
-    HASH_MODE=prefetch \
-    EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
-    PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
-    ARTIFACT_FINGERPRINT=exact-fingerprint \
-    ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
-    VERIFICATION=evaluate \
-    SIBLINGS='[]' \
-    bash "${UPDATE_VERSION}" 1.2.3
+      TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
+      TEST_ARTIFACT_FILE=wheels-3.14-x86_64-linux.json \
+      TEST_STALE_ARTIFACT=wheels-3.14.json \
+      TEST_EXPECT_TRACKED_FILE="${EXPECT_TRACKED_FILE}" \
+      FLAKE_ROOT="${CASE_ROOT}" \
+      ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_FILES}" \
+      SOURCE_TYPE=github \
+      GH_OWNER=openai \
+      GH_REPO=codex \
+      GITLAB_OWNER='' \
+      GITLAB_REPO='' \
+      GH_TAG_PREFIXES='["v","V",""]' \
+      GH_TRACK=release \
+      TEST_RELEASE_TAG=v1.2.3 \
+      TEST_TAGS='' \
+      BUILD_ATTR=codex \
+      HASH_MODE=prefetch \
+      EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+      PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+      ARTIFACT_FINGERPRINT=exact-fingerprint \
+      ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
+      VERIFICATION=evaluate \
+      SIBLINGS='[]' \
+      bash "${UPDATE_VERSION}" 1.2.3
   )
 }
 
@@ -219,31 +219,31 @@ git -C "${ORCHESTRATED_ROOT}" ls-files --error-unmatch -- wheels-3.14-x86_64-lin
 ! git -C "${ORCHESTRATED_ROOT}" ls-files --error-unmatch -- wheels-3.14.json >/dev/null 2>&1
 
 sed -i -e 's/sourceRev = "source-revision";/hash = "sha256-pypi";/' -e 's/sourceHash = "sha256-source";//' -e 's/artifactFingerprint = "exact-fingerprint";/pythonEnvironment = "3.13";/' "${TEST_ROOT}/pin.nix"
-: > "${ARTIFACT_LOG}"
+: >"${ARTIFACT_LOG}"
 TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
-TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
-TEST_PYPI_METADATA='{"info":{"version":"1.2.3"},"urls":[{"packagetype":"sdist","url":"https://files.example.test/example-1.2.3.tar.gz"}]}' \
-FLAKE_ROOT="${TEST_ROOT}" \
-SOURCE_TYPE=pypi \
-PYPI_NAME=example \
-PYPI_FORMAT=sdist \
-GH_OWNER='' \
-GH_REPO='' \
-GITLAB_OWNER='' \
-GITLAB_REPO='' \
-BUILD_ATTR=example \
-HASH_MODE=prefetch \
-EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
-PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
-ARTIFACT_FINGERPRINT=exact-fingerprint \
-ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
-VERIFICATION=evaluate \
-SIBLINGS='[]' \
-bash "${UPDATE_VERSION}" 1.2.3
+  TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
+  TEST_PYPI_METADATA='{"info":{"version":"1.2.3"},"urls":[{"packagetype":"sdist","url":"https://files.example.test/example-1.2.3.tar.gz"}]}' \
+  FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=pypi \
+  PYPI_NAME=example \
+  PYPI_FORMAT=sdist \
+  GH_OWNER='' \
+  GH_REPO='' \
+  GITLAB_OWNER='' \
+  GITLAB_REPO='' \
+  BUILD_ATTR=example \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
+  ARTIFACT_FINGERPRINT=exact-fingerprint \
+  ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}" 1.2.3
 grep -Fqx pypi "${ARTIFACT_LOG}"
 grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
 
-cat > "${TEST_ROOT}/pin.nix" <<'EOF'
+cat >"${TEST_ROOT}/pin.nix" <<'EOF'
 {
   version = "";
   sourceRev = "";
@@ -260,22 +260,22 @@ TEST_HF_METADATA='{
     {"rfilename":"conversion.complete.json","size":7,"blobId":"receipt-blob"}
   ]
 }' \
-FLAKE_ROOT="${TEST_ROOT}" \
-SOURCE_TYPE=huggingface \
-HF_REPO=example/model \
-HF_REVISION=main \
-HF_FILES='[]' \
-HF_MANIFEST_PATH=model-manifest.json \
-HF_MANIFEST_INCLUDE='[]' \
-HF_MANIFEST_EXCLUDE='["^\\.","\\.complete\\.json$"]' \
-HF_MANIFEST_HASH_FIELD=manifestHash \
-BUILD_ATTR=model \
-HASH_MODE=prefetch \
-EXTRA_HASHES='["manifestHash"]' \
-PIN_HASHES='["manifestHash"]' \
-VERIFICATION=evaluate \
-SIBLINGS='[]' \
-bash "${UPDATE_VERSION}"
+  FLAKE_ROOT="${TEST_ROOT}" \
+  SOURCE_TYPE=huggingface \
+  HF_REPO=example/model \
+  HF_REVISION=main \
+  HF_FILES='[]' \
+  HF_MANIFEST_PATH=model-manifest.json \
+  HF_MANIFEST_INCLUDE='[]' \
+  HF_MANIFEST_EXCLUDE='["^\\.","\\.complete\\.json$"]' \
+  HF_MANIFEST_HASH_FIELD=manifestHash \
+  BUILD_ATTR=model \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='["manifestHash"]' \
+  PIN_HASHES='["manifestHash"]' \
+  VERIFICATION=evaluate \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}"
 
 grep -Fq 'version = "0-unstable-2026-08-26";' "${TEST_ROOT}/pin.nix"
 grep -Fq 'sourceRev = "model-revision";' "${TEST_ROOT}/pin.nix"
@@ -291,7 +291,7 @@ jq -e '
   and .files[1].sha256 == "large-sha256"
 ' "${TEST_ROOT}/model-manifest.json" >/dev/null
 
-cat > "${TEST_ROOT}/pin.nix" <<'EOF'
+cat >"${TEST_ROOT}/pin.nix" <<'EOF'
 {
   version = "0-unstable-2026-08-26";
   sourceRev = "model-revision";
@@ -300,7 +300,7 @@ cat > "${TEST_ROOT}/pin.nix" <<'EOF'
   wheelManifestHash = "manifest-hash";
 }
 EOF
-: > "${ARTIFACT_LOG}"
+: >"${ARTIFACT_LOG}"
 HF_MISMATCH_OUTPUT=$(TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
   TEST_ARTIFACT_FINGERPRINT=exact-fingerprint \
   TEST_HF_METADATA='{"sha":"model-revision","lastModified":"2026-08-26T12:34:56.000Z","siblings":[]}' \
@@ -330,13 +330,13 @@ grep -Fq 'Updated model to 0-unstable-2026-08-26.' <<<"${HF_MISMATCH_OUTPUT}"
 PNPM_ARTIFACT_HOOK="${TEST_ROOT}/pnpm-artifact-hook"
 printf '%s\n' \
   "#!${TEST_BASH}/bin/bash" \
-  'printf "%s\n" "pnpmDepsHash=sha256-pnpmold" "vendorHash=sha256-vendorold"' > "${PNPM_ARTIFACT_HOOK}"
+  'printf "%s\n" "pnpmDepsHash=sha256-pnpmold" "vendorHash=sha256-vendorold"' >"${PNPM_ARTIFACT_HOOK}"
 chmod +x "${PNPM_ARTIFACT_HOOK}"
 
 run_build_failure_case() {
   local CASE_ROOT="${1}" PLAN="${2}" FAILURE_HASHES="${3}" PIN_HASHES_JSON="${4}" EXTRA_HASHES_JSON="${5}"
   mkdir -p "${CASE_ROOT}"
-  printf '%s\n' '{ version = ""; sourceRev = ""; sourceHash = ""; }' > "${CASE_ROOT}/pin.nix"
+  printf '%s\n' '{ version = ""; sourceRev = ""; sourceHash = ""; }' >"${CASE_ROOT}/pin.nix"
   FLAKE_ROOT="${CASE_ROOT}" \
     SOURCE_TYPE=github \
     GH_OWNER=openai \
@@ -362,7 +362,7 @@ run_build_failure_case() {
 
 RECOVERY_ROOT="${TEST_ROOT}/build-failure-recovery"
 RECOVERY_PLAN="${TEST_ROOT}/recovery.plan"
-cat > "${RECOVERY_PLAN}" <<'EOF'
+cat >"${RECOVERY_PLAN}" <<'EOF'
 mismatch sha256-vendorold sha256-vendornew
 mismatch sha256-pnpmold sha256-pnpmnew
 ok
@@ -370,11 +370,11 @@ EOF
 run_build_failure_case "${RECOVERY_ROOT}" "${RECOVERY_PLAN}" '["pnpmDepsHash","vendorHash"]' '["pnpmDepsHash","vendorHash"]' '[]'
 grep -Fq 'pnpmDepsHash = "sha256-pnpmnew";' "${RECOVERY_ROOT}/pin.nix"
 grep -Fq 'vendorHash = "sha256-vendornew";' "${RECOVERY_ROOT}/pin.nix"
-[[ "$(wc -l < "${RECOVERY_ROOT}/builds.log")" -eq 3 ]]
+[[ "$(wc -l <"${RECOVERY_ROOT}/builds.log")" -eq 3 ]]
 
 UNDECLARED_ROOT="${TEST_ROOT}/build-failure-undeclared"
 UNDECLARED_PLAN="${TEST_ROOT}/undeclared.plan"
-cat > "${UNDECLARED_PLAN}" <<'EOF'
+cat >"${UNDECLARED_PLAN}" <<'EOF'
 mismatch sha256-vendorold sha256-vendornew
 ok
 EOF
@@ -388,7 +388,7 @@ grep -Fq 'vendorHash = "sha256-vendorold";' "${UNDECLARED_ROOT}/pin.nix"
 
 BOUND_ROOT="${TEST_ROOT}/build-failure-bound"
 BOUND_PLAN="${TEST_ROOT}/bound.plan"
-cat > "${BOUND_PLAN}" <<'EOF'
+cat >"${BOUND_PLAN}" <<'EOF'
 mismatch sha256-straya sha256-pnpmnew
 mismatch sha256-strayb sha256-vendornew
 mismatch sha256-strayc sha256-stillwrong
@@ -399,4 +399,4 @@ if BOUND_OUTPUT=$(run_build_failure_case "${BOUND_ROOT}" "${BOUND_PLAN}" '["pnpm
   exit 1
 fi
 grep -Fq 'resolved once each' <<<"${BOUND_OUTPUT}"
-[[ "$(wc -l < "${BOUND_ROOT}/builds.log")" -eq 3 ]]
+[[ "$(wc -l <"${BOUND_ROOT}/builds.log")" -eq 3 ]]

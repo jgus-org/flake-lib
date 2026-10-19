@@ -93,11 +93,12 @@ HEALTHY = "healthy"
 # The states the tracking issue is opened for. The rest are reported but do not open or
 # reopen anything: one failed night is not a standing condition, and a producer whose newest
 # run is recent but off-schedule may simply be a fresh install. A producer with no updater
-# history at all is an onboarding gap rather than a broken updater, and it is a third of the
-# fleet, so alerting on it would mute the real signal. A refused read is attention on its own
-# first night, because unlike an outage it does not clear itself. A behind aggregate leads the
-# report because it outranks the run that produced it: an updater that publishes an older
-# release than the newest branch it holds is green, and the consumer is still wrong.
+# history at all has no publication to judge rather than a broken one, and it is a third of the
+# fleet -- most of them publish by hand and have no schedule to be late for -- so alerting on
+# it would mute the real signal. A refused read is attention on its own first night, because
+# unlike an outage it does not clear itself. A behind aggregate leads the report because it
+# outranks the run that produced it: an updater that publishes an older release than the newest
+# branch it holds is green, and the consumer is still wrong.
 ATTENTION_STATES = (BEHIND, RED, STALE, DENIED)
 WATCH_STATES = (FIRST_FAILURE, PENDING, UNOBSERVED)
 # The verdicts whose failure is worth asking about. A first failure is asked too: the same
@@ -619,7 +620,7 @@ def classify_producer(repo: str, runs: Sequence[Run], config: Config, now: datet
         seen = " or ".join(config.workflows)
         # A producer with a schedule the sweep does not recognise has an updater under another
         # name, and naming it here is what lets the next sweep be pointed at it with --workflow
-        # rather than leaving its failures reported as an onboarding gap.
+        # rather than leaving a failing producer reported as though it published nothing.
         scheduled = sorted({run.workflow for run in runs if run.scheduled})
         named = f"; its scheduled runs come from {' and '.join(scheduled)}" if scheduled else ""
         return [Verdict(repo, "", NO_UPDATER, f"none of its {PAGE_SIZE} newest runs came from {seen}{named}")]
@@ -786,7 +787,7 @@ def issue_body(verdicts: Sequence[Verdict], attention: Sequence[str]) -> str:
     ranked = order(verdicts)
     failing = [verdict for verdict in ranked if verdict.needs_attention]
     watched = [verdict for verdict in ranked if verdict.state in WATCH_STATES]
-    unadopted = [verdict for verdict in ranked if verdict.state == NO_UPDATER]
+    unrecognised = [verdict for verdict in ranked if verdict.state == NO_UPDATER]
     parts = [
         marker(attention),
         "",
@@ -810,7 +811,10 @@ def issue_body(verdicts: Sequence[Verdict], attention: Sequence[str]) -> str:
             "",
         )
         parts.append(" | ".join(columns))
-    for heading, group in (("Watching", watched), ("Producers with no updater workflow", unadopted)):
+    for heading, group in (
+        ("Watching", watched),
+        ("Producers with no updater the sweep recognises", unrecognised),
+    ):
         if not group:
             continue
         entries = [

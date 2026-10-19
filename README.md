@@ -486,7 +486,7 @@ night; and a run that has not finished has no conclusion, so it counts as neithe
 | `infra` | the failure named an endpoint or a substituter rather than the producer's own work: the cache was unreachable, not the updater | after `--infra-streak` in a row (default 3) |
 | `first-failure` | the most recent schedule failed once, which is not yet a standing condition | no |
 | `pending` | no finished scheduled run yet — a fresh install, or a workflow never put on a schedule | no |
-| `no-updater` | none of its newest runs came from an updater workflow: an onboarding gap, not a broken updater, and the report names the schedule it does run so an updater under another name can be judged once it is passed to `--workflow` | no |
+| `no-updater` | none of its newest runs came from an updater workflow, so there is no publication to judge. Most of the fleet's producers in this state publish by hand and have no scheduled publication path to be late for, and the sweep cannot tell one of those from a producer that never installed a template; the report names the schedule the producer does run, so an updater under another name can be judged once it is passed to `--workflow` | no |
 | `unobserved` | its runs cannot be read — a private producer and no token that sees it | no |
 | `healthy` | its most recent scheduled run succeeded | no |
 
@@ -527,8 +527,8 @@ The windows are assumptions about the fleet's cadence rather than facts, and eac
 weekly cron is silent between runs by design), and `--workflow` for an updater renamed out of the
 template names, which would otherwise read as `no-updater`. A history is read from the 100
 newest runs GitHub answers with, so `no-updater` and `red` are both judged against that page: a
-producer busy enough to page past its own updater would show up as an onboarding gap. A cancelled
-run counts as a failure, being a run that published nothing.
+producer busy enough to page past its own updater would read as having no updater at all.
+A cancelled run counts as a failure, being a run that published nothing.
 
 The report goes to stdout and to the job summary either way. The exit status is failure only when
 the sweep itself is broken — the organisation cannot be listed, nothing was swept, no producer's

@@ -241,39 +241,83 @@ grep -Fq 'templates/workflows/nightly-scan.yml' <<<"${REFUSAL}"
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${BEFORE_SHA}" ]]
 [[ ! -e "${CHECKOUT}/.github/workflows/nightly-scan.yml" ]]
 
-# The push is made as another actor while actions/checkout's credential is still installed
-# for the repository URL. extraHeader is a multivar, so a layered key puts two Authorization
-# headers on the wire and the server refuses the request outright; the push has to present
-# exactly one, and it has to be ours. Which key git would send for a URL is urlmatch, so the
-# isolation is measurable without a network.
+# The push is made as another actor while actions/checkout has configured the run's credential
+# for the server host. extraHeader is a multivar, so a second key that matches the same request
+# puts two Authorization headers on the wire and the server refuses the request rather than
+# choose. The installed value has to be replaced for the push and put back afterwards, so what
+# git would actually send is the assertion: the push is intercepted and the credential set
+# configured at that moment is recorded.
 source "${GIT_PUSH_LIB}"
 
 CREDENTIAL_CASE=$(mktemp -d "${TEST_ROOT}/credential.XXXXXX")
 git init -q "${CREDENTIAL_CASE}"
 git -C "${CREDENTIAL_CASE}" remote add origin https://github.com/o/r
+git -C "${CREDENTIAL_CASE}" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m 'base'
+HEAD_SHA=$(git -C "${CREDENTIAL_CASE}" rev-parse HEAD)
+CREDENTIAL_KEY='http.https://github.com/.extraheader'
 RUN_CREDENTIAL='AUTHORIZATION: basic UnVuQ3JlZGVudGlhbA=='
-OUR_CREDENTIAL='AUTHORIZATION: basic T3VyQ3JlZGVudGlhbA=='
-{
-  printf '[http "https://github.com/o/r/"]\n\textraheader = %s\n' "${RUN_CREDENTIAL}"
-  printf '[http "https://github.com/o/r.git/"]\n\textraheader = %s\n' "${OUR_CREDENTIAL}"
-} >"${CREDENTIAL_CASE}/config"
+OUR_CREDENTIAL="AUTHORIZATION: basic $(printf 'x-access-token:push-token' | base64 | tr -d '\n')"
+git -C "${CREDENTIAL_CASE}" config --local "${CREDENTIAL_KEY}" "${RUN_CREDENTIAL}"
+CONFIG_PATH="${CREDENTIAL_CASE}/.git/config"
+CONFIG_BEFORE="${TEST_ROOT}/config.before"
+cp "${CONFIG_PATH}" "${CONFIG_BEFORE}"
 
-PUSH_URL=$(cd "${CREDENTIAL_CASE}" && push_url)
-[[ "${PUSH_URL}" == https://github.com/o/r.git ]]
-[[ "$(cd "${CREDENTIAL_CASE}" && git config --file config --get-urlmatch http.extraheader "${PUSH_URL}/info/refs")" == "${OUR_CREDENTIAL}" ]]
+STUB_BIN=$(mktemp -d "${TEST_ROOT}/stub.XXXXXX")
+PUSH_ARGV="${TEST_ROOT}/push-argv"
+PUSH_CREDENTIALS="${TEST_ROOT}/push-credentials"
+REAL_GIT=$(command -v git)
+cat >"${STUB_BIN}/git" <<STUB
+#!$(command -v bash)
+if [[ "\${1}" == '-c' || "\${1}" == 'push' ]]; then
+  printf '%s\\0' "\${@}" >"\${PUSH_ARGV}"
+  "\${REAL_GIT}" config --local --get-regexp '^http\\..*\\.extraheader\$' >"\${PUSH_CREDENTIALS}"
+  exit 0
+fi
+exec "\${REAL_GIT}" "\${@}"
+STUB
+chmod +x "${STUB_BIN}/git"
 
-# The URL the run credential is scoped to is the shape that fails: ours would have gone out
-# beside it, which is why the push does not use it.
-[[ "$(cd "${CREDENTIAL_CASE}" && git config --file config --get-urlmatch http.extraheader https://github.com/o/r/info/refs)" == "${RUN_CREDENTIAL}" ]]
+record_push() {
+  rm -f "${PUSH_ARGV}" "${PUSH_CREDENTIALS}"
+  (
+    cd "${CREDENTIAL_CASE}"
+    export PUSH_ARGV PUSH_CREDENTIALS REAL_GIT
+    PATH="${STUB_BIN}:${PATH}"
+    GIT_PUSH_TOKEN="${1}"
+    push_ref HEAD main "${HEAD_SHA}" lease
+  )
+  mapfile -t -d '' PUSH_INVOCATION <"${PUSH_ARGV}"
+  PUSH_COUNT=$(wc -l <"${PUSH_CREDENTIALS}")
+  PUSH_SENT=$(cut -d' ' -f2- "${PUSH_CREDENTIALS}")
+}
 
-EXPECTED_KEY='http.https://github.com/o/r.git/.extraheader'
-EXPECTED_VALUE="AUTHORIZATION: basic $(printf 'x-access-token:push-token' | base64 | tr -d '\n')"
-mapfile -t CREDENTIAL_ARGS < <(cd "${CREDENTIAL_CASE}" && push_credential_args 'push-token')
-[[ "${CREDENTIAL_ARGS[0]}" == '-c' && "${CREDENTIAL_ARGS[1]}" == "${EXPECTED_KEY}=${EXPECTED_VALUE}" ]]
+record_push 'push-token'
+if [[ "${PUSH_COUNT}" != 1 ]]; then
+  printf 'the push had %s credentials configured, so the server refuses it: %s\n' "${PUSH_COUNT}" "$(tr '\n' '|' <"${PUSH_CREDENTIALS}")" >&2
+  exit 1
+fi
+if [[ "${PUSH_SENT}" != "${OUR_CREDENTIAL}" ]]; then
+  printf 'the push presented %s, not the configured push token\n' "${PUSH_SENT}" >&2
+  exit 1
+fi
+[[ "${PUSH_INVOCATION[0]}" == 'push' ]] || {
+  printf 'the push carried a layered credential argument, so two Authorization headers go out\n' >&2
+  exit 1
+}
+[[ " ${PUSH_INVOCATION[*]} " == *' origin '* ]]
+[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]] || {
+  printf 'the run credential was not put back after the push\n' >&2
+  exit 1
+}
 
-# With no push token nothing is layered, and a remote that is not HTTPS has no installed
-# header to route around, so it is pushed by name.
-[[ -z "$(cd "${CREDENTIAL_CASE}" && push_credential_args '')" ]]
+# With no token there is nothing to replace, and a remote with no header mechanism leaves the
+# configuration alone: in both cases the run actor's own credential must survive untouched.
+record_push ''
+[[ "${PUSH_SENT}" == "${RUN_CREDENTIAL}" ]]
+[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]
+
 git -C "${CREDENTIAL_CASE}" remote set-url origin 'git@github.com:o/r.git'
-[[ "$(cd "${CREDENTIAL_CASE}" && push_url)" == origin ]]
-[[ -z "$(cd "${CREDENTIAL_CASE}" && push_credential_args 'push-token')" ]]
+cp "${CONFIG_PATH}" "${CONFIG_BEFORE}"
+record_push 'push-token'
+[[ "${PUSH_SENT}" == "${RUN_CREDENTIAL}" ]]
+[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]

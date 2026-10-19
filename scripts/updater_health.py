@@ -339,7 +339,12 @@ def classify_producer(repo: str, runs: Sequence[Run], config: Config, now: datet
             groups.setdefault(run.workflow, []).append(run)
     if not groups:
         seen = " or ".join(config.workflows)
-        return [Verdict(repo, "", NO_UPDATER, f"none of its {PAGE_SIZE} newest runs came from {seen}")]
+        # A producer with a schedule the sweep does not recognise has an updater under another
+        # name, and naming it here is what lets the next sweep be pointed at it with --workflow
+        # rather than leaving its failures reported as an onboarding gap.
+        scheduled = sorted({run.workflow for run in runs if run.scheduled})
+        named = f"; its scheduled runs come from {' and '.join(scheduled)}" if scheduled else ""
+        return [Verdict(repo, "", NO_UPDATER, f"none of its {PAGE_SIZE} newest runs came from {seen}{named}")]
     verdicts = [
         verdict
         for updater, group in groups.items()

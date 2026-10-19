@@ -466,6 +466,22 @@ class SweepTests(unittest.TestCase):
             "none of its 100 newest runs came from update-branches.yml", report.line_for("vscode-sops-flake")
         )
 
+    def test_an_unrecognised_updater_is_named_so_it_can_be_judged(self) -> None:
+        # A producer that wrote its own updater rather than taking a template is not opted out of
+        # being watched: the report names the schedule it does run so the next sweep can be
+        # pointed at that file.
+        runs = [
+            failure(3, workflow="nightly-refresh.yml"),
+            failure(2, workflow="nightly-refresh.yml", age=86400),
+            success(1, workflow="nightly-refresh.yml", age=172800),
+        ]
+        producers = {"own-flake": Producer(runs=runs)}
+        report = self.sweep(producers)
+        self.assertEqual(report.verdicts(), {"own-flake": "no-updater"})
+        self.assertIn("its scheduled runs come from nightly-refresh.yml", report.line_for("own-flake"))
+        named = self.sweep(producers, ["--workflow", "nightly-refresh.yml", "--workflow", BRANCHES])
+        self.assertEqual(named.verdicts(), {"own-flake": "red"})
+
     def test_an_updater_that_was_never_scheduled_is_pending(self) -> None:
         report = self.sweep({"lazylibrarian-flake": Producer(runs=[failure(1, event="workflow_dispatch")])})
         self.assertEqual(report.verdicts(), {"lazylibrarian-flake": "pending"})

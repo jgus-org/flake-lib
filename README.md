@@ -483,9 +483,15 @@ night; and a run that has not finished has no conclusion, so it counts as neithe
 | `stale` | no updater has finished a scheduled run within `--stale-after` (default 3 days): the schedule is gone, or its runs never finish | yes |
 | `first-failure` | the most recent schedule failed once, which is not yet a standing condition | no |
 | `pending` | no finished scheduled run yet — a fresh install, or a workflow never put on a schedule | no |
-| `no-updater` | none of its newest runs came from an updater workflow: an onboarding gap, not a broken updater | no |
+| `no-updater` | none of its newest runs came from an updater workflow: an onboarding gap, not a broken updater, and the report names the schedule it does run so an updater under another name can be judged once it is passed to `--workflow` | no |
 | `unobserved` | its runs cannot be read — a private producer and no token that sees it | no |
 | `healthy` | its most recent scheduled run succeeded | no |
+
+Nothing here asks a producer to participate. The sweep reads run histories by organisation, so it
+judges a producer that took a flake-lib template, one that wrote its own updater, and one that has
+neither, and it reads no producer's options, flags, or configuration: a producer cannot opt out of
+being reported by forgetting to set something, which is how the fleet's build-before-publish check
+failed to cover the branches template.
 
 The windows are assumptions about the fleet's cadence rather than facts, and each is a knob:
 `--fail-streak`, `--stale-after` (longer than the fleet's slowest schedule, since a producer on a
@@ -500,6 +506,14 @@ the sweep itself is broken — the organisation cannot be listed, nothing was sw
 runs could be read, or the issue could not be written — and never because a producer is red: a
 monitor that is red because the thing it watches is red gets muted, and then it is not a monitor.
 Losing sight of the fleet is a broken sweep rather than a green fleet.
+
+What lands is a report a human reads, and nothing more: it blocks no publish, pages nobody, and
+opens no pull request in a producer. That is the shape the condition asks for — fourteen red nights
+is standing rather than urgent — but it does mean the signal works only while somebody reads
+flake-lib's issues, which is precisely how caddy-flake stayed red for fourteen runs. What the issue
+buys over a job that goes red is that it cannot be muted by being red all the time: it stays open
+with each producer's current streak, is commented on when the set of silent producers changes
+rather than whenever anything happened, and closes itself when the fleet is green.
 
 Reading the fleet's run histories needs a token that sees its private producers, so the workflow
 passes the same `ORG_UPDATE_TOKEN` the templates do, and falls back to the run's own token and the

@@ -513,6 +513,12 @@ retry: the sweep re-dispatches nothing in another repository, which would need f
 fault from one that does not answer: a 401 or 403 is `denied`, which no retry clears and which is
 a standing condition the first time it is seen rather than after `--infra-streak` of them.
 
+The line a report quotes is the first such match in the run's log, not the line from the job that
+failed it. caddy's 2026-10-19 run names a connection timeout in `deps` and a refused connection
+five times in the `workflows` job that failed, and the report quotes the timeout. Both name the
+same unreachable cache, so the state is `infra` either way, but a quoted line is not an
+attribution: which job failed is answered by the run's own log and not by this report.
+
 A run that succeeds is not evidence that the producer published what it has, so the version on the
 default branch is read against the repository's release branches. A branch is a release only when
 the pin on that branch is the version in its name, which is what rules out a moving branch like

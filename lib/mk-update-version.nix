@@ -6,15 +6,12 @@
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
 #   siblings     : sibling-cascade specs
 #   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
-#   buildAttr, verification : accepted and ignored. `packages.default` is the only build target, and
-#     the publisher builds it, so neither names a target nor chooses whether one is built. They stay
-#     as arguments because 18 live producers and 24 archived leaf flakes pass `buildAttr`, and the
-#     archived ones are read-only: a required-argument removal would break them permanently. Both go
-#     away when no live producer passes them and the archived set is dealt with.
+#   packages.default is the only build target, and the publisher builds it: there is no argument
+#     naming a target and none choosing whether one is built. Hash discovery is the exception and it
+#     builds `packages.default` too.
 {
   pkgs,
   source,
-  buildAttr ? "default",
   siblings ? [ ],
   siblingRefsInPin ? false,
   hashMode ? "prefetch",
@@ -23,7 +20,6 @@
     if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
   buildFailureHashes ? [ ],
   artifactHook ? null,
-  verification ? "evaluate",
   markerEnvironment ? { },
   artifactFingerprint ? "",
 }:

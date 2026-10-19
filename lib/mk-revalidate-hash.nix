@@ -1,8 +1,6 @@
 # Generates a `revalidate-hash` package that rewrites a flake's fixed-output hash pin from a build-time hash mismatch.
 {
   pkgs,
-  # Accepted and ignored: `packages.default` is the only build target. Delete once no producer passes it.
-  buildAttr ? "default",
   hashField ? "hash",
 }:
 pkgs.writeShellApplication {

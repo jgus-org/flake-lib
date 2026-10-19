@@ -3,8 +3,8 @@ set -euo pipefail
 
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "${TEST_ROOT}"' EXIT
-export FLAKE_ROOT="${TEST_ROOT}" SOURCE_TYPE=oci BUILD_ATTR=image
-export SIBLINGS='[]' VERIFICATION=evaluate
+export FLAKE_ROOT="${TEST_ROOT}" SOURCE_TYPE=oci
+export SIBLINGS='[]'
 export OCI_SETTINGS='{"imageName":"registry.example/image","tag":"stable","os":"linux","arch":"amd64","variant":""}'
 export TEST_OCI_COPY_LOG="${TEST_ROOT}/copy.log" TEST_OCI_EVALUATION_LOG="${TEST_ROOT}/eval.log" TEST_OCI_INSPECT_LOG="${TEST_ROOT}/inspect.log"
 export OCI_SKOPEO="${TEST_ROOT}/skopeo"
@@ -41,11 +41,12 @@ grep -Fq "imageDigest = \"sha256:$(printf 'b%.0s' {1..64})\";" "${TEST_ROOT}/pin
 write_empty_pin
 TEST_OCI_MANIFEST=single bash "${UPDATE_VERSION}" "sha256:$(printf 'a%.0s' {1..64})"
 
-for FAILURE in platform digest copy hash store lock evaluate build; do
+# `build` is absent because the updater builds nothing: packages.default is built by the publisher, so a build failure is not something this path can hit.
+for FAILURE in platform digest copy hash store lock evaluate; do
   write_empty_pin
   cp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"
   cp "${TEST_ROOT}/flake.lock" "${TEST_ROOT}/expected-lock"
-  if TEST_OCI_FAIL="${FAILURE}" VERIFICATION=build bash "${UPDATE_VERSION}"; then
+  if TEST_OCI_FAIL="${FAILURE}" bash "${UPDATE_VERSION}"; then
     exit 1
   fi
   cmp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"

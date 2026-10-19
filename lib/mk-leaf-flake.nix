@@ -13,7 +13,6 @@
   branches ? true,
   siblings ? [ ],
   siblingRefsInPin ? false,
-  verification ? "evaluate",
   branchOwnedFiles ? [
     "pin.nix"
     "flake.lock"
@@ -42,9 +41,7 @@ flake-utils.lib.eachDefaultSystem (
         source
         siblings
         siblingRefsInPin
-        verification
         ;
-      buildAttr = package.attr;
     };
     update-branches = mkUpdateBranches {
       inherit

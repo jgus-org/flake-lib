@@ -62,7 +62,6 @@
         update-version = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
-          buildAttr = "iso639-lang";
         };
         update-branches = lib.mkUpdateBranches {
           inherit pkgs;
@@ -97,9 +96,7 @@
         update-version-pypi-cargo = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
-          buildAttr = "example";
           buildFailureHash = "cargoHash";
-          verification = "evaluate";
         };
         update-branches-pypi-cargo = lib.mkUpdateBranches {
           inherit pkgs;
@@ -114,7 +111,6 @@
             owner = "example";
             repo = "example";
           };
-          buildAttr = "example";
           hashMode = "build-failure";
           extraHashes = [ "npmDepsHash" ];
         };
@@ -125,7 +121,6 @@
             owner = "example";
             repo = "example";
           };
-          buildAttr = "example";
           buildFailureHash = "pnpmDepsHash";
         };
         update-version-github-pnpm-go = lib.mkUpdateVersion {
@@ -135,7 +130,6 @@
             owner = "example";
             repo = "example";
           };
-          buildAttr = "example";
           buildFailureHashes = [
             "pnpmDepsHash"
             "vendorHash"
@@ -152,7 +146,6 @@
         };
         revalidate-hash = lib.mkRevalidateHash {
           inherit pkgs;
-          buildAttr = "example";
         };
         # track="commit": default-branch HEAD becomes version 0-unstable-DATE.
         update-version-github-commit = lib.mkUpdateVersion {
@@ -163,7 +156,6 @@
             repo = "example";
             track = "commit";
           };
-          buildAttr = "example";
         };
         update-version-huggingface = lib.mkUpdateVersion {
           inherit pkgs;
@@ -176,7 +168,6 @@
               exclude = [ "^\\." ];
             };
           };
-          buildAttr = "model";
         };
         update-version-mutable-url = lib.mkUpdateVersion {
           inherit pkgs;
@@ -184,7 +175,6 @@
             type = "mutable-url";
             url = "https://downloads.example.test/artifact.bin";
           };
-          buildAttr = "artifact";
         };
         update-version-oci = lib.mkUpdateVersion {
           inherit pkgs;
@@ -195,7 +185,6 @@
             os = "linux";
             arch = "amd64";
           };
-          buildAttr = "image";
         };
         # source.versions opts an OCI producer into the version tree; the image tag is its version, so the spec pins no tag.
         ociVersionedSource = {
@@ -212,7 +201,6 @@
         update-version-oci-github = lib.mkUpdateVersion {
           inherit pkgs;
           source = ociVersionedSource;
-          buildAttr = "image";
         };
         update-branches-oci-github = lib.mkUpdateBranches {
           inherit pkgs;

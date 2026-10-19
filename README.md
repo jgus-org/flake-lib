@@ -19,10 +19,10 @@ flake-lib.lib.mkLeafFlake {
 # => packages.<system> = { <attr>; update-version; update-branches; default; }
 
 # Low-level: bespoke flakes supply their own package derivation.
-flake-lib.lib.mkUpdateVersion  { pkgs; source; buildAttr; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; verification ? if buildFailureHash == null && buildFailureHashes == [] then "evaluate" else "build"; markerEnvironment ? {}; artifactFingerprint ? ""; }
+flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
-flake-lib.lib.mkRevalidateHash { pkgs; buildAttr; hashField ? "hash"; }
+flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; stampName ? ".${name}-verified.json"; }
@@ -81,7 +81,7 @@ source = {
   finalImageName = "vendor/runtime";
 };
 image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
-update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
+update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; };
 ```
 
 `tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The returned package is the image directory, with `imageName`, `imageTag`, `copyTo`, and `copyToPodman` attributes for loading it. Its local name defaults to `imageName`, and its local tag defaults to the manifest digest without `sha256:`; `finalImageName` and `finalImageTag` can override them. `copyTo` accepts a Skopeo destination and additional copy arguments. Public fetches use isolated registry configuration and an empty authentication file. Pulling and loading preserve the original image manifest, config, and compressed layers rather than rebuilding a base image. OCI updates skip downloads for a matching platform manifest digest and populated hash, preserve dependency locks, and restore the original pin and lock if updating or verification fails. A versioned producer skips only once its pin also names the version being resolved. A legacy `archiveFingerprint` triggers one fetch to migrate the hash to the directory format and remove that field. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
@@ -97,7 +97,7 @@ source = {
   versions = { type = "github"; owner = "home-assistant"; repo = "core"; };
 };
 image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
-update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; buildAttr = "image"; };
+update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; };
 update-branches = flake-lib.lib.mkUpdateBranches { inherit pkgs source; pinSchema = "oci"; };
 ```
 
@@ -150,7 +150,7 @@ GitHub producers read sibling requirements from `reqFile = "requirements.txt"` b
 
 Set `siblingRefsInPin = true` to write the resolved refs under `pin.nix.dependencies` instead of rewriting `flake.nix`. The updater applies those refs while regenerating `flake.lock`, so each historical branch owns its complete source and dependency selection through `pin.nix` and `flake.lock` while `flake.nix` retains generic input URLs.
 
-Update verification evaluates the target package's derivation on every run. Set `verification = "build"` only when the producer must realize the package before publishing its pin. A non-null `buildFailureHash` or a non-empty `buildFailureHashes` selects build verification by default; set `verification = "evaluate"` when hash discovery is sufficient and realizing the full package is prohibitively expensive for the updater.
+The updater evaluates `packages.default` on every run and builds nothing of its own; the publisher builds, see [Publication builds the tracked package](#publication-builds-the-tracked-package). The one build the updater does start is hash discovery: a fixed-output hash that cannot be prefetched is recovered from `packages.default`'s hash-mismatch error, which is what `hashMode = "build-failure"` and `buildFailureHash`/`buildFailureHashes` select.
 
 `buildFailureHash` names one additional pin field whose value is populated from
 the package build's fixed-output hash mismatch. This supports dependency fetchers
@@ -304,15 +304,18 @@ and fork pull requests without a token behave as before.
 
 ### Publication builds the tracked package
 
-A refresh builds `packages.default` in the branch's own tree before it pushes, so a
-producer cannot publish a commit that does not build. That is where the check has to
-be: the run that matters is the one that publishes, `nix flake update` has already
-rewritten `flake.lock` by the time the updater finishes, and an aggregate pointer is
-worth exactly as much as the commit it names. A failed build leaves the branch, its
+`packages.default` is the tracked package, by standard rather than by convention: it is
+the only attr any part of flake-lib builds, evaluates, or repairs hashes against, and a
+producer's own package attr name is an alias with no publication meaning. The publisher
+is the only thing that builds, because it is the thing that cannot be trusted to have
+checked -- and the publisher differs by model, so there are two call sites and one
+definition. The version model publishes from its workflow, and `update-version.yml`
+builds `.#default` between the updater and its commit. A refresh publishes from the
+tool, because one run resolves and pushes many version branches: `refresh_version`
+builds `packages.default` in the branch's own tree before it pushes anything, and no
+workflow step could have reached that tree. A failed build leaves the branch, its
 aggregate, and the pin unpushed, and the next run retries the same version, so the
-failure is visible and the published state stays consistent. `update-version.yml`
-already built `.#default` between the updater and its commit for the same reason;
-this closes the same gap in the branch model.
+failure is visible and the published state stays consistent.
 
 Aggregate publication builds nothing: it moves a ref to a commit an exact branch
 already published, and that refresh built it.

@@ -6,10 +6,15 @@
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
 #   siblings     : sibling-cascade specs
 #   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
+#   buildAttr, verification : accepted and ignored. `packages.default` is the only build target, and
+#     the publisher builds it, so neither names a target nor chooses whether one is built. They stay
+#     as arguments because 18 live producers and 24 archived leaf flakes pass `buildAttr`, and the
+#     archived ones are read-only: a required-argument removal would break them permanently. Both go
+#     away when no live producer passes them and the archived set is dealt with.
 {
   pkgs,
   source,
-  buildAttr,
+  buildAttr ? "default",
   siblings ? [ ],
   siblingRefsInPin ? false,
   hashMode ? "prefetch",
@@ -18,15 +23,10 @@
     if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
   buildFailureHashes ? [ ],
   artifactHook ? null,
-  verification ?
-    if buildFailureHash == null && buildFailureHashes == [ ] then "evaluate" else "build",
+  verification ? "evaluate",
   markerEnvironment ? { },
   artifactFingerprint ? "",
 }:
-assert builtins.elem verification [
-  "evaluate"
-  "build"
-];
 assert artifactFingerprint == "" || artifactHook != null;
 assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
@@ -121,7 +121,6 @@ pkgs.writeShellApplication {
       if hfManifest == null then [ ] else hfManifest.exclude or [ ]
     );
     HF_MANIFEST_HASH_FIELD = if hfManifestHashField == null then "" else hfManifestHashField;
-    BUILD_ATTR = buildAttr;
     HASH_MODE = hashMode;
     EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
     PIN_HASHES = builtins.toJSON (
@@ -131,7 +130,6 @@ pkgs.writeShellApplication {
     );
     BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
-    VERIFICATION = verification;
     SIBLINGS = builtins.toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);

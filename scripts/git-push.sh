@@ -18,54 +18,71 @@ remote_ref_sha() {
   printf '%s\n' "${output%%[[:space:]]*}"
 }
 
-# The `.git` form of an HTTPS remote addresses the same repository and is not covered by a
-# key scoped to the URL without it, which is the form actions/checkout configures.
-push_url() {
-  local url
-  url=$(git remote get-url origin) || return 1
-  case "${url}" in
-    https://*) ;;
-    *)
-      printf 'origin\n'
-      return 0
-      ;;
-  esac
-  url="${url%/}"
-  [[ "${url}" == *.git ]] || url="${url}.git"
-  printf '%s\n' "${url}"
+# actions/checkout configures the run's own credential for the server host, and extraHeader
+# is a multivar: a second key that matches the same request puts two Authorization headers on
+# the wire, and the server refuses the request rather than choose. So the installed value has
+# to be replaced for the push, not layered over, and put back afterwards so the read paths
+# keep the run's credential. The local config file is restored from a copy because it is the
+# only way to put a multivar back exactly, comments and ordering included.
+PUSH_CONFIG_PATH=''
+PUSH_CONFIG_BACKUP=''
+
+push_credential_key() {
+  local url="${1}" scheme="${1%%://*}" authority="${1#*://}"
+  authority="${authority%%/*}"
+  printf 'http.%s://%s/.extraheader' "${scheme}" "${authority#*@}"
 }
 
-# actions/checkout leaves the run's own credential in git config under a key scoped to the
-# repository URL. `git -c` cannot displace that key: extraHeader is a multivar, so git puts
-# both values on the wire and the server refuses the request with "Duplicate header:
-# Authorization". A key scoped to the `.git` URL is the only one that matches a push there,
-# so the run credential cannot ride along with ours and nothing is written to the repository.
-push_credential_args() {
-  local token="${1}" url
+push_credential_install() {
+  local token="${1}" url key
+  PUSH_CREDENTIAL_INSTALLED=false
   [[ -n "${token}" ]] || return 0
-  url=$(push_url) || return 0
+  url=$(git remote get-url origin) || return 1
   [[ "${url}" == https://* ]] || return 0
-  printf '%s\n%s\n' '-c' "http.${url}/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "${token}" | base64 | tr -d '\n')"
+
+  PUSH_CONFIG_PATH="$(git rev-parse --absolute-git-dir)/config"
+  PUSH_CONFIG_BACKUP=$(mktemp) || return 1
+  cp "${PUSH_CONFIG_PATH}" "${PUSH_CONFIG_BACKUP}" || return 1
+  PUSH_CREDENTIAL_INSTALLED=true
+
+  while IFS= read -r key; do
+    git config --local --unset-all "${key}"
+  done < <(git config --local --name-only --get-regexp '^http\..*\.extraheader$')
+
+  git config --local "$(push_credential_key "${url}")" \
+    "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${token}" | base64 | tr -d '\n')"
+}
+
+push_credential_uninstall() {
+  [[ "${PUSH_CREDENTIAL_INSTALLED:-false}" == true ]] || return 0
+  cp "${PUSH_CONFIG_BACKUP}" "${PUSH_CONFIG_PATH}"
+  rm -f "${PUSH_CONFIG_BACKUP}"
+  PUSH_CREDENTIAL_INSTALLED=false
+}
+
+push_ref() {
+  local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}" result=0
+  push_credential_install "${GIT_PUSH_TOKEN:-}" || return 1
+  push_with_retries "${source}" "${ref}" "${expected_sha}" "${mode}" || result=$?
+  push_credential_uninstall
+  return "${result}"
 }
 
 # A failed push can be ambiguous: the server may have updated the ref before
 # returning an error. Re-read the remote before retrying. Treat the desired SHA
 # as success, retry only while the ref remains at the expected SHA, and never
 # overwrite a genuinely different concurrent update.
-push_ref() {
+push_with_retries() {
   local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}"
-  local attempt desired_sha remote_sha="" query_exit=0 target
+  local attempt desired_sha remote_sha="" query_exit=0
   desired_sha=$(git rev-parse --verify "${source}^{commit}")
-  target=$(push_url) || target=origin
-  local -a credential=()
-  while IFS= read -r -d '' arg; do credential+=("${arg}"); done < <(push_credential_args "${GIT_PUSH_TOKEN:-}")
 
   for ((attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++)); do
     if [[ "${mode}" == lease ]]; then
-      if git "${credential[@]}" push --force-with-lease="refs/heads/${ref}:${expected_sha}" --quiet "${target}" "${desired_sha}:refs/heads/${ref}"; then
+      if git push --force-with-lease="refs/heads/${ref}:${expected_sha}" --quiet origin "${desired_sha}:refs/heads/${ref}"; then
         return 0
       fi
-    elif git "${credential[@]}" push --quiet "${target}" "${desired_sha}:refs/heads/${ref}"; then
+    elif git push --quiet origin "${desired_sha}:refs/heads/${ref}"; then
       return 0
     fi
 

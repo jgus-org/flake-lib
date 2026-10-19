@@ -13,29 +13,29 @@ UPDATED_IMAGE_HASH="sha256-$(printf 'd%.0s' {1..43})="
 write_pin() {
   local FILE="${1}" VERSION="${2}" HASH="${3}"
   case "${PIN_FORMAT:-}" in
-    oci)
-      printf '%s\n' \
-        '{' \
-        "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
-        "  imageHash = \"${BASE_IMAGE_HASH}\";" \
-        '}' > "${FILE}"
-      return
-      ;;
-    oci-versioned)
-      printf '%s\n' \
-        '{' \
-        "  version = \"${VERSION}\";" \
-        "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
-        "  imageHash = \"${BASE_IMAGE_HASH}\";" \
-        '}' > "${FILE}"
-      return
-      ;;
+  oci)
+    printf '%s\n' \
+      '{' \
+      "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
+      "  imageHash = \"${BASE_IMAGE_HASH}\";" \
+      '}' >"${FILE}"
+    return
+    ;;
+  oci-versioned)
+    printf '%s\n' \
+      '{' \
+      "  version = \"${VERSION}\";" \
+      "  imageDigest = \"${BASE_IMAGE_DIGEST}\";" \
+      "  imageHash = \"${BASE_IMAGE_HASH}\";" \
+      '}' >"${FILE}"
+    return
+    ;;
   esac
   printf '%s\n' \
     '{' \
     "  version = \"${VERSION}\";" \
     "  assets.fixture = \"${HASH}\";" \
-    '}' > "${FILE}"
+    '}' >"${FILE}"
 }
 
 initialize_repository() {
@@ -48,7 +48,7 @@ initialize_repository() {
   git init -q -b main "${CHECKOUT}"
   git -C "${CHECKOUT}" remote add origin "${REMOTE}"
   write_pin "${CHECKOUT}/pin.nix" "1.0.0" "original-hash"
-  printf '%s\n' '{ "fixture": "original" }' > "${CHECKOUT}/flake.lock"
+  printf '%s\n' '{ "fixture": "original" }' >"${CHECKOUT}/flake.lock"
   git -C "${CHECKOUT}" add pin.nix flake.lock
   git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm initial
   git -C "${CHECKOUT}" push -q -u origin main
@@ -59,8 +59,8 @@ install_push_wrapper() {
   TEST_GIT_BIN="${CASE_ROOT}/git-bin"
   TEST_PUSH_COUNT_FILE="${CASE_ROOT}/push-count"
   mkdir -p "${TEST_GIT_BIN}"
-  printf '#!%s\n' "$(command -v bash)" > "${TEST_GIT_BIN}/git"
-  cat >> "${TEST_GIT_BIN}/git" <<'EOF'
+  printf '#!%s\n' "$(command -v bash)" >"${TEST_GIT_BIN}/git"
+  cat >>"${TEST_GIT_BIN}/git" <<'EOF'
 set -euo pipefail
 
 if [[ "${1:-}" == push && -n "${TEST_PUSH_REF:-}" ]]; then
@@ -130,34 +130,34 @@ invoke_update() {
   local FAILED_REFRESH_VERSIONS="${4}"
   local OVERRIDES="${VERSION_OVERRIDES:-}"
   shift 4
-  [[ -n "${OVERRIDES}" ]] || OVERRIDES='{}'
+  [[ -n ${OVERRIDES} ]] || OVERRIDES='{}'
   (
     cd "${CHECKOUT}"
     BRANCH_OWNED_FILES="${BRANCH_OWNED_FILES_OVERRIDE:-pin.nix flake.lock}" \
-    GH_OWNER=example \
-    GH_REPO=example \
-    GITLAB_OWNER="${GITLAB_OWNER:-example}" \
-    GITLAB_REPO="${GITLAB_REPO:-example}" \
-    GH_TAG_PREFIXES="${TAG_PREFIXES}" \
-    MINIMUM_TRACKING_VERSION="${MINIMUM_TRACKING_VERSION:-1.0.0}" \
-    MIN_VERSION_COMPONENTS=3 \
-    TRACK_STABLE_ONLY="${TRACK_STABLE_ONLY:-false}" \
-    PIN_SCHEMA="${PIN_SCHEMA:-version-only}" \
-    SOURCE_TYPE="${SOURCE_TYPE:-github}" \
-    VERSION_SOURCE_TYPE="${VERSION_SOURCE_TYPE:-}" \
-    VERSION_TRACK="${VERSION_TRACK:-release}" \
-    TEST_GH_ENDPOINTS="${CASE_ROOT}/gh-endpoints" \
-    TEST_VERSIONS="${VERSIONS}" \
-    TEST_FAILED_VERSIONS="${FAILED_VERSIONS}" \
-    TEST_FAILED_REFRESH_VERSIONS="${FAILED_REFRESH_VERSIONS}" \
-    TEST_UPDATE_VERSION_LOG="${CASE_ROOT}/update-version.log" \
-    PATH="${TEST_GIT_BIN:+${TEST_GIT_BIN}:}${PATH}" \
-    PUSH_RETRY_DELAY_SECONDS=0 \
-    GITHUB_REF_RETRY_DELAY_SECONDS=0 \
-    TRANSIENT_RETRY_DELAY_SECONDS=0 \
-    VERSION_CANON='' \
-    VERSION_OVERRIDES="${OVERRIDES}" \
-    bash "${UPDATE_BRANCHES_CORE}" "$@"
+      GH_OWNER=example \
+      GH_REPO=example \
+      GITLAB_OWNER="${GITLAB_OWNER:-example}" \
+      GITLAB_REPO="${GITLAB_REPO:-example}" \
+      GH_TAG_PREFIXES="${TAG_PREFIXES}" \
+      MINIMUM_TRACKING_VERSION="${MINIMUM_TRACKING_VERSION:-1.0.0}" \
+      MIN_VERSION_COMPONENTS=3 \
+      TRACK_STABLE_ONLY="${TRACK_STABLE_ONLY:-false}" \
+      PIN_SCHEMA="${PIN_SCHEMA:-version-only}" \
+      SOURCE_TYPE="${SOURCE_TYPE:-github}" \
+      VERSION_SOURCE_TYPE="${VERSION_SOURCE_TYPE:-}" \
+      VERSION_TRACK="${VERSION_TRACK:-release}" \
+      TEST_GH_ENDPOINTS="${CASE_ROOT}/gh-endpoints" \
+      TEST_VERSIONS="${VERSIONS}" \
+      TEST_FAILED_VERSIONS="${FAILED_VERSIONS}" \
+      TEST_FAILED_REFRESH_VERSIONS="${FAILED_REFRESH_VERSIONS}" \
+      TEST_UPDATE_VERSION_LOG="${CASE_ROOT}/update-version.log" \
+      PATH="${TEST_GIT_BIN:+${TEST_GIT_BIN}:}${PATH}" \
+      PUSH_RETRY_DELAY_SECONDS=0 \
+      GITHUB_REF_RETRY_DELAY_SECONDS=0 \
+      TRANSIENT_RETRY_DELAY_SECONDS=0 \
+      VERSION_CANON='' \
+      VERSION_OVERRIDES="${OVERRIDES}" \
+      bash "${UPDATE_BRANCHES_CORE}" "$@"
   )
 }
 
@@ -195,7 +195,7 @@ assert_same_ref() {
 commit_specification() {
   git -C "${CHECKOUT}" fetch -q origin
   git -C "${CHECKOUT}" reset --hard -q origin/main
-  printf '%s\n' 'new packaging patch' > "${CHECKOUT}/patch.fixture"
+  printf '%s\n' 'new packaging patch' >"${CHECKOUT}/patch.fixture"
   git -C "${CHECKOUT}" add patch.fixture
   git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'Apply packaging patch'
   git -C "${CHECKOUT}" push -q origin main
@@ -212,7 +212,7 @@ assert_ref_sha() {
   local REF="${1}" SHA="${2}"
   local ACTUAL_SHA
   ACTUAL_SHA=$(git --git-dir="${REMOTE}" rev-parse "refs/heads/${REF}")
-  if [[ "${ACTUAL_SHA}" != "${SHA}" ]]; then
+  if [[ ${ACTUAL_SHA} != "${SHA}" ]]; then
     echo "${REF}: expected ${SHA}, got ${ACTUAL_SHA}" >&2
     return 1
   fi
@@ -230,11 +230,14 @@ run_failed_update() {
   local UPDATE_EXIT=0
   # Run outside a conditional: bash would otherwise disable errexit throughout run_update.
   set +e
-  (set -e; run_update "$@") > "${CASE_ROOT}/update.log" 2>&1
+  (
+    set -e
+    run_update "$@"
+  ) >"${CASE_ROOT}/update.log" 2>&1
   UPDATE_EXIT=$?
   set -e
   cat "${CASE_ROOT}/update.log"
-  if [[ "${UPDATE_EXIT}" != 1 ]]; then
+  if [[ ${UPDATE_EXIT} != 1 ]]; then
     echo "Expected updater exit 1, got ${UPDATE_EXIT}" >&2
     return 1
   fi
@@ -297,7 +300,7 @@ assert_same_ref v1 v1.2.0
 assert_same_ref v1.2 v1.2.0
 [[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
 grep -Fq 'nix flake update failed for 1.1.0 (exit 42)' "${CASE_ROOT}/update.log"
-grep -Fqx -- "- \`v1.1.0\`: nix flake update failed (exit 42)" "${GITHUB_STEP_SUMMARY}"
+grep -Fqx -- '- `v1.1.0`: nix flake update failed (exit 42)' "${GITHUB_STEP_SUMMARY}"
 unset GITHUB_STEP_SUMMARY
 
 # A failed input refresh on the only new branch leaves both its partial lockfile and the version updater unpublished.
@@ -310,7 +313,7 @@ assert_missing_ref v1.2.0
 assert_missing_ref v1.2
 assert_missing_ref v1
 [[ ! -e "${CASE_ROOT}/update-version.log" ]]
-grep -Fqx -- "- \`v1.2.0\`: nix flake update failed (exit 42)" "${GITHUB_STEP_SUMMARY}"
+grep -Fqx -- '- `v1.2.0`: nix flake update failed (exit 42)' "${GITHUB_STEP_SUMMARY}"
 unset GITHUB_STEP_SUMMARY
 
 # A failed existing exact branch must not roll back the specification. Aggregates shared with a lower successful stable advance to that successful branch.
@@ -358,7 +361,7 @@ assert_ref_sha main "${SPECIFICATION_SHA}"
 assert_ref_sha v1.2.0 "${OLD_EXACT_SHA}"
 assert_missing_ref v1
 [[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 1 ]]
-grep -Fqx -- "- \`v1.2.0\`: update-version failed (exit 1)" "${GITHUB_STEP_SUMMARY}"
+grep -Fqx -- '- `v1.2.0`: update-version failed (exit 1)' "${GITHUB_STEP_SUMMARY}"
 unset GITHUB_STEP_SUMMARY
 
 # A successful prerelease must not select its failed stable counterpart when choosing aggregate targets.
@@ -411,11 +414,11 @@ run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-
 export GITHUB_STEP_SUMMARY="${CASE_ROOT}/summary.md"
 PUBLISH_EXIT=0
 set +e
-run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" > "${CASE_ROOT}/publish.log" 2>&1
+run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" >"${CASE_ROOT}/publish.log" 2>&1
 PUBLISH_EXIT=$?
 set -e
 cat "${CASE_ROOT}/publish.log"
-[[ "${PUBLISH_EXIT}" == 1 ]]
+[[ ${PUBLISH_EXIT} == 1 ]]
 assert_ref_sha main "${SPECIFICATION_SHA}"
 grep -Fq 'would orphan its current tip' "${CASE_ROOT}/publish.log"
 grep -Fq -- '- `main`: current tip' "${GITHUB_STEP_SUMMARY}"
@@ -452,7 +455,7 @@ VERSIONS=$'1.2.1\n1.2.2\n1.2.3\n1.3.0-rc1'
 PLAN=$(run_command "${VERSIONS}" list)
 BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
 VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
-[[ "${BASE_SHA}" == "${SPECIFICATION_SHA}" ]]
+[[ ${BASE_SHA} == "${SPECIFICATION_SHA}" ]]
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.3.0-rc1","1.2.3","1.2.2","1.2.1"]' ]]
 jq -e '.newestStable == {version:"1.2.3", upstreamVersion:"1.2.3", stable:true}' <<<"${PLAN}" >/dev/null
 
@@ -558,13 +561,13 @@ export TEST_PUSH_MODE=conflict TEST_PUSH_REF=v1.2.0 TEST_PUSH_FAILURES=0
 export TEST_PUSH_CONFLICT_SHA="${SPECIFICATION_SHA}"
 REFRESH_EXIT=0
 set +e
-run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0 > "${CASE_ROOT}/conflict.log" 2>&1
+run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0 >"${CASE_ROOT}/conflict.log" 2>&1
 REFRESH_EXIT=$?
 set -e
-[[ "${REFRESH_EXIT}" == 1 ]]
+[[ ${REFRESH_EXIT} == 1 ]]
 [[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 1 ]]
 assert_ref_sha v1.2.0 "${SPECIFICATION_SHA}"
-[[ "${SPECIFICATION_SHA}" != "${EXPECTED_SHA}" ]]
+[[ ${SPECIFICATION_SHA} != "${EXPECTED_SHA}" ]]
 grep -Fq 'changed concurrently' "${CASE_ROOT}/conflict.log"
 clear_test_failures
 
@@ -615,7 +618,7 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock wheels-*.json' run_update '1.2.4
 assert_ref_version v1.2.4-rc1 1.2.4-rc1
 
 initialize_repository
-printf '%s\n' 'pin.nix merge=ours' 'flake.lock merge=ours' > "${CHECKOUT}/.gitattributes"
+printf '%s\n' 'pin.nix merge=ours' 'flake.lock merge=ours' >"${CHECKOUT}/.gitattributes"
 git -C "${CHECKOUT}" add .gitattributes
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'legacy ownership attributes'
 git -C "${CHECKOUT}" push -q origin main
@@ -628,22 +631,22 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock' run_update '1.2.0'
 assert_ref_version v1.2.0 1.2.0
 
 initialize_repository
-printf '%s\n' ancestor > "${CHECKOUT}/owned-modified.txt"
-printf '%s\n' ancestor > "${CHECKOUT}/owned-deleted.txt"
+printf '%s\n' ancestor >"${CHECKOUT}/owned-modified.txt"
+printf '%s\n' ancestor >"${CHECKOUT}/owned-deleted.txt"
 git -C "${CHECKOUT}" add owned-modified.txt owned-deleted.txt
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'common owned files'
 git -C "${CHECKOUT}" push -q origin main
 seed_exact_branch 1.2.0
 git -C "${CHECKOUT}" switch -q v1.2.0
-printf '%s\n' branch > "${CHECKOUT}/owned-modified.txt"
+printf '%s\n' branch >"${CHECKOUT}/owned-modified.txt"
 git -C "${CHECKOUT}" rm -q owned-deleted.txt
 git -C "${CHECKOUT}" add owned-modified.txt
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'branch owned state'
 git -C "${CHECKOUT}" push -q origin v1.2.0
 git -C "${CHECKOUT}" switch -q main
-printf '%s\n' base > "${CHECKOUT}/owned-modified.txt"
-printf '%s\n' base > "${CHECKOUT}/owned-deleted.txt"
-printf '%s\n' base > "${CHECKOUT}/owned-absent.txt"
+printf '%s\n' base >"${CHECKOUT}/owned-modified.txt"
+printf '%s\n' base >"${CHECKOUT}/owned-deleted.txt"
+printf '%s\n' base >"${CHECKOUT}/owned-absent.txt"
 git -C "${CHECKOUT}" add owned-modified.txt owned-deleted.txt owned-absent.txt
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'base owned changes'
 git -C "${CHECKOUT}" push -q origin main
@@ -654,27 +657,27 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock owned-*.txt' run_update '1.2.0'
 
 initialize_repository
 mkdir -p "${CHECKOUT}/owned-dir" "${CHECKOUT}/absent-dir"
-printf '%s\n' ancestor > "${CHECKOUT}/owned-dir/retained.txt"
-printf '%s\n' ancestor > "${CHECKOUT}/owned-dir/removed.txt"
-printf '%s\n' ancestor > "${CHECKOUT}/absent-dir/file.txt"
+printf '%s\n' ancestor >"${CHECKOUT}/owned-dir/retained.txt"
+printf '%s\n' ancestor >"${CHECKOUT}/owned-dir/removed.txt"
+printf '%s\n' ancestor >"${CHECKOUT}/absent-dir/file.txt"
 git -C "${CHECKOUT}" add owned-dir absent-dir
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'common owned directories'
 git -C "${CHECKOUT}" push -q origin main
 seed_exact_branch 1.2.0
 git -C "${CHECKOUT}" switch -q v1.2.0
-printf '%s\n' branch > "${CHECKOUT}/owned-dir/retained.txt"
+printf '%s\n' branch >"${CHECKOUT}/owned-dir/retained.txt"
 mkdir -p "${CHECKOUT}/owned-dir/nested"
-printf '%s\n' branch > "${CHECKOUT}/owned-dir/nested/added.txt"
+printf '%s\n' branch >"${CHECKOUT}/owned-dir/nested/added.txt"
 git -C "${CHECKOUT}" rm -q "owned-dir/removed.txt" "absent-dir/file.txt"
 git -C "${CHECKOUT}" add owned-dir
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'branch owned directories'
 git -C "${CHECKOUT}" push -q origin v1.2.0
 git -C "${CHECKOUT}" switch -q main
-printf '%s\n' base > "${CHECKOUT}/owned-dir/retained.txt"
-printf '%s\n' base > "${CHECKOUT}/owned-dir/removed.txt"
-printf '%s\n' base > "${CHECKOUT}/owned-dir/base-only.txt"
-printf '%s\n' base > "${CHECKOUT}/absent-dir/file.txt"
-printf '%s\n' base > "${CHECKOUT}/absent-dir/base-only.txt"
+printf '%s\n' base >"${CHECKOUT}/owned-dir/retained.txt"
+printf '%s\n' base >"${CHECKOUT}/owned-dir/removed.txt"
+printf '%s\n' base >"${CHECKOUT}/owned-dir/base-only.txt"
+printf '%s\n' base >"${CHECKOUT}/absent-dir/file.txt"
+printf '%s\n' base >"${CHECKOUT}/absent-dir/base-only.txt"
 git -C "${CHECKOUT}" add owned-dir absent-dir
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'base owned directory changes'
 git -C "${CHECKOUT}" push -q origin main
@@ -686,13 +689,13 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock owned-dir absent-dir' run_update
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:absent-dir'
 
 initialize_repository
-printf '%s\n' legacy > "${CHECKOUT}/wheels-3.14.json"
+printf '%s\n' legacy >"${CHECKOUT}/wheels-3.14.json"
 git -C "${CHECKOUT}" add wheels-3.14.json
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'legacy artifact layout'
 git -C "${CHECKOUT}" push -q origin main
 seed_exact_branch 1.2.0
 git -C "${CHECKOUT}" rm -q wheels-3.14.json
-printf '%s\n' base > "${CHECKOUT}/wheels-3.14-x86_64-linux.json"
+printf '%s\n' base >"${CHECKOUT}/wheels-3.14-x86_64-linux.json"
 git -C "${CHECKOUT}" add wheels-3.14-x86_64-linux.json
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'system-qualified artifact layout'
 git -C "${CHECKOUT}" push -q origin main
@@ -705,7 +708,7 @@ clear_test_failures
 initialize_repository
 seed_exact_branch 1.2.0
 git -C "${CHECKOUT}" switch -q v1.2.0
-printf '%s\n' obsolete > "${CHECKOUT}/removed-by-update.txt"
+printf '%s\n' obsolete >"${CHECKOUT}/removed-by-update.txt"
 git -C "${CHECKOUT}" add removed-by-update.txt
 git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'add removable artifact'
 git -C "${CHECKOUT}" push -q origin v1.2.0
@@ -760,7 +763,7 @@ assert_missing_ref v1.2.0
 assert_missing_ref v1.2
 assert_missing_ref v1
 [[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
-grep -Fqx -- "- \`v1.2.0\`: update-version failed (exit 1)" "${GITHUB_STEP_SUMMARY}"
+grep -Fqx -- '- `v1.2.0`: update-version failed (exit 1)' "${GITHUB_STEP_SUMMARY}"
 unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE GITHUB_STEP_SUMMARY
 
 # A github source tracked by tags enumerates git tags, not GitHub Releases: an upstream shipping tags without releases has an empty releases list, and discovering from it tracks nothing.

@@ -14,7 +14,7 @@ trap 'rm -rf "${TEST_ROOT}"' EXIT
 # This suite runs the script through bash for determinism; flake.nix's package wrapper
 # execs it directly, so a missing executable bit breaks every producer's run and nothing
 # here would notice.
-[[ -x "${UPDATE_WORKFLOWS}" ]] || {
+[[ -x ${UPDATE_WORKFLOWS} ]] || {
   printf 'refresher script is not executable, so the package wrapper cannot exec it: %s\n' "${UPDATE_WORKFLOWS}" >&2
   exit 1
 }
@@ -60,10 +60,10 @@ run_refresher() {
   (
     cd "${CHECKOUT}"
     TEST_NIX_TEMPLATE_SOURCE="${TEMPLATE_SOURCE}" \
-    TEST_NIX_FLAKE_LIB_REV="${ADVANCE_TO_REV}" \
-    GITHUB_OUTPUT="${OUTPUTS}" \
-    PUSH_RETRY_DELAY_SECONDS=0 \
-    bash "${UPDATE_WORKFLOWS}" "$@"
+      TEST_NIX_FLAKE_LIB_REV="${ADVANCE_TO_REV}" \
+      GITHUB_OUTPUT="${OUTPUTS}" \
+      PUSH_RETRY_DELAY_SECONDS=0 \
+      bash "${UPDATE_WORKFLOWS}" "$@"
   )
 }
 
@@ -151,7 +151,7 @@ OUTPUTS="${CASE_ROOT}/outputs"
 run_refresher
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${UNCHANGED_SHA}" ]]
 grep -Fq 'MINIMUM_TRACKING_VERSION: "1.0.0"' "${CHECKOUT}/.github/workflows/update-branches.yml"
-[[ ! -s "${OUTPUTS}" ]]
+[[ ! -s ${OUTPUTS} ]]
 
 # A lock that reached its revision without a refresh ever running -- the pin path advances
 # flake-lib as it commits pins -- still gets the templates that revision ships, because what
@@ -292,15 +292,15 @@ record_push() {
 }
 
 record_push 'push-token'
-if [[ "${PUSH_COUNT}" != 1 ]]; then
+if [[ ${PUSH_COUNT} != 1 ]]; then
   printf 'the push had %s credentials configured, so the server refuses it: %s\n' "${PUSH_COUNT}" "$(tr '\n' '|' <"${PUSH_CREDENTIALS}")" >&2
   exit 1
 fi
-if [[ "${PUSH_SENT}" != "${OUR_CREDENTIAL}" ]]; then
+if [[ ${PUSH_SENT} != "${OUR_CREDENTIAL}" ]]; then
   printf 'the push presented %s, not the configured push token\n' "${PUSH_SENT}" >&2
   exit 1
 fi
-[[ "${PUSH_INVOCATION[0]}" == 'push' ]] || {
+[[ ${PUSH_INVOCATION[0]} == 'push' ]] || {
   printf 'the push carried a layered credential argument, so two Authorization headers go out\n' >&2
   exit 1
 }
@@ -313,11 +313,11 @@ fi
 # With no token there is nothing to replace, and a remote with no header mechanism leaves the
 # configuration alone: in both cases the run actor's own credential must survive untouched.
 record_push ''
-[[ "${PUSH_SENT}" == "${RUN_CREDENTIAL}" ]]
+[[ ${PUSH_SENT} == "${RUN_CREDENTIAL}" ]]
 [[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]
 
 git -C "${CREDENTIAL_CASE}" remote set-url origin 'git@github.com:o/r.git'
 cp "${CONFIG_PATH}" "${CONFIG_BEFORE}"
 record_push 'push-token'
-[[ "${PUSH_SENT}" == "${RUN_CREDENTIAL}" ]]
+[[ ${PUSH_SENT} == "${RUN_CREDENTIAL}" ]]
 [[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]

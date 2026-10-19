@@ -2,16 +2,22 @@ actual:
 { operator, version, ... }:
 let
   numericPart = part: builtins.match "[0-9]+" part != null;
-  reverse = list:
-    builtins.genList (index: builtins.elemAt list (builtins.length list - 1 - index)) (builtins.length list);
-  dropLeadingZeros = list:
+  reverse =
+    list:
+    builtins.genList (index: builtins.elemAt list (builtins.length list - 1 - index)) (
+      builtins.length list
+    );
+  dropLeadingZeros =
+    list:
     if list != [ ] && builtins.head list == "0" then dropLeadingZeros (builtins.tail list) else list;
   normalizePart = part: builtins.head (builtins.match "0*([0-9]+)" part);
-  stripTrailingZeros = value:
+  stripTrailingZeros =
+    value:
     let
       parts = builtins.filter builtins.isString (builtins.split "\\." value);
     in
-    if parts == [ ] || !(builtins.all numericPart parts) then value
+    if parts == [ ] || !(builtins.all numericPart parts) then
+      value
     else
       let
         numeric = map normalizePart parts;

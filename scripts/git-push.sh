@@ -5,7 +5,7 @@
 
 PUSH_MAX_ATTEMPTS="${PUSH_MAX_ATTEMPTS:-5}"
 PUSH_RETRY_DELAY_SECONDS="${PUSH_RETRY_DELAY_SECONDS:-5}"
-if [[ ! "${PUSH_MAX_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+if [[ ! ${PUSH_MAX_ATTEMPTS} =~ ^[1-9][0-9]*$ ]]; then
   echo "error: push retry attempts must be a positive integer" >&2
   exit 2
 fi
@@ -36,9 +36,9 @@ push_credential_key() {
 push_credential_install() {
   local token="${1}" url key
   PUSH_CREDENTIAL_INSTALLED=false
-  [[ -n "${token}" ]] || return 0
+  [[ -n ${token} ]] || return 0
   url=$(git remote get-url origin) || return 1
-  [[ "${url}" == https://* ]] || return 0
+  [[ ${url} == https://* ]] || return 0
 
   PUSH_CONFIG_PATH="$(git rev-parse --absolute-git-dir)/config"
   PUSH_CONFIG_BACKUP=$(mktemp) || return 1
@@ -54,7 +54,7 @@ push_credential_install() {
 }
 
 push_credential_uninstall() {
-  [[ "${PUSH_CREDENTIAL_INSTALLED:-false}" == true ]] || return 0
+  [[ ${PUSH_CREDENTIAL_INSTALLED:-false} == true ]] || return 0
   cp "${PUSH_CONFIG_BACKUP}" "${PUSH_CONFIG_PATH}"
   rm -f "${PUSH_CONFIG_BACKUP}"
   PUSH_CREDENTIAL_INSTALLED=false
@@ -78,7 +78,7 @@ push_with_retries() {
   desired_sha=$(git rev-parse --verify "${source}^{commit}")
 
   for ((attempt = 1; attempt <= PUSH_MAX_ATTEMPTS; attempt++)); do
-    if [[ "${mode}" == lease ]]; then
+    if [[ ${mode} == lease ]]; then
       if git push --force-with-lease="refs/heads/${ref}:${expected_sha}" --quiet origin "${desired_sha}:refs/heads/${ref}"; then
         return 0
       fi
@@ -88,18 +88,18 @@ push_with_retries() {
 
     query_exit=0
     remote_sha=$(remote_ref_sha "${ref}") || query_exit=$?
-    if (( query_exit == 0 )); then
-      if [[ "${remote_sha}" == "${desired_sha}" ]]; then
+    if ((query_exit == 0)); then
+      if [[ ${remote_sha} == "${desired_sha}" ]]; then
         echo "  ${ref} reached ${desired_sha:0:8} despite the push error; continuing."
         return 0
       fi
-      if [[ "${remote_sha}" != "${expected_sha}" ]]; then
+      if [[ ${remote_sha} != "${expected_sha}" ]]; then
         echo "error: ${ref} changed concurrently (expected ${expected_sha:-absent}, found ${remote_sha:-absent}); refusing to overwrite it" >&2
         return 1
       fi
     fi
 
-    if (( attempt < PUSH_MAX_ATTEMPTS )); then
+    if ((attempt < PUSH_MAX_ATTEMPTS)); then
       echo "  push of ${ref} failed (attempt ${attempt}/${PUSH_MAX_ATTEMPTS}); retrying in ${PUSH_RETRY_DELAY_SECONDS}s..." >&2
       sleep "${PUSH_RETRY_DELAY_SECONDS}"
     fi

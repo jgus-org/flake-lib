@@ -443,6 +443,72 @@ cancel GitHub Actions workflows" is Write. The templates pass one organization s
 anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
 nothing and proceeds, in the same shape as the Attic cache action's fallback.
 
+## Report a producer whose updater is red (`updater-health`)
+
+A producer publishes the tree its last green update run built, so
+`nix build .#packages.x86_64-linux.default` on its `main` keeps passing while its updater has
+been red for weeks: the repository looks maintained and publishes nothing. Producers have no
+pull-request CI and a red scheduled run notifies nobody, so nothing in the fleet joins those
+two facts.
+
+```console
+GH_TOKEN=github_pat_… GITHUB_REPOSITORY=jgus-org/flake-lib \
+  nix run github:jgus-org/flake-lib/v1#updater-health
+```
+
+Run this way it prints the report and writes nothing. A token is needed to read any run
+history at all, and `GITHUB_REPOSITORY` says whose organisation to sweep. `--report-issue` keeps
+one tracking issue in that repository current instead, and *Producer updater health* is
+flake-lib's own scheduled workflow doing exactly that: the issue is updated in place, commented
+on only when the set of producers that are not publishing changes, and closed when the fleet is
+green. The signal lives here rather than in the producers because the fleet's build gate for
+published versions already lives here, and because a signal that every producer must install is
+a signal missing wherever it was not installed — this one needs no producer change at all.
+
+The sweep reads each non-archived `jgus-org/*-flake` repository's own run list rather than the
+workflow files it has now, because a run records the path its workflow had when it ran. That is
+the difference between a true and a false report: a producer whose fourteen-night failure streak
+accumulated under a workflow file it has since replaced shows a single green run in the file it
+has now, and a sweep that asks the current files a question can only see that. Each updater
+workflow a producer has is judged on its own runs, and named in the report when the producer has
+more than one, because one updater publishing says nothing about the one failing beside it.
+Silence is judged for the producer instead, so that a workflow file flake-lib's own templates
+replaced is not reported as a producer waiting to publish. Only the `schedule` trigger is
+judged, because a manual dispatch that succeeds says nothing about a schedule that fails every
+night; and a run that has not finished has no conclusion, so it counts as neither.
+
+| state | means | opens the issue |
+| --- | --- | --- |
+| `red` | at least `--fail-streak` scheduled runs in a row failed (default 2) | yes |
+| `stale` | no updater has finished a scheduled run within `--stale-after` (default 3 days): the schedule is gone, or its runs never finish | yes |
+| `first-failure` | the most recent schedule failed once, which is not yet a standing condition | no |
+| `pending` | no finished scheduled run yet — a fresh install, or a workflow never put on a schedule | no |
+| `no-updater` | none of its newest runs came from an updater workflow: an onboarding gap, not a broken updater | no |
+| `unobserved` | its runs cannot be read — a private producer and no token that sees it | no |
+| `healthy` | its most recent scheduled run succeeded | no |
+
+The windows are assumptions about the fleet's cadence rather than facts, and each is a knob:
+`--fail-streak`, `--stale-after` (longer than the fleet's slowest schedule, since a producer on a
+weekly cron is silent between runs by design), and `--workflow` for an updater renamed out of the
+template names, which would otherwise read as `no-updater`. A history is read from the 100
+newest runs GitHub answers with, so `no-updater` and `red` are both judged against that page: a
+producer busy enough to page past its own updater would show up as an onboarding gap. A cancelled
+run counts as a failure, being a run that published nothing.
+
+The report goes to stdout and to the job summary either way. The exit status is failure only when
+the sweep itself is broken — the organisation cannot be listed, nothing was swept, no producer's
+runs could be read, or the issue could not be written — and never because a producer is red: a
+monitor that is red because the thing it watches is red gets muted, and then it is not a monitor.
+Losing sight of the fleet is a broken sweep rather than a green fleet.
+
+Reading the fleet's run histories needs a token that sees its private producers, so the workflow
+passes the same `ORG_UPDATE_TOKEN` the templates do, and falls back to the run's own token and the
+public producers where no such secret exists; the report says how many repositories were swept,
+which is where a shorter sight would show up. The tracking issue is written with the run's own
+token, which needs `issues: write` and no secret at all. The judgement is tested offline against a
+stand-in API as `checks.x86_64-linux.updater-health-tests`, so no build or check target ever
+reaches the GitHub API; the live sweep exists only as the workflow.
+
 ## Versioning
 
 Hand-versioned via git tags (`vX.Y.Z`) with a moving `v1` aggregate branch. Breaking

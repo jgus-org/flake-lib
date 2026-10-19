@@ -1,5 +1,7 @@
 # Generates the `update-version` package.
 #   hashMode     : "prefetch" (default) or "build-failure" (vendor hashes that can't be prefetched)
+#   buildFailureHash  : the one pin field name whose value the build's hash mismatch can name
+#   buildFailureHashes : the pin field names any of which the build's hash mismatch can name
 #   extraHashes  : extra pin field names whose values the artifactHook emits (e.g. [ "npmDepsHash" ])
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
 #   siblings     : sibling-cascade specs
@@ -11,9 +13,10 @@
 , siblingRefsInPin ? false
 , hashMode ? "prefetch"
 , extraHashes ? [ ]
-, buildFailureHash ? if hashMode == "build-failure" then "sourceHash" else null
+, buildFailureHash ? if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null
+, buildFailureHashes ? [ ]
 , artifactHook ? null
-, verification ? if buildFailureHash == null then "evaluate" else "build"
+, verification ? if buildFailureHash == null && buildFailureHashes == [ ] then "evaluate" else "build"
 , markerEnvironment ? { }
 , artifactFingerprint ? ""
 }:
@@ -25,6 +28,7 @@ let
   versionSource = source.versions or source;
   hfManifest = source.manifest or null;
   hfManifestHashField = if hfManifest == null then null else hfManifest.hashField or "manifestHash";
+  buildFailureFields = pkgs.lib.unique (pkgs.lib.optional (buildFailureHash != null) buildFailureHash ++ buildFailureHashes);
   effectiveExtraHashes = pkgs.lib.unique (extraHashes ++ pkgs.lib.optional (artifactFingerprint != "") "artifactFingerprint" ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField);
   defaultMarkerEnvironment = {
     implementation_name = "cpython";
@@ -45,7 +49,7 @@ in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
 assert hfManifestHashField == null || hfManifestHashField != "";
-assert oci == null || (siblings == [ ] && artifactHook == null && extraHashes == [ ] && buildFailureHash == null && hashMode == "prefetch");
+assert oci == null || (siblings == [ ] && artifactHook == null && extraHashes == [ ] && buildFailureFields == [ ] && hashMode == "prefetch");
 pkgs.writeShellApplication {
   name = "update-version";
   # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
@@ -80,8 +84,8 @@ pkgs.writeShellApplication {
     BUILD_ATTR = buildAttr;
     HASH_MODE = hashMode;
     EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
-    PIN_HASHES = builtins.toJSON (pkgs.lib.unique (effectiveExtraHashes ++ pkgs.lib.optional (buildFailureHash != null && buildFailureHash != "sourceHash") buildFailureHash));
-    BUILD_FAILURE_HASH = if buildFailureHash == null then "" else buildFailureHash;
+    PIN_HASHES = builtins.toJSON (pkgs.lib.unique (effectiveExtraHashes ++ pkgs.lib.filter (name: name != "sourceHash") buildFailureFields));
+    BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
     VERIFICATION = verification;
     SIBLINGS = builtins.toJSON siblings;

@@ -90,6 +90,22 @@ PUSH_LOG = (
     " `workflows` permission)\n"
 )
 UNEXPLAINED_LOG = "2026-10-19T14:31:04.6312688Z Step 'Refresh newest stable' failed with code 1\n"
+# The updater itself could not be materialised, which is what the fleet's template installs
+# failed on while the cache was down: no template content ran, so the failure says nothing about
+# the template or the producer.
+UPDATER_LOG = (
+    "2026-10-19T14:16:07.1000000Z error: path"
+    " '/nix/store/jk6k6dn5w5apjw8icr7hm00bmrmhym9w-update-branches' is required, but there is no"
+    " substituter that can build it\n"
+)
+# The same endpoint answering and refusing, which no retry clears and an outage does not look
+# like: the cache serves authenticated reads only, so a changed credential or access list fails
+# every refresh until somebody changes it back.
+REFUSED_LOG = (
+    "2026-10-19T14:31:04.6312688Z error: unable to download"
+    " 'https://nix-cache.gustafson.me/main/99ggads649hd.narinfo':"
+    " HTTP error 401 on url 'https://nix-cache.gustafson.me/main/99ggads649hd.narinfo'\n"
+)
 
 
 def stamp(age: float) -> str:
@@ -601,6 +617,43 @@ class SweepTests(unittest.TestCase):
 
     def test_the_evidence_line_loses_its_actions_timestamp(self) -> None:
         self.assertEqual(SWEEP.evidence_of(CACHE_LOG)[1].split(" ")[0], "warning:")
+
+    def test_a_first_failure_that_names_the_cache_is_not_reported_as_a_broken_updater(self) -> None:
+        # The template installs that went red on their first night did not fail in their own
+        # steps: the updater itself could not be materialised while the cache was down, so the
+        # report must not send a reader to the template that was never reached.
+        runs = [failure(1, age=3600)]
+        producers = {"newly-installed-flake": Producer(runs=runs, logs={1: UPDATER_LOG})}
+        report = self.sweep(producers, ["--report-issue"])
+        self.assertEqual(report.verdicts(), {"newly-installed-flake": "infra"})
+        self.assertIn("no substituter that can build it", report.line_for("newly-installed-flake"))
+        self.assertEqual(report.api.writes(), ([], [], []))
+
+    def test_a_refused_read_is_reported_as_a_credential_problem_not_an_outage(self) -> None:
+        runs = [failure(1, age=3600)]
+        producers = {"acl-flake": Producer(runs=runs, logs={1: REFUSED_LOG})}
+        report = self.sweep(producers, ["--report-issue"])
+        self.assertEqual(report.verdicts(), {"acl-flake": "denied"})
+        self.assertIn("HTTP error 401", report.line_for("acl-flake"))
+        self.assertIn("credential or access problem", report.line_for("acl-flake"))
+        # A refusal does not clear itself with the weather, so it is a standing condition the
+        # first time it is seen rather than after three nights of the same outage.
+        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing")
+
+    def test_a_refusal_does_not_excuse_a_producer_that_was_already_failing(self) -> None:
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        producers = {"bun-flake": Producer(runs=runs, logs={3: REFUSED_LOG, 2: BUILD_LOG})}
+        report = self.sweep(producers)
+        self.assertEqual(report.verdicts(), {"bun-flake": "red"})
+        self.assertIn("its newest failure was refused by an endpoint", report.line_for("bun-flake"))
+        self.assertIn("run 2 before it failed for the producer", report.line_for("bun-flake"))
+
+    def test_a_refusal_outranks_an_endpoint_that_never_answered(self) -> None:
+        for text in (f"{CACHE_LOG}{REFUSED_LOG}", f"{REFUSED_LOG}{CACHE_LOG}"):
+            self.assertEqual(SWEEP.evidence_of(text)[0], "denied")
+
+    def test_a_producer_signature_outranks_a_refusal(self) -> None:
+        self.assertEqual(SWEEP.evidence_of(f"{REFUSED_LOG}{PUSH_LOG}")[0], "producer")
 
     def test_a_producer_with_no_updater_runs_is_reported_without_alerting(self) -> None:
         report = self.sweep({"vscode-sops-flake": Producer(runs=[success(1, workflow="publish.yml")])})

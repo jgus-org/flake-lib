@@ -72,6 +72,7 @@ DATE_FORMAT = "%Y-%m-%d"
 
 RED = "red"
 INFRA = "infra"
+DENIED = "denied"
 STALE = "stale"
 FIRST_FAILURE = "first-failure"
 PENDING = "pending"
@@ -82,10 +83,17 @@ HEALTHY = "healthy"
 # reopen anything: one failed night is not a standing condition, and a producer whose newest
 # run is recent but off-schedule may simply be a fresh install. A producer with no updater
 # history at all is an onboarding gap rather than a broken updater, and it is a third of the
-# fleet, so alerting on it would mute the real signal.
-ATTENTION_STATES = (RED, STALE)
+# fleet, so alerting on it would mute the real signal. A refused read is attention on its own
+# first night, because unlike an outage it does not clear itself.
+ATTENTION_STATES = (RED, STALE, DENIED)
 WATCH_STATES = (FIRST_FAILURE, PENDING, UNOBSERVED)
+# The verdicts whose failure is worth asking about. A first failure is asked too: the same
+# endpoint that ends a long streak at fourteen takes its first night's run with it, and a report
+# that calls that "its new updater failed" sends a reader to blame the template that was never
+# reached.
+FAILED_STATES = (RED, FIRST_FAILURE)
 INFRA_DETAIL = "its newest failure named infrastructure, not the producer"
+DENIED_DETAIL = "its newest failure was refused by an endpoint, which is a credential or access problem rather than an outage"
 PRODUCER = "producer"
 UNKNOWN = "unknown"
 # What a failed run's log has to say for the failure not to be the producer's. A retryable
@@ -127,9 +135,29 @@ INFRA_SIGNS = (
     "timeout was reached",
     "send failure",
 )
+# An endpoint that answers and refuses is a different problem from one that does not answer. A
+# 401 or 403 from the cache means a credential or an access list changed, which no retry clears
+# and which pages the operator rather than waiting out an outage.
+DENIED_SIGNS = (
+    "http error 401",
+    "http error 403",
+    "error: status 401",
+    "error: status 403",
+    "the requested url returned error: 401",
+    "the requested url returned error: 403",
+    "401 unauthorized",
+    "403 forbidden",
+)
 EVIDENCE_LIMIT = 40
 EVIDENCE_LINE_LIMIT = 240
 LOG_LIMIT = 4_000_000
+# The two causes that spare a producer, each with the words the report uses when the failure
+# before it still blames the producer, and the sentence it leads with when nothing does.
+EXCUSING = (INFRA, DENIED)
+EXCUSING_DETAIL = {
+    INFRA: ("named infrastructure", INFRA_DETAIL),
+    DENIED: ("was refused by an endpoint", DENIED_DETAIL),
+}
 # Two probes because one answer is not enough to spare a producer: the newest failure being
 # infrastructure says the last attempt was unlucky, and only the attempt before it says whether
 # the producer was publishing beforehand.
@@ -407,16 +435,21 @@ def evidence_of(text: str) -> tuple[str, str]:
 
     A producer signature wins wherever it appears: a build error sitting among download
     warnings is still a build error, and the download warning is what the retry will clear.
+    Between the two ways an endpoint can fail, a refusal outranks silence, because a credential
+    or an access list that changed is the one that will still be broken tomorrow.
     """
     infra: list[str] = []
+    denied = ""
     for line in text.splitlines():
         lowered = line.lower()
         if any(sign in lowered for sign in PRODUCER_SIGNS):
             return PRODUCER, clean_line(line)
-        if any(sign in lowered for sign in INFRA_SIGNS):
+        if any(sign in lowered for sign in DENIED_SIGNS):
+            denied = denied or clean_line(line)
+        elif any(sign in lowered for sign in INFRA_SIGNS) and len(infra) < EVIDENCE_LIMIT:
             infra.append(clean_line(line))
-            if len(infra) >= EVIDENCE_LIMIT:
-                break
+    if denied:
+        return DENIED, denied
     return (INFRA, infra[0]) if infra else (UNKNOWN, "")
 
 
@@ -526,7 +559,7 @@ def explain(client: GitHub, verdict: Verdict, config: Config) -> Verdict:
     is the condition this sweep exists for. The producer's own schedule is the retry, so the
     sweep re-dispatches nothing in someone else's repository.
     """
-    if verdict.state != RED or config.cause_probes <= 0 or not verdict.failed:
+    if verdict.state not in FAILED_STATES or config.cause_probes <= 0 or not verdict.failed:
         return verdict
     probes: list[tuple[Run, str, str]] = []
     for run in verdict.failed[: config.cause_probes]:
@@ -535,22 +568,22 @@ def explain(client: GitHub, verdict: Verdict, config: Config) -> Verdict:
         except GitHubError as error:
             cause, evidence = UNKNOWN, f"run {run.number}'s log could not be read ({error})"
         probes.append((run, cause, evidence))
-        if cause != INFRA:
+        if cause not in EXCUSING:
             break
     _, cause, evidence = probes[0]
-    if cause != INFRA:
+    if cause not in EXCUSING:
         return verdict
-    if probes[-1][1] != INFRA:
+    said, detail = EXCUSING_DETAIL[cause]
+    if probes[-1][1] not in EXCUSING:
         older, older_cause, _ = probes[-1]
         blamed = "failed for the producer" if older_cause == PRODUCER else "was unexplained"
-        excused = f"its newest failure named infrastructure, and run {older.number} before it {blamed}"
+        excused = f"its newest failure {said}, and run {older.number} before it {blamed}"
         return replace(verdict, detail=f"{verdict.detail}; {excused}")
-    return replace(
-        verdict,
-        state=INFRA,
-        detail=f"{INFRA_DETAIL}: {evidence}",
-        attention=verdict.streak >= config.infra_streak,
-    )
+    # An outage that repeats is the fleet's problem and stands up the issue on its own after
+    # --infra-streak. A refusal is not waiting to be repeated: it is broken until somebody
+    # changes the credential or the access list back.
+    attention = None if cause == DENIED else verdict.streak >= config.infra_streak
+    return replace(verdict, state=cause, detail=f"{detail}: {evidence}", attention=attention)
 
 
 def sweep(client: GitHub, config: Config, now: datetime) -> list[Verdict] | None:

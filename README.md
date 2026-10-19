@@ -479,8 +479,9 @@ night; and a run that has not finished has no conclusion, so it counts as neithe
 
 | state | means | opens the issue |
 | --- | --- | --- |
-| `red` | at least `--fail-streak` scheduled runs in a row failed (default 2) | yes |
+| `red` | at least `--fail-streak` scheduled runs in a row failed (default 2), and the failure was the producer's or unexplained | yes |
 | `stale` | no updater has finished a scheduled run within `--stale-after` (default 3 days): the schedule is gone, or its runs never finish | yes |
+| `infra` | the failure named an endpoint or a substituter rather than the producer's own work: the cache was unreachable, not the updater | after `--infra-streak` in a row (default 3) |
 | `first-failure` | the most recent schedule failed once, which is not yet a standing condition | no |
 | `pending` | no finished scheduled run yet — a fresh install, or a workflow never put on a schedule | no |
 | `no-updater` | none of its newest runs came from an updater workflow: an onboarding gap, not a broken updater, and the report names the schedule it does run so an updater under another name can be judged once it is passed to `--workflow` | no |
@@ -492,6 +493,20 @@ judges a producer that took a flake-lib template, one that wrote its own updater
 neither, and it reads no producer's options, flags, or configuration: a producer cannot opt out of
 being reported by forgetting to set something, which is how the fleet's build-before-publish check
 failed to cover the branches template.
+
+A run's conclusion is not evidence about its producer either, so a run that would be red is asked
+what it failed on. Up to `--cause-probes` recent failures (default 2) have their logs read for a
+build error or a refused push, and for an endpoint or substituter that would not answer:
+`unable to download`, `no substituter that can build it`, `SSL connect error`, `Failed to connect`,
+a connection timeout. A failure that names an endpoint is `infra`, not `red`, because on
+2026-10-19 an unreachable cache put five healthy producers red at once and a report of five broken
+producers where none is broken is a report that gets muted. Two probes rather than one because the
+newest failure being infrastructure only says the last attempt was unlucky: if the attempt before
+it failed for the producer, the producer is still red and the report says so. Only a log that
+positively names an endpoint spares a producer — text that cannot be read, or that matches nothing,
+stays red, because an unexplained failure is the condition the whole sweep is for. The producer's
+own schedule is the retry: the sweep re-dispatches nothing in another repository, which would need
+fleet-wide `actions: write` and could push a commit.
 
 The windows are assumptions about the fleet's cadence rather than facts, and each is a knob:
 `--fail-streak`, `--stale-after` (longer than the fleet's slowest schedule, since a producer on a
@@ -520,8 +535,11 @@ passes the same `ORG_UPDATE_TOKEN` the templates do, and falls back to the run's
 public producers where no such secret exists; the report says how many repositories were swept,
 which is where a shorter sight would show up. The tracking issue is written with the run's own
 token, which needs `issues: write` and no secret at all. The judgement is tested offline against a
-stand-in API as `checks.x86_64-linux.updater-health-tests`, so no build or check target ever
-reaches the GitHub API; the live sweep exists only as the workflow.
+stand-in API as `checks.x86_64-linux.updater-health-tests` — including the failure classifier, which
+is tested on captured runner log text and a served log archive rather than a live endpoint — so no
+build or check target ever reaches the GitHub API; the live sweep exists only as the workflow. The
+token is not sent to the log archive's host: the API's redirect is read by hand and the archive is
+fetched unauthenticated, which the suite asserts.
 
 ## Versioning
 

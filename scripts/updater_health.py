@@ -17,6 +17,15 @@ its workflow files: when none of its updaters has finished a scheduled run recen
 producer is `stale`, which covers a schedule that was removed and runs that never finish, and
 leaves a file that flake-lib's own templates replaced out of the report.
 
+A run's conclusion is not evidence about the producer, so a run that would be red is asked what
+it failed on: its log is read for a build error or a refused push, and for an endpoint or
+substituter that would not answer. A failure that names an endpoint is `infra` rather than `red`,
+because a binary cache that is unreachable for ten minutes puts every producer in the fleet red
+at once while not one of them is broken, and a report of five broken producers where none is
+broken is a report that gets muted -- which is how caddy comes back. Only the positive answer
+spares a producer: a log that cannot be read, or that matches nothing, stays red. The producer's
+own schedule is the retry, so nothing in another repository is re-dispatched to ask twice.
+
 The report is one tracking issue in the repository that runs the sweep. The condition is
 standing rather than momentary, so it has to stay visible until it is fixed: the issue is
 updated in place, commented on only when the set of producers that are not publishing changes,
@@ -29,19 +38,23 @@ not a green fleet.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 DEFAULT_API = "https://api.github.com"
+USER_AGENT = "flake-lib-updater-health"
 REQUEST_TIMEOUT_S = 30.0
 PAGE_SIZE = 100
 # The workflow files flake-lib's templates install, then the one producers wrote by hand
@@ -58,6 +71,7 @@ ISSUE_MARKER = "flake-lib:updater-health"
 DATE_FORMAT = "%Y-%m-%d"
 
 RED = "red"
+INFRA = "infra"
 STALE = "stale"
 FIRST_FAILURE = "first-failure"
 PENDING = "pending"
@@ -71,6 +85,59 @@ HEALTHY = "healthy"
 # fleet, so alerting on it would mute the real signal.
 ATTENTION_STATES = (RED, STALE)
 WATCH_STATES = (FIRST_FAILURE, PENDING, UNOBSERVED)
+INFRA_DETAIL = "its newest failure named infrastructure, not the producer"
+PRODUCER = "producer"
+UNKNOWN = "unknown"
+# What a failed run's log has to say for the failure not to be the producer's. A retryable
+# failure names an endpoint or a substituter; a build error, a hash mismatch, or a refused
+# push names the producer's own work, and those are checked first so a red build sitting
+# beside a download warning stays red.
+PRODUCER_SIGNS = (
+    "remote rejected",
+    "refusing to allow",
+    "failed to push some refs",
+    "error: builder for",
+    "failed with exit code",
+    "error: build of",
+    "hash mismatch",
+    "output has been tampered",
+    "error: cannot build",
+    "error: status 409",
+    "patch does not apply",
+    "unresponding configuration",
+)
+INFRA_SIGNS = (
+    "unable to download",
+    "no substituter that can build it",
+    "curl: (7)",
+    "curl: (28)",
+    "curl: (35)",
+    "curl: (52)",
+    "curl: (56)",
+    "ssl connect error",
+    "tls connect error",
+    "failed to connect",
+    "could not connect",
+    "could not resolve host",
+    "connection timed out",
+    "connection reset by peer",
+    "unexpected eof",
+    "broken pipe",
+    "http error 5",
+    "timeout was reached",
+    "send failure",
+)
+EVIDENCE_LIMIT = 40
+EVIDENCE_LINE_LIMIT = 240
+LOG_LIMIT = 4_000_000
+# Two probes because one answer is not enough to spare a producer: the newest failure being
+# infrastructure says the last attempt was unlucky, and only the attempt before it says whether
+# the producer was publishing beforehand.
+CAUSE_PROBES = 2
+# The fleet's updaters run daily, so this is roughly three days of the same outage before the
+# infrastructure itself is stood up in the issue rather than excused as a passing bad night.
+INFRA_STREAK = 3
+TRACE_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s+")
 
 
 class GitHubError(RuntimeError):
@@ -81,6 +148,7 @@ class GitHubError(RuntimeError):
 
 @dataclass(frozen=True)
 class Run:
+    identifier: int
     number: int
     workflow: str
     event: str
@@ -112,6 +180,8 @@ class Config:
     fail_streak: int
     stale_after: timedelta
     report_issue: bool
+    cause_probes: int
+    infra_streak: int
 
 
 @dataclass(frozen=True)
@@ -122,6 +192,8 @@ class Verdict:
     detail: str
     streak: int = 0
     failure: Run | None = None
+    failed: tuple[Run, ...] = ()
+    attention: bool | None = None
 
     @property
     def producer(self) -> str:
@@ -129,6 +201,10 @@ class Verdict:
 
     @property
     def needs_attention(self) -> bool:
+        # `attention` overrides the state's default so an infrastructure failure can be made to
+        # stand up the issue once it has stopped looking like a passing outage.
+        if self.attention is not None:
+            return self.attention
         return self.state in ATTENTION_STATES
 
 
@@ -141,10 +217,16 @@ class Issue:
     attention: tuple[str, ...]
 
 
+class _StopRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        return None
+
+
 class GitHub:
     def __init__(self, api: str, token: str) -> None:
         self.api = api.rstrip("/")
         self.token = token
+        self.opener = urllib.request.build_opener(_StopRedirect)
 
     def _call(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> Any:
         request = urllib.request.Request(
@@ -155,7 +237,7 @@ class GitHub:
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
-                "User-Agent": "flake-lib-updater-health",
+                "User-Agent": USER_AGENT,
             },
         )
         try:
@@ -212,12 +294,54 @@ class GitHub:
     def comment(self, repository: str, number: int, body: str) -> None:
         self._call("POST", f"/repos/{repository}/issues/{number}/comments", {"body": body})
 
+    def run_log(self, repo: str, identifier: int) -> str:
+        # The log endpoint answers with a signed URL on another host, so the redirect is taken
+        # by hand and the archive is fetched without the token: an organisation token must not
+        # travel to a host the API names at redirect time.
+        return log_text(self._fetch(self._signed_log_url(repo, identifier)))
+
+    def _signed_log_url(self, repo: str, identifier: int) -> str:
+        path = f"/repos/{repo}/actions/runs/{identifier}/logs"
+        request = urllib.request.Request(
+            f"{self.api}{path}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {self.token}",
+                "User-Agent": USER_AGENT,
+            },
+        )
+        try:
+            with self.opener.open(request, timeout=REQUEST_TIMEOUT_S) as response:
+                status, location = getattr(response, "status", 200), response.headers.get("Location", "")
+        except urllib.error.HTTPError as error:
+            if error.code not in (301, 302, 303, 307, 308):
+                detail = error.read().decode(errors="replace").strip()[:200]
+                raise GitHubError(error.code, detail or error.reason) from error
+            location = error.headers.get("Location", "")
+            status = error.code
+        except urllib.error.URLError as error:
+            raise GitHubError(0, str(error.reason)) from error
+        if not location:
+            raise GitHubError(0, f"{path} answered {status} without naming a log archive")
+        return urllib.parse.urljoin(f"{self.api}{path}", location)
+
+    def _fetch(self, url: str) -> bytes:
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            raise GitHubError(error.code, f"the log archive answered {error.code}") from error
+        except urllib.error.URLError as error:
+            raise GitHubError(0, f"the log archive could not be fetched ({error.reason})") from error
+
 
 def parse_run(item: Mapping[str, Any]) -> Run | None:
     # A run record is whatever the API answered with, and one unusable record must not cost the
     # fleet its report, so anything that does not parse is dropped here.
     try:
         return Run(
+            identifier=item.get("id") or 0,
             number=item["run_number"],
             workflow=item["path"].rpartition("/")[2],
             event=item["event"],
@@ -249,18 +373,51 @@ def discover_producers(client: GitHub, config: Config) -> list[str]:
     return sorted(producers)
 
 
-def failed_streak(scheduled: Sequence[Run]) -> tuple[int, Run | None]:
-    """Count the failed scheduled runs since the last one that succeeded, newest first."""
-    streak = 0
-    latest_failure: Run | None = None
+def failed_streak(scheduled: Sequence[Run]) -> tuple[Run, ...]:
+    """The failed scheduled runs since the last one that succeeded, newest first."""
+    failed: list[Run] = []
     for run in scheduled:
         if not run.completed:
             continue
         if run.succeeded:
             break
-        streak += 1
-        latest_failure = latest_failure or run
-    return streak, latest_failure
+        failed.append(run)
+    return tuple(failed)
+
+
+def log_text(payload: bytes) -> str:
+    """The text inside the archive a run's log endpoint points at."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            text = "".join(
+                archive.read(name).decode("utf-8", "replace") for name in sorted(archive.namelist())
+            )
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        raise GitHubError(0, f"the log archive was not readable ({error})") from error
+    return text[: LOG_LIMIT]
+
+
+def clean_line(line: str) -> str:
+    """A log line without the timestamp Actions prefixes each one with, shortened."""
+    return re.sub(TRACE_TIMESTAMP, "", line.strip(), count=1)[:EVIDENCE_LINE_LIMIT]
+
+
+def evidence_of(text: str) -> tuple[str, str]:
+    """Say whether a failed run's log blames the infrastructure or the producer.
+
+    A producer signature wins wherever it appears: a build error sitting among download
+    warnings is still a build error, and the download warning is what the retry will clear.
+    """
+    infra: list[str] = []
+    for line in text.splitlines():
+        lowered = line.lower()
+        if any(sign in lowered for sign in PRODUCER_SIGNS):
+            return PRODUCER, clean_line(line)
+        if any(sign in lowered for sign in INFRA_SIGNS):
+            infra.append(clean_line(line))
+            if len(infra) >= EVIDENCE_LIMIT:
+                break
+    return (INFRA, infra[0]) if infra else (UNKNOWN, "")
 
 
 def classify(repo: str, updater: str, group: Sequence[Run], config: Config, now: datetime) -> Verdict | None:
@@ -289,7 +446,8 @@ def classify(repo: str, updater: str, group: Sequence[Run], config: Config, now:
             f"its newest run (run {reference.number}) was a {reference.event}, not a schedule",
         )
 
-    streak, failure = failed_streak(scheduled)
+    failed = failed_streak(scheduled)
+    streak, failure = len(failed), (failed[0] if failed else None)
     succeeded_on = next((run.created_at for run in scheduled if run.succeeded), None)
     since = f"last success {date_of(succeeded_on)}" if succeeded_on else "no scheduled run has ever succeeded"
     if failure is not None and streak >= config.fail_streak:
@@ -300,6 +458,7 @@ def classify(repo: str, updater: str, group: Sequence[Run], config: Config, now:
             f"{streak} scheduled runs in a row failed ({failure.conclusion}); {since}",
             streak=streak,
             failure=failure,
+            failed=failed,
         )
     if failure is not None:
         return Verdict(
@@ -309,6 +468,7 @@ def classify(repo: str, updater: str, group: Sequence[Run], config: Config, now:
             f"its most recent scheduled run failed ({failure.conclusion}); {since}",
             streak=streak,
             failure=failure,
+            failed=failed,
         )
     return Verdict(repo, updater, HEALTHY, f"its last scheduled run succeeded {date_of(reference.created_at)}")
 
@@ -355,6 +515,44 @@ def classify_producer(repo: str, runs: Sequence[Run], config: Config, now: datet
     return [silent(repo, groups)]
 
 
+def explain(client: GitHub, verdict: Verdict, config: Config) -> Verdict:
+    """Ask the failed runs' own logs whether the producer is what broke.
+
+    A scheduled run goes red for reasons the producer has no part in: a substituter that answers
+    502 once ends with the same conclusion as a build that does not compile. Five of those in one
+    report is how a monitor gets muted and caddy comes back, so a failure whose log names an
+    endpoint is not reported as a broken producer. Only that positive answer spares the producer:
+    text that cannot be read, or that matches nothing, stays red, because an unexplained failure
+    is the condition this sweep exists for. The producer's own schedule is the retry, so the
+    sweep re-dispatches nothing in someone else's repository.
+    """
+    if verdict.state != RED or config.cause_probes <= 0 or not verdict.failed:
+        return verdict
+    probes: list[tuple[Run, str, str]] = []
+    for run in verdict.failed[: config.cause_probes]:
+        try:
+            cause, evidence = evidence_of(client.run_log(verdict.repo, run.identifier))
+        except GitHubError as error:
+            cause, evidence = UNKNOWN, f"run {run.number}'s log could not be read ({error})"
+        probes.append((run, cause, evidence))
+        if cause != INFRA:
+            break
+    _, cause, evidence = probes[0]
+    if cause != INFRA:
+        return verdict
+    if probes[-1][1] != INFRA:
+        older, older_cause, _ = probes[-1]
+        blamed = "failed for the producer" if older_cause == PRODUCER else "was unexplained"
+        excused = f"its newest failure named infrastructure, and run {older.number} before it {blamed}"
+        return replace(verdict, detail=f"{verdict.detail}; {excused}")
+    return replace(
+        verdict,
+        state=INFRA,
+        detail=f"{INFRA_DETAIL}: {evidence}",
+        attention=verdict.streak >= config.infra_streak,
+    )
+
+
 def sweep(client: GitHub, config: Config, now: datetime) -> list[Verdict] | None:
     try:
         producers = discover_producers(client, config)
@@ -371,7 +569,7 @@ def sweep(client: GitHub, config: Config, now: datetime) -> list[Verdict] | None
             # turn a hole in the sweep's sight into a silent absence.
             verdicts.append(Verdict(repo, "", UNOBSERVED, f"its runs cannot be read ({error})"))
             continue
-        verdicts += classify_producer(repo, runs, config, now)
+        verdicts += [explain(client, verdict, config) for verdict in classify_producer(repo, runs, config, now)]
     print(f"{len(producers)} {config.suffix} repositories swept in {config.org}")
     return verdicts
 
@@ -387,7 +585,7 @@ def name_of(verdict: Verdict, shared: frozenset[str]) -> str:
 
 
 def order(verdicts: Sequence[Verdict]) -> list[Verdict]:
-    states = (*ATTENTION_STATES, *WATCH_STATES, NO_UPDATER, HEALTHY)
+    states = (*ATTENTION_STATES, INFRA, *WATCH_STATES, NO_UPDATER, HEALTHY)
     rank = {state: index for index, state in enumerate(states)}
     return sorted(
         verdicts,
@@ -598,6 +796,18 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--fail-streak", type=int, help="consecutive failed scheduled runs that make an updater red"
     )
     parser.add_argument(
+        "--cause-probes",
+        type=int,
+        help=f"failed runs whose logs are read to blame infrastructure rather than the producer;"
+        f" 0 reads none (default {CAUSE_PROBES})",
+    )
+    parser.add_argument(
+        "--infra-streak",
+        type=int,
+        help=f"consecutive infrastructure failures that stand up the issue themselves "
+        f"(default {INFRA_STREAK})",
+    )
+    parser.add_argument(
         "--stale-after",
         type=float,
         help="seconds without a finished scheduled run that make a producer stale; at least the fleet's slowest schedule",
@@ -636,6 +846,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         fail_streak=args.fail_streak if args.fail_streak is not None else 2,
         stale_after=timedelta(seconds=args.stale_after if args.stale_after is not None else 3 * 86400),
         report_issue=args.report_issue,
+        cause_probes=args.cause_probes if args.cause_probes is not None else CAUSE_PROBES,
+        infra_streak=args.infra_streak if args.infra_streak is not None else INFRA_STREAK,
     )
 
     verdicts = sweep(GitHub(config.api, read_token), config, datetime.now(timezone.utc))

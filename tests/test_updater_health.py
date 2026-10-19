@@ -15,11 +15,13 @@ rather than near it.
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import sys
 import threading
 import unittest
+import zipfile
 from collections.abc import Sequence
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
@@ -58,6 +60,36 @@ STALE = 10 * 86400.0
 LONG_STREAK = (4, 3, 2)
 
 NOW = datetime.now(timezone.utc)
+# Failure text as the fleet's runners really wrote it on 2026-10-19, when the cache was
+# unreachable and five healthy producers went red.
+CACHE_LOG = (
+    "2026-10-19T14:31:04.6312688Z warning: unable to download"
+    " 'https://nix-cache.gustafson.me/main/99ggads649hd.narinfo': SSL connect error (35)"
+    " TLS connect error: error:0A000126:SSL routines::unexpected eof while reading;"
+    " retrying in 439 ms (attempt 4/5)\n"
+    "2026-10-19T14:31:05.4807049Z error: unable to download"
+    " 'https://nix-cache.gustafson.me/main/99ggads649hd.narinfo': SSL connect error (35)"
+    " TLS connect error: error:0A000126:SSL routines::unexpected eof while reading\n"
+)
+TIMEOUT_LOG = (
+    "2026-10-19T14:18:49.6349558Z error: unable to download"
+    " 'https://nix-cache.gustafson.me/main/2nr450wsz.narinfo': Timeout was reached (28)"
+    " Connection timed out after 15001 milliseconds\n"
+)
+SUBSTITUTER_LOG = (
+    "2026-10-19T14:19:52.9709200Z curl: (28) Connection timed out after 20001 milliseconds\n"
+    "2026-10-19T14:19:53.1000000Z error: path"
+    " '/nix/store/x-update-branches' is required, but there is no substituter that can build it\n"
+)
+BUILD_LOG = (
+    "2026-10-19T14:31:04.6312688Z error: builder for '/nix/store/x.drv' failed with exit code 1\n"
+)
+PUSH_LOG = (
+    "2026-10-19T14:31:04.6312688Z ! [remote rejected] main -> main (refusing to allow a GitHub"
+    " App to create or update workflow `.github/workflows/update-branches.yml` without"
+    " `workflows` permission)\n"
+)
+UNEXPLAINED_LOG = "2026-10-19T14:31:04.6312688Z Step 'Refresh newest stable' failed with code 1\n"
 
 
 def stamp(age: float) -> str:
@@ -78,6 +110,7 @@ def run_item(
     age: float = FRESH,
 ) -> dict[str, Any]:
     return {
+        "id": 1_000 + number,
         "run_number": number,
         "name": "Update branches",
         "path": f".github/workflows/{workflow}",
@@ -112,9 +145,11 @@ def failing_streak(workflow: str = LEGACY) -> list[dict[str, Any]]:
 @dataclass
 class Producer:
     # A list of runs is what the producer's run list answers with; an int is the status the
-    # read is refused with instead.
+    # read is refused with instead. `logs` is the text a run's log archive holds, keyed by run
+    # number: a run with no entry has no log to read, as when the endpoint refuses.
     runs: list[dict[str, Any]] | int = field(default_factory=list)
     archived: bool = False
+    logs: dict[int, str] = field(default_factory=dict)
     reads: int = 0
 
     def __post_init__(self) -> None:
@@ -163,6 +198,7 @@ class Api:
         self.refuse_write = refuse_write
         self.refuse_org = refuse_org
         self.requests: list[str] = []
+        self.archives: list[tuple[str, str | None]] = []
         self.created: list[dict[str, Any]] = []
         self.edits: list[tuple[int, dict[str, Any]]] = []
         self.comments: list[tuple[int, str]] = []
@@ -214,6 +250,10 @@ class Api:
         segments = [unquote(part) for part in split.path.strip("/").split("/")]
         query = parse_qs(split.query)
         self.requests.append(f"{method} {split.path}")
+        if segments[:1] == ["archives"]:
+            self.archives.append((split.path, handler.headers.get("Authorization")))
+            self._archive(handler, segments)
+            return
         if segments[:2] == ["orgs", ORG]:
             if self.refuse_org is not None or segments[2:] != ["repos"]:
                 self._refuse(handler, self.refuse_org or 404)
@@ -231,7 +271,45 @@ class Api:
         if rest[:1] == ["issues"]:
             self._issues(handler, method, rest, body, query)
             return
+        if rest[:2] == ["actions", "runs"] and len(rest) == 4 and rest[3] == "logs":
+            self._logs(handler, name, int(rest[2]) if rest[2].isdigit() else -1)
+            return
         self._refuse(handler, 404)
+
+    def _logs(self, handler: BaseHTTPRequestHandler, name: str, identifier: int) -> None:
+        text = self._log_text(name, identifier)
+        if text is None:
+            self._refuse(handler, 404)
+            return
+        # The real endpoint answers with a signed URL on another host, which is what the
+        # sweep must follow without carrying the token along.
+        handler.send_response(302)
+        handler.send_header("Location", f"{self.base_url}/archives/{name}/{identifier}.zip")
+        handler.send_header("Content-Length", "0")
+        handler.end_headers()
+
+    def _archive(self, handler: BaseHTTPRequestHandler, segments: list[str]) -> None:
+        name, identifier = segments[1], int(segments[-1].removesuffix(".zip"))
+        text = self._log_text(name, identifier)
+        if text is None:
+            self._refuse(handler, 404)
+            return
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("2_newest-stable.txt", text)
+        payload = archive.getvalue()
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/zip")
+        handler.send_header("Content-Length", str(len(payload)))
+        handler.end_headers()
+        handler.wfile.write(payload)
+
+    def _log_text(self, name: str, identifier: int) -> str | None:
+        producer = self.producers.get(name)
+        if producer is None or not isinstance(producer.runs, list):
+            return None
+        number = next((item.get("run_number") for item in producer.runs if item.get("id") == identifier), None)
+        return producer.logs.get(number) if number is not None else None
 
     def _runs(self, handler: BaseHTTPRequestHandler, name: str) -> None:
         producer = self.producers.get(name)
@@ -458,6 +536,71 @@ class SweepTests(unittest.TestCase):
         )
         self.assertEqual(report.verdicts(), {"codex-flake": "red"})
         self.assertIn("2 scheduled runs in a row failed", report.line_for("codex-flake"))
+
+    def test_a_failure_that_names_the_cache_is_not_a_broken_producer(self) -> None:
+        # The fleet on 2026-10-19: the cache was unreachable for minutes and healthy producers
+        # went red. A run whose log names an endpoint is not evidence about its producer.
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        producers = {"clipcascade-flake": Producer(runs=runs, logs={3: CACHE_LOG, 2: TIMEOUT_LOG})}
+        report = self.sweep(producers, ["--report-issue"])
+        self.assertEqual(report.verdicts(), {"clipcascade-flake": "infra"})
+        self.assertIn("SSL connect error (35)", report.line_for("clipcascade-flake"))
+        self.assertEqual(report.api.writes(), ([], [], []))
+
+    def test_a_chronic_infra_failure_stands_up_the_issue_itself(self) -> None:
+        runs = [failure(4, age=3600), failure(3, age=86400), failure(2, age=172800), success(1, age=259200)]
+        producers = {"librechat-flake": Producer(runs=runs, logs={4: SUBSTITUTER_LOG, 3: CACHE_LOG})}
+        report = self.sweep(producers, ["--report-issue"])
+        self.assertEqual(report.verdicts(), {"librechat-flake": "infra"})
+        self.assertEqual(report.api.created[0]["title"], "1 producer updater not publishing")
+        self.assertIn("| `librechat-flake` | infra | 3 |", report.api.created[0]["body"])
+
+    def test_an_infra_failure_does_not_excuse_a_producer_that_was_already_failing(self) -> None:
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        producers = {"bun-flake": Producer(runs=runs, logs={3: CACHE_LOG, 2: PUSH_LOG})}
+        report = self.sweep(producers)
+        self.assertEqual(report.verdicts(), {"bun-flake": "red"})
+        self.assertIn("its newest failure named infrastructure", report.line_for("bun-flake"))
+
+    def test_a_failure_the_log_does_not_explain_is_still_red(self) -> None:
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        producers = {"x-flake": Producer(runs=runs, logs={3: UNEXPLAINED_LOG, 2: UNEXPLAINED_LOG})}
+        self.assertEqual(self.sweep(producers).verdicts(), {"x-flake": "red"})
+
+    def test_a_failure_whose_log_cannot_be_read_is_still_red(self) -> None:
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        self.assertEqual(self.sweep({"x-flake": Producer(runs=runs)}).verdicts(), {"x-flake": "red"})
+
+    def test_the_logs_are_not_read_when_asked_not_to_be(self) -> None:
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        producers = {"x-flake": Producer(runs=runs, logs={3: CACHE_LOG})}
+        report = self.sweep(producers, ["--cause-probes", "0"])
+        self.assertEqual(report.verdicts(), {"x-flake": "red"})
+        self.assertEqual(report.api.archives, [])
+        self.assertNotIn("/logs", "".join(report.api.requests))
+
+    def test_the_token_does_not_travel_to_the_log_archive(self) -> None:
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        producers = {"x-flake": Producer(runs=runs, logs={3: CACHE_LOG, 2: CACHE_LOG})}
+        report = self.sweep(producers)
+        self.assertEqual(report.verdicts(), {"x-flake": "infra"})
+        self.assertTrue(report.api.archives)
+        self.assertEqual({auth for _, auth in report.api.archives}, {None})
+
+    def test_an_unreadable_earlier_log_does_not_clear_the_producer(self) -> None:
+        runs = [failure(3, age=3600), failure(2, age=86400), success(1, age=172800)]
+        producers = {"x-flake": Producer(runs=runs, logs={3: CACHE_LOG})}
+        report = self.sweep(producers)
+        self.assertEqual(report.verdicts(), {"x-flake": "red"})
+        self.assertIn("run 2 before it was unexplained", report.line_for("x-flake"))
+
+    def test_a_failure_the_log_does_not_name_a_producer_with(self) -> None:
+        cause, evidence = SWEEP.evidence_of(f"{CACHE_LOG}{BUILD_LOG}")
+        self.assertEqual(cause, "producer")
+        self.assertIn("error: builder for", evidence)
+
+    def test_the_evidence_line_loses_its_actions_timestamp(self) -> None:
+        self.assertEqual(SWEEP.evidence_of(CACHE_LOG)[1].split(" ")[0], "warning:")
 
     def test_a_producer_with_no_updater_runs_is_reported_without_alerting(self) -> None:
         report = self.sweep({"vscode-sops-flake": Producer(runs=[success(1, workflow="publish.yml")])})

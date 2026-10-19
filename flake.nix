@@ -79,6 +79,12 @@
           buildAttr = "example";
           buildFailureHash = "pnpmDepsHash";
         };
+        update-version-github-pnpm-go = lib.mkUpdateVersion {
+          inherit pkgs;
+          source = { type = "github"; owner = "example"; repo = "example"; };
+          buildAttr = "example";
+          buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ];
+        };
         update-branches-github-pnpm = lib.mkUpdateBranches {
           inherit pkgs;
           source = { type = "github"; owner = "example"; repo = "example"; };
@@ -575,6 +581,20 @@
                 exec ${pkgs.nix}/bin/nix --extra-experimental-features nix-command "''${@}"
                 ;;
               build)
+                if [[ -n "''${TEST_BUILD_PLAN:-}" ]]; then
+                  printf '%s\n' build >> "''${TEST_BUILD_LOG}"
+                  read -r OUTCOME TEST_SPECIFIED TEST_GOT <<<"$(head -1 "''${TEST_BUILD_PLAN}")"
+                  tail -n +2 "''${TEST_BUILD_PLAN}" > "''${TEST_BUILD_PLAN}.rest"
+                  mv "''${TEST_BUILD_PLAN}.rest" "''${TEST_BUILD_PLAN}"
+                  case "''${OUTCOME}" in
+                    ok) exit 0 ;;
+                    mismatch)
+                      printf 'error: hash mismatch in fixed-output derivation %s:\n         specified: %s\n            got:    %s\n' "'/nix/store/fixture-fod.drv" "''${TEST_SPECIFIED}" "''${TEST_GOT}"
+                      exit 1
+                      ;;
+                    *) exit 1 ;;
+                  esac
+                fi
                 [[ "''${TEST_OCI_FAIL:-}" != build ]]
                 ;;
               store)
@@ -694,9 +714,9 @@
         '';
       in
       {
-        packages = { inherit update-version update-branches update-workflows wait-for-deps update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
+        packages = { inherit update-version update-branches update-workflows wait-for-deps update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-pnpm-go update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash; };
         checks = {
-          inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
+          inherit update-version update-branches update-workflows update-version-pypi-cargo update-branches-pypi-cargo update-version-github update-version-github-pnpm update-version-github-pnpm-go update-version-github-commit update-version-huggingface update-version-mutable-url update-version-oci update-version-oci-github update-branches-oci-github update-branches-github-pnpm revalidate-hash;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;

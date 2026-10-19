@@ -326,3 +326,77 @@ HF_MISMATCH_OUTPUT=$(TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
 grep -Fqx huggingface "${ARTIFACT_LOG}"
 grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
 grep -Fq 'Updated model to 0-unstable-2026-08-26.' <<<"${HF_MISMATCH_OUTPUT}"
+
+PNPM_ARTIFACT_HOOK="${TEST_ROOT}/pnpm-artifact-hook"
+printf '%s\n' \
+  "#!${TEST_BASH}/bin/bash" \
+  'printf "%s\n" "pnpmDepsHash=sha256-pnpmold" "vendorHash=sha256-vendorold"' > "${PNPM_ARTIFACT_HOOK}"
+chmod +x "${PNPM_ARTIFACT_HOOK}"
+
+run_build_failure_case() {
+  local CASE_ROOT="${1}" PLAN="${2}" FAILURE_HASHES="${3}" PIN_HASHES_JSON="${4}" EXTRA_HASHES_JSON="${5}"
+  mkdir -p "${CASE_ROOT}"
+  printf '%s\n' '{ version = ""; sourceRev = ""; sourceHash = ""; }' > "${CASE_ROOT}/pin.nix"
+  FLAKE_ROOT="${CASE_ROOT}" \
+    SOURCE_TYPE=github \
+    GH_OWNER=openai \
+    GH_REPO=codex \
+    GITLAB_OWNER='' \
+    GITLAB_REPO='' \
+    GH_TAG_PREFIXES='["v","V",""]' \
+    GH_TRACK=release \
+    TEST_RELEASE_TAG=v1.2.3 \
+    TEST_TAGS='' \
+    BUILD_ATTR=codex \
+    HASH_MODE=prefetch \
+    EXTRA_HASHES="${EXTRA_HASHES_JSON}" \
+    PIN_HASHES="${PIN_HASHES_JSON}" \
+    BUILD_FAILURE_HASHES="${FAILURE_HASHES}" \
+    ARTIFACT_HOOK="${PNPM_ARTIFACT_HOOK}" \
+    VERIFICATION=evaluate \
+    SIBLINGS='[]' \
+    TEST_BUILD_PLAN="${PLAN}" \
+    TEST_BUILD_LOG="${CASE_ROOT}/builds.log" \
+    bash "${UPDATE_VERSION}" 1.2.3
+}
+
+RECOVERY_ROOT="${TEST_ROOT}/build-failure-recovery"
+RECOVERY_PLAN="${TEST_ROOT}/recovery.plan"
+cat > "${RECOVERY_PLAN}" <<'EOF'
+mismatch sha256-vendorold sha256-vendornew
+mismatch sha256-pnpmold sha256-pnpmnew
+ok
+EOF
+run_build_failure_case "${RECOVERY_ROOT}" "${RECOVERY_PLAN}" '["pnpmDepsHash","vendorHash"]' '["pnpmDepsHash","vendorHash"]' '[]'
+grep -Fq 'pnpmDepsHash = "sha256-pnpmnew";' "${RECOVERY_ROOT}/pin.nix"
+grep -Fq 'vendorHash = "sha256-vendornew";' "${RECOVERY_ROOT}/pin.nix"
+[[ "$(wc -l < "${RECOVERY_ROOT}/builds.log")" -eq 3 ]]
+
+UNDECLARED_ROOT="${TEST_ROOT}/build-failure-undeclared"
+UNDECLARED_PLAN="${TEST_ROOT}/undeclared.plan"
+cat > "${UNDECLARED_PLAN}" <<'EOF'
+mismatch sha256-vendorold sha256-vendornew
+ok
+EOF
+if UNDECLARED_OUTPUT=$(run_build_failure_case "${UNDECLARED_ROOT}" "${UNDECLARED_PLAN}" '["pnpmDepsHash"]' '["pnpmDepsHash","vendorHash"]' '["vendorHash"]' 2>&1); then
+  echo "expected the run to stop on a mismatch naming an undeclared pin field" >&2
+  exit 1
+fi
+grep -Fq 'names pin field vendorHash' <<<"${UNDECLARED_OUTPUT}"
+grep -Fq 'pnpmDepsHash = "sha256-pnpmold";' "${UNDECLARED_ROOT}/pin.nix"
+grep -Fq 'vendorHash = "sha256-vendorold";' "${UNDECLARED_ROOT}/pin.nix"
+
+BOUND_ROOT="${TEST_ROOT}/build-failure-bound"
+BOUND_PLAN="${TEST_ROOT}/bound.plan"
+cat > "${BOUND_PLAN}" <<'EOF'
+mismatch sha256-straya sha256-pnpmnew
+mismatch sha256-strayb sha256-vendornew
+mismatch sha256-strayc sha256-stillwrong
+ok
+EOF
+if BOUND_OUTPUT=$(run_build_failure_case "${BOUND_ROOT}" "${BOUND_PLAN}" '["pnpmDepsHash","vendorHash"]' '["pnpmDepsHash","vendorHash"]' '[]' 2>&1); then
+  echo "expected the run to stop once each declared field had been resolved once" >&2
+  exit 1
+fi
+grep -Fq 'resolved once each' <<<"${BOUND_OUTPUT}"
+[[ "$(wc -l < "${BOUND_ROOT}/builds.log")" -eq 3 ]]

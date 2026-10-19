@@ -45,7 +45,7 @@ LOCK_CHANGED=0
 HASH_MODE="${HASH_MODE:-prefetch}"        # prefetch | build-failure (source/vendor hash)
 EXTRA_HASHES="${EXTRA_HASHES:-[]}"        # JSON array of extra pin field names (e.g. ["npmDepsHash"])
 PIN_HASHES="${PIN_HASHES:-${EXTRA_HASHES}}"
-BUILD_FAILURE_HASH="${BUILD_FAILURE_HASH:-}"
+BUILD_FAILURE_HASHES="${BUILD_FAILURE_HASHES:-[]}"
 ARTIFACT_HOOK="${ARTIFACT_HOOK:-}"        # consumer script: regenerate vendored files, emit name=value extra hashes
 ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_OWNED_FILES:-}"
 VERIFICATION="${VERIFICATION:-evaluate}"
@@ -70,6 +70,7 @@ HF_MANIFEST_EXCLUDE="${HF_MANIFEST_EXCLUDE:-[]}"
 HF_MANIFEST_HASH_FIELD="${HF_MANIFEST_HASH_FIELD:-}"
 MUTABLE_URL="${MUTABLE_URL:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
+mapfile -t BUILD_FAILURE_FIELDS < <(jq -r '.[]' <<<"${BUILD_FAILURE_HASHES}")
 
 declare -A extra=()
 declare -A HF_HASHES=()
@@ -439,23 +440,78 @@ run_artifact_hook() {
   return 0 # the loop's status is its last body command — a falsy `[[ -n ]]` on an empty/keyless line — which would trip the caller's set -e; this function has no meaningful return
 }
 
-revalidate_hash() {
-  # $1 = pin field. Build; on a fixed-output hash mismatch, rewrite the field from nix's "got:" and rebuild. For vendor hashes that can't be prefetched.
-  local field="$1" out rc new
-  echo "Validating ${field} via build..."
-  set +e
-  out=$(nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link 2>&1)
-  rc=$?
-  set -e
-  (( rc == 0 )) && return 0
-  new=$(printf '%s\n' "${out}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
-  if [[ -z "${new}" ]]; then
-    echo "error: build of ${BUILD_ATTR} failed and it wasn't a hash mismatch:" >&2
-    printf '%s\n' "${out}" >&2
-    exit 1
-  fi
-  echo "  ${field} drift -> ${new}"
-  sed -i -E "s|^([[:space:]]*${field}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${new}\\2|" "${pin}"
+pin_field_holding() {
+  local want="$1" name value
+  while IFS='=' read -r name value; do
+    if [[ "${value}" == "${want}" ]]; then
+      printf '%s\n' "${name}"
+      return 0
+    fi
+  done < <(sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*"([^"]*)";.*/\1=\2/p' "${pin}")
+  return 1
+}
+
+declared_failure_field() {
+  local name
+  for name in "${BUILD_FAILURE_FIELDS[@]}"; do
+    [[ "${name}" == "${1}" ]] && return 0
+  done
+  return 1
+}
+
+next_unresolved_failure_field() {
+  local name
+  for name in "${BUILD_FAILURE_FIELDS[@]}"; do
+    if [[ -z "${BUILD_FAILURE_RESOLVED[${name}]:-}" ]]; then
+      printf '%s\n' "${name}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+revalidate_build_hashes() {
+  local -A BUILD_FAILURE_RESOLVED=()
+  local out rc specified new field owner
+  while :; do
+    echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
+    set +e
+    out=$(nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link 2>&1)
+    rc=$?
+    set -e
+    (( rc == 0 )) && return 0
+    specified=$(printf '%s\n' "${out}" | sed -nE 's/.*specified:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
+    new=$(printf '%s\n' "${out}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
+    if [[ -z "${new}" ]]; then
+      echo "error: build of ${BUILD_ATTR} failed and it wasn't a hash mismatch:" >&2
+      printf '%s\n' "${out}" >&2
+      exit 1
+    fi
+    owner=$(pin_field_holding "${specified}") || owner=""
+    if [[ -n "${owner}" ]] && ! declared_failure_field "${owner}"; then
+      echo "error: build of ${BUILD_ATTR} names pin field ${owner} as the hash mismatch, and ${owner} is not a declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]})" >&2
+      printf '%s\n' "${out}" >&2
+      exit 1
+    fi
+    if [[ -n "${owner}" && -n "${BUILD_FAILURE_RESOLVED[${owner}]:-}" ]]; then
+      echo "error: build of ${BUILD_ATTR} still names pin field ${owner} after ${owner} was resolved from its own hash mismatch" >&2
+      printf '%s\n' "${out}" >&2
+      exit 1
+    fi
+    if [[ -n "${owner}" ]]; then
+      field="${owner}"
+    else
+      field=$(next_unresolved_failure_field) || field=""
+    fi
+    if [[ -z "${field}" ]]; then
+      echo "error: build of ${BUILD_ATTR} still reports a hash mismatch with every declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]}) resolved once each" >&2
+      printf '%s\n' "${out}" >&2
+      exit 1
+    fi
+    echo "  ${field} drift -> ${new}"
+    sed -i -E "s|^([[:space:]]*${field}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${new}\\2|" "${pin}"
+    BUILD_FAILURE_RESOLVED["${field}"]=1
+  done
 }
 
 artifact_pin_current() {
@@ -691,8 +747,8 @@ case "${SOURCE_TYPE}" in
       echo "Writing pin.nix (${cur_version:-<none>} -> ${new_version})..."
       write_pypi_pin "${new_version}" "${new_hash}"
       pin_changed=1
-      if [[ -n "${BUILD_FAILURE_HASH}" ]]; then
-        revalidate_hash "${BUILD_FAILURE_HASH}"
+      if (( ${#BUILD_FAILURE_FIELDS[@]} > 0 )); then
+        revalidate_build_hashes
       fi
     fi
     ;;
@@ -765,8 +821,8 @@ case "${SOURCE_TYPE}" in
       echo "Writing pin.nix (-> ${new_version})..."
       write_source_pin "${new_version}" "${new_rev}" "${new_hash}"
       pin_changed=1
-      if [[ -n "${BUILD_FAILURE_HASH}" ]]; then
-        revalidate_hash "${BUILD_FAILURE_HASH}"
+      if (( ${#BUILD_FAILURE_FIELDS[@]} > 0 )); then
+        revalidate_build_hashes
       fi
     fi
     ;;
@@ -890,8 +946,8 @@ EOF
       echo "Writing pin.nix (-> ${new_version})..."
       write_source_pin "${new_version}" "${new_rev}" "${new_hash}"
       pin_changed=1
-      if [[ -n "${BUILD_FAILURE_HASH}" ]]; then
-        revalidate_hash "${BUILD_FAILURE_HASH}"
+      if (( ${#BUILD_FAILURE_FIELDS[@]} > 0 )); then
+        revalidate_build_hashes
       fi
     fi
     ;;

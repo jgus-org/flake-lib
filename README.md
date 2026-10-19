@@ -302,6 +302,36 @@ the `ATTIC_TOKEN` secret resolves -- one organization secret covers every reposi
 and fork pull requests without a token behave as before.
 
 
+### Publication builds the tracked package
+
+A refresh builds `packages.default` in the branch's own tree before it pushes, so a
+producer cannot publish a commit that does not build. That is where the check has to
+be: the run that matters is the one that publishes, `nix flake update` has already
+rewritten `flake.lock` by the time the updater finishes, and an aggregate pointer is
+worth exactly as much as the commit it names. A failed build leaves the branch, its
+aggregate, and the pin unpushed, and the next run retries the same version, so the
+failure is visible and the published state stays consistent. `update-version.yml`
+already built `.#default` between the updater and its commit for the same reason;
+this closes the same gap in the branch model.
+
+Aggregate publication builds nothing: it moves a ref to a commit an exact branch
+already published, and that refresh built it.
+
+`buildVerificationSkip` is the way out, and the reason belongs in a comment beside it:
+
+```nix
+flake-lib.lib.mkUpdateBranches {
+  inherit pkgs source;
+  pinSchema = "pypi";
+  # packages.default builds a 20-minute CUDA wheelhouse; the pin's own hash check is the gate here.
+  buildVerificationSkip = true;
+}
+```
+
+false (the default) builds. true publishes without building and logs that verification
+was skipped on every run, so the exception stays visible in the log. Use it only where
+the build is genuinely prohibitive; it does not make the pin correct.
+
 ### Split update-branches jobs
 
 `mkUpdateBranches` exposes a machine-readable interface for workflows that split

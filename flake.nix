@@ -75,6 +75,7 @@
           pinSchema = "pypi";
           minimumTrackingVersion = "1.2.3";
           trackStableOnly = true;
+          buildVerificationSkip = true;
         };
         # The tool every producer's workflow invokes by flake URL. Not a lib function:
         # it takes no inputs from the caller, so a per-producer copy would be identical
@@ -644,6 +645,16 @@
               done
               exit 0
             fi
+            if [[ "''${1}" == "build" ]]; then
+              for FAILED_VERSION in ''${TEST_NIX_BUILD_FAILURES:-}; do
+                if grep -Fq "version = \"''${FAILED_VERSION}\";" pin.nix; then
+                  printf 'error: fixture: packages.default does not build at %s\n' "''${FAILED_VERSION}" >&2
+                  exit 1
+                fi
+              done
+              printf '%s\n' /nix/store/00000000000000000000000000000000-fixture-default
+              exit 0
+            fi
             [[ "''${1}" == "run" ]]
             if [[ "''${PIN_SCHEMA:-}" == "oci" ]]; then
               grep -Fq 'imageDigest = "sha256:' "''${FLAKE_ROOT}/pin.nix"
@@ -877,6 +888,8 @@
               grep -Fx "TRACK_STABLE_ONLY=false" ${update-branches}/bin/update-branches > /dev/null
               grep -Fx "MINIMUM_TRACKING_VERSION=1.2.3" ${update-branches-knobs}/bin/update-branches > /dev/null
               grep -Fx "TRACK_STABLE_ONLY=true" ${update-branches-knobs}/bin/update-branches > /dev/null
+              ! grep -Fx "BUILD_VERIFICATION_SKIP=true" ${update-branches}/bin/update-branches
+              grep -Fx "BUILD_VERIFICATION_SKIP=true" ${update-branches-knobs}/bin/update-branches > /dev/null
               bash ${./tests/test_update_branches.sh}
               touch $out
             '';

@@ -831,3 +831,25 @@ unset GITHUB_OUTPUT
 [[ "$(sed -nE 's/^versions=//p' "${OUTPUTS}" | jq -c '[.[].version]')" == '["1.3.0","1.2.3"]' ]]
 [[ "$(sed -nE 's/^newest_stable=//p' "${OUTPUTS}" | jq -r '.version')" == "1.3.0" ]]
 [[ "$(sed -nE 's/^maintenance=//p' "${OUTPUTS}" | jq -c '[.[].version]')" == '["1.2.3"]' ]]
+
+# A refreshed branch is built before it is pushed, so the pin an unbuildable package comes from is never what a consumer resolves. The refresh is not rolled back by the run, only withheld: the version stays undiscovered and the next run retries it.
+initialize_repository
+export TEST_NIX_BUILD_FAILURES='1.2.0'
+run_failed_update '1.2.0'
+assert_missing_ref v1.2.0
+assert_missing_ref v1.2
+assert_missing_ref v1
+assert_ref_version main 1.0.0
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
+grep -Fq -- 'packages.default does not build at 1.2.0; v1.2.0 not published' "${CASE_ROOT}/update.log"
+unset TEST_NIX_BUILD_FAILURES
+
+# The opt-out publishes anyway and says so on every run that honors it, so a pin nobody built stays visible in the log rather than being a silent default.
+initialize_repository
+export TEST_NIX_BUILD_FAILURES='1.2.0'
+export BUILD_VERIFICATION_SKIP=true
+LOG=$(run_command '1.2.0')
+assert_ref_version v1.2.0 1.2.0
+assert_same_ref main v1.2.0
+grep -Fq -- 'build verification skipped' <<<"${LOG}"
+unset TEST_NIX_BUILD_FAILURES BUILD_VERIFICATION_SKIP

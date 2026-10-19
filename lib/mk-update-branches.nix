@@ -8,6 +8,7 @@
 #   minVersionComponents : fewest dot-separated numeric components a tag may have and still be tracked (default 3, i.e. X.Y.Z only). Lower it for upstreams with short version tags (e.g. bare datestamps like 20260711162202).
 #   minimumTrackingVersion : lowest upstream version to track, baked into the package (default "0.0.0"). This is the flake's source of truth; the workflow ships no env for it, so a wholesale workflow-file refresh cannot reset it.
 #   trackStableOnly    : true excludes prereleases from branches, maintenance, and publication (default false).
+#   buildVerificationSkip : true publishes a refreshed version branch without building `packages.default` (default false). Set it only where that build is prohibitively expensive, and say why in a comment beside it; the reason is the flake's, not the option's.
 {
   pkgs,
   source,
@@ -27,6 +28,7 @@
   minVersionComponents ? 3,
   minimumTrackingVersion ? "0.0.0",
   trackStableOnly ? false,
+  buildVerificationSkip ? false,
 }:
 assert builtins.elem minVersionComponents [
   1
@@ -34,6 +36,7 @@ assert builtins.elem minVersionComponents [
   3
 ];
 assert builtins.isString minimumTrackingVersion;
+assert builtins.isBool buildVerificationSkip;
 assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
   ownedFiles = pkgs.lib.unique (branchOwnedFiles ++ extraBranchOwnedFiles);
@@ -87,6 +90,7 @@ pkgs.writeShellApplication {
     GIT_PUSH_LIB = "${pkgs.copyPathToStore ../scripts/git-push.sh}";
     MINIMUM_TRACKING_VERSION = minimumTrackingVersion;
     TRACK_STABLE_ONLY = pkgs.lib.boolToString trackStableOnly;
+    BUILD_VERIFICATION_SKIP = pkgs.lib.boolToString buildVerificationSkip;
   };
   text = ''exec ${../scripts/update-branches-core.sh} "$@"'';
 }

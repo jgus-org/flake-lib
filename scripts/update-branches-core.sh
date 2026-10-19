@@ -28,12 +28,14 @@
 #   VERSION_CANON        newline-separated `sed -E` rules mapping raw version -> canonical version
 #   MIN_VERSION_COMPONENTS  fewest dot-separated numeric components a tag may have and still be tracked (default 3)
 #   TRACK_STABLE_ONLY    true: exclude prereleases from the tracked set entirely, so they get no branch, no maintenance job, and no publication (default false)
+#   BUILD_VERIFICATION_SKIP  true: publish a refreshed branch without building packages.default (default false). Otherwise the tracked package is built before anything is pushed.
 
 set -euo pipefail
 : "${MINIMUM_TRACKING_VERSION:?required env var}"
 MIN_VERSION_COMPONENTS="${MIN_VERSION_COMPONENTS:-3}"
 VERSION_TRACK="${VERSION_TRACK:-release}"
 TRACK_STABLE_ONLY="${TRACK_STABLE_ONLY:-false}"
+BUILD_VERIFICATION_SKIP="${BUILD_VERIFICATION_SKIP:-false}"
 GH_TAG_PREFIXES="${GH_TAG_PREFIXES:-[\"v\",\"V\",\"\"]}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
@@ -652,6 +654,16 @@ refresh_version() {
     remove_worktree "${wt}"
     return 1
   fi
+  if [[ ${BUILD_VERIFICATION_SKIP} == "true" ]]; then
+    echo "  build verification skipped"
+  elif ! run_with_transient_retry "build for ${branch}" nix build --no-link --print-out-paths .#default; then
+    LAST_FAILURE_REASON="packages.default does not build at ${v}"
+    echo "::warning title=Branch ${branch} not published::packages.default does not build at ${v}; no commit was pushed to ${branch}."
+    echo "  ERROR: packages.default does not build at ${v}; ${branch} not published." >&2
+    popd >/dev/null
+    remove_worktree "${wt}"
+    return 1
+  fi
   mapfile -t OWNED_PATHS < <(matching_owned_paths || true)
   if ((${#OWNED_PATHS[@]} > 0)) && { ! git diff --quiet HEAD -- "${OWNED_PATHS[@]}" || [[ -n "$(git ls-files --others --exclude-standard -- "${OWNED_PATHS[@]}")" ]]; }; then
     if ! git add -A -- "${OWNED_PATHS[@]}" || ! git commit -q -m "auto: ${v} pin"; then
@@ -702,6 +714,8 @@ aggregate_tip_retained_elsewhere() {
 }
 
 publish_aggregates() {
+  # Aggregate refs move to a commit an exact branch already published, and that
+  # refresh built packages.default before pushing it; nothing is built here.
   local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v
   local -a keys=() aggregates=()
   local -A highest_any=() highest_stable=() aggregate_set=()

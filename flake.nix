@@ -62,7 +62,6 @@
         update-version = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
-          buildAttr = "iso639-lang";
         };
         update-branches = lib.mkUpdateBranches {
           inherit pkgs;
@@ -75,6 +74,7 @@
           pinSchema = "pypi";
           minimumTrackingVersion = "1.2.3";
           trackStableOnly = true;
+          buildVerificationSkip = true;
         };
         # The tool every producer's workflow invokes by flake URL. Not a lib function:
         # it takes no inputs from the caller, so a per-producer copy would be identical
@@ -96,9 +96,7 @@
         update-version-pypi-cargo = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
-          buildAttr = "example";
           buildFailureHash = "cargoHash";
-          verification = "evaluate";
         };
         update-branches-pypi-cargo = lib.mkUpdateBranches {
           inherit pkgs;
@@ -113,7 +111,6 @@
             owner = "example";
             repo = "example";
           };
-          buildAttr = "example";
           hashMode = "build-failure";
           extraHashes = [ "npmDepsHash" ];
         };
@@ -124,7 +121,6 @@
             owner = "example";
             repo = "example";
           };
-          buildAttr = "example";
           buildFailureHash = "pnpmDepsHash";
         };
         update-version-github-pnpm-go = lib.mkUpdateVersion {
@@ -134,7 +130,6 @@
             owner = "example";
             repo = "example";
           };
-          buildAttr = "example";
           buildFailureHashes = [
             "pnpmDepsHash"
             "vendorHash"
@@ -151,7 +146,6 @@
         };
         revalidate-hash = lib.mkRevalidateHash {
           inherit pkgs;
-          buildAttr = "example";
         };
         # track="commit": default-branch HEAD becomes version 0-unstable-DATE.
         update-version-github-commit = lib.mkUpdateVersion {
@@ -162,7 +156,6 @@
             repo = "example";
             track = "commit";
           };
-          buildAttr = "example";
         };
         update-version-huggingface = lib.mkUpdateVersion {
           inherit pkgs;
@@ -175,7 +168,6 @@
               exclude = [ "^\\." ];
             };
           };
-          buildAttr = "model";
         };
         update-version-mutable-url = lib.mkUpdateVersion {
           inherit pkgs;
@@ -183,7 +175,6 @@
             type = "mutable-url";
             url = "https://downloads.example.test/artifact.bin";
           };
-          buildAttr = "artifact";
         };
         update-version-oci = lib.mkUpdateVersion {
           inherit pkgs;
@@ -194,7 +185,6 @@
             os = "linux";
             arch = "amd64";
           };
-          buildAttr = "image";
         };
         # source.versions opts an OCI producer into the version tree; the image tag is its version, so the spec pins no tag.
         ociVersionedSource = {
@@ -211,7 +201,6 @@
         update-version-oci-github = lib.mkUpdateVersion {
           inherit pkgs;
           source = ociVersionedSource;
-          buildAttr = "image";
         };
         update-branches-oci-github = lib.mkUpdateBranches {
           inherit pkgs;
@@ -644,6 +633,16 @@
               done
               exit 0
             fi
+            if [[ "''${1}" == "build" ]]; then
+              for FAILED_VERSION in ''${TEST_NIX_BUILD_FAILURES:-}; do
+                if grep -Fq "version = \"''${FAILED_VERSION}\";" pin.nix; then
+                  printf 'error: fixture: packages.default does not build at %s\n' "''${FAILED_VERSION}" >&2
+                  exit 1
+                fi
+              done
+              printf '%s\n' /nix/store/00000000000000000000000000000000-fixture-default
+              exit 0
+            fi
             [[ "''${1}" == "run" ]]
             if [[ "''${PIN_SCHEMA:-}" == "oci" ]]; then
               grep -Fq 'imageDigest = "sha256:' "''${FLAKE_ROOT}/pin.nix"
@@ -877,6 +876,8 @@
               grep -Fx "TRACK_STABLE_ONLY=false" ${update-branches}/bin/update-branches > /dev/null
               grep -Fx "MINIMUM_TRACKING_VERSION=1.2.3" ${update-branches-knobs}/bin/update-branches > /dev/null
               grep -Fx "TRACK_STABLE_ONLY=true" ${update-branches-knobs}/bin/update-branches > /dev/null
+              ! grep -Fx "BUILD_VERIFICATION_SKIP=true" ${update-branches}/bin/update-branches
+              grep -Fx "BUILD_VERIFICATION_SKIP=true" ${update-branches-knobs}/bin/update-branches > /dev/null
               bash ${./tests/test_update_branches.sh}
               touch $out
             '';

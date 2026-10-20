@@ -48,7 +48,6 @@ PIN_HASHES="${PIN_HASHES:-${EXTRA_HASHES}}"
 BUILD_FAILURE_HASHES="${BUILD_FAILURE_HASHES:-[]}"
 ARTIFACT_HOOK="${ARTIFACT_HOOK:-}" # consumer script: regenerate vendored files, emit name=value extra hashes
 ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_OWNED_FILES:-}"
-VERIFICATION="${VERIFICATION:-evaluate}"
 SIBLINGS="${SIBLINGS:-[]}"
 SIBLING_REFS_IN_PIN="${SIBLING_REFS_IN_PIN:-}"
 MARKER_ENV="${MARKER_ENV:-}"
@@ -77,8 +76,8 @@ declare -A HF_HASHES=()
 RESOLVED_SIBLING_REFS='{}'
 
 evaluate_package() {
-  echo "Evaluating ${BUILD_ATTR}..."
-  nix eval --raw "${FLAKE_ROOT}#${BUILD_ATTR}.drvPath" >/dev/null
+  echo "Evaluating packages.default..."
+  nix eval --raw "${FLAKE_ROOT}#default.drvPath" >/dev/null
 }
 
 finish_unchanged() {
@@ -476,25 +475,25 @@ revalidate_build_hashes() {
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
     set +e
-    out=$(nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link 2>&1)
+    out=$(nix build "${FLAKE_ROOT}#default" --no-link 2>&1)
     rc=$?
     set -e
     ((rc == 0)) && return 0
     specified=$(printf '%s\n' "${out}" | sed -nE 's/.*specified:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
     new=$(printf '%s\n' "${out}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
     if [[ -z ${new} ]]; then
-      echo "error: build of ${BUILD_ATTR} failed and it wasn't a hash mismatch:" >&2
+      echo "error: build of packages.default failed and it wasn't a hash mismatch:" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
     owner=$(pin_field_holding "${specified}") || owner=""
     if [[ -n ${owner} ]] && ! declared_failure_field "${owner}"; then
-      echo "error: build of ${BUILD_ATTR} names pin field ${owner} as the hash mismatch, and ${owner} is not a declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]})" >&2
+      echo "error: build of packages.default names pin field ${owner} as the hash mismatch, and ${owner} is not a declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]})" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
     if [[ -n ${owner} && -n ${BUILD_FAILURE_RESOLVED[${owner}]:-} ]]; then
-      echo "error: build of ${BUILD_ATTR} still names pin field ${owner} after ${owner} was resolved from its own hash mismatch" >&2
+      echo "error: build of packages.default still names pin field ${owner} after ${owner} was resolved from its own hash mismatch" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
@@ -504,7 +503,7 @@ revalidate_build_hashes() {
       field=$(next_unresolved_failure_field) || field=""
     fi
     if [[ -z ${field} ]]; then
-      echo "error: build of ${BUILD_ATTR} still reports a hash mismatch with every declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]}) resolved once each" >&2
+      echo "error: build of packages.default still reports a hash mismatch with every declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]}) resolved once each" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
@@ -969,14 +968,9 @@ fi
 
 evaluate_package
 
-if [[ ${VERIFICATION} == "build" ]]; then
-  echo "Verifying build (${BUILD_ATTR})..."
-  nix build "${FLAKE_ROOT}#${BUILD_ATTR}" --no-link
-fi
-
 echo
 if ((pin_changed)); then
-  echo "Updated ${BUILD_ATTR} to ${new_version}."
+  echo "Updated the pin to ${new_version}."
 else
-  echo "${BUILD_ATTR}: pin unchanged (${new_version})."
+  echo "Pin unchanged (${new_version})."
 fi

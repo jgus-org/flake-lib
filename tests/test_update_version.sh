@@ -32,11 +32,9 @@ run_update() {
     GH_TRACK="${TRACK}" \
     TEST_RELEASE_TAG="${RELEASE_TAG}" \
     TEST_TAGS="${TAGS}" \
-    BUILD_ATTR=codex \
     HASH_MODE=prefetch \
     EXTRA_HASHES='[]' \
     PIN_HASHES='[]' \
-    VERIFICATION=evaluate \
     SIBLINGS='[]' \
     bash "${UPDATE_VERSION}" "${ARGS[@]}"
 }
@@ -69,19 +67,15 @@ MUTABLE_OUTPUT=$(TEST_PREFETCH_LOG="${PREFETCH_LOG}" \
   FLAKE_ROOT="${TEST_ROOT}" \
   SOURCE_TYPE=mutable-url \
   MUTABLE_URL=https://downloads.example.test/artifact.bin \
-  BUILD_ATTR=artifact \
-  VERIFICATION=evaluate \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}")
 grep -Fq 'lastModified = "Tue, 25 Aug 2026 12:34:56 GMT";' "${TEST_ROOT}/pin.nix"
 grep -Fq 'hash = "sha256-mutable";' "${TEST_ROOT}/pin.nix"
-grep -Fq 'Updated artifact to main.' <<<"${MUTABLE_OUTPUT}"
+grep -Fq 'Updated the pin to main.' <<<"${MUTABLE_OUTPUT}"
 MUTABLE_NOOP_OUTPUT=$(TEST_PREFETCH_LOG="${PREFETCH_LOG}" \
   FLAKE_ROOT="${TEST_ROOT}" \
   SOURCE_TYPE=mutable-url \
   MUTABLE_URL=https://downloads.example.test/artifact.bin \
-  BUILD_ATTR=artifact \
-  VERIFICATION=evaluate \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}")
 grep -Fq 'Already up to date (main).' <<<"${MUTABLE_NOOP_OUTPUT}"
@@ -125,13 +119,11 @@ NOOP_OUTPUT=$(FLAKE_ROOT="${TEST_ROOT}" \
   GH_TRACK=release \
   TEST_RELEASE_TAG=v1.2.3 \
   TEST_TAGS='' \
-  BUILD_ATTR=codex \
   HASH_MODE=prefetch \
   EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   ARTIFACT_FINGERPRINT=exact-fingerprint \
   ARTIFACT_HOOK=/must-not-run \
-  VERIFICATION=evaluate \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}" 1.2.3)
 grep -Fq 'Already up to date (1.2.3).' <<<"${NOOP_OUTPUT}"
@@ -150,13 +142,11 @@ TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
   GH_TRACK=release \
   TEST_RELEASE_TAG=v1.2.3 \
   TEST_TAGS='' \
-  BUILD_ATTR=codex \
   HASH_MODE=prefetch \
   EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   ARTIFACT_FINGERPRINT=exact-fingerprint \
   ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
-  VERIFICATION=evaluate \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}" 1.2.3
 grep -Fqx github "${ARTIFACT_LOG}"
@@ -197,13 +187,11 @@ EOF
       GH_TRACK=release \
       TEST_RELEASE_TAG=v1.2.3 \
       TEST_TAGS='' \
-      BUILD_ATTR=codex \
       HASH_MODE=prefetch \
       EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
       PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
       ARTIFACT_FINGERPRINT=exact-fingerprint \
       ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
-      VERIFICATION=evaluate \
       SIBLINGS='[]' \
       bash "${UPDATE_VERSION}" 1.2.3
   )
@@ -231,13 +219,11 @@ TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
   GH_REPO='' \
   GITLAB_OWNER='' \
   GITLAB_REPO='' \
-  BUILD_ATTR=example \
   HASH_MODE=prefetch \
   EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   ARTIFACT_FINGERPRINT=exact-fingerprint \
   ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
-  VERIFICATION=evaluate \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}" 1.2.3
 grep -Fqx pypi "${ARTIFACT_LOG}"
@@ -269,11 +255,9 @@ TEST_HF_METADATA='{
   HF_MANIFEST_INCLUDE='[]' \
   HF_MANIFEST_EXCLUDE='["^\\.","\\.complete\\.json$"]' \
   HF_MANIFEST_HASH_FIELD=manifestHash \
-  BUILD_ATTR=model \
   HASH_MODE=prefetch \
   EXTRA_HASHES='["manifestHash"]' \
   PIN_HASHES='["manifestHash"]' \
-  VERIFICATION=evaluate \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}"
 
@@ -314,18 +298,16 @@ HF_MISMATCH_OUTPUT=$(TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
   HF_REVISION=main \
   HF_FILES='[]' \
   HF_MANIFEST_PATH='' \
-  BUILD_ATTR=model \
   HASH_MODE=prefetch \
   EXTRA_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   PIN_HASHES='["artifactFingerprint","requirementsHash","wheelManifestHash"]' \
   ARTIFACT_FINGERPRINT=exact-fingerprint \
   ARTIFACT_HOOK="${ARTIFACT_HOOK}" \
-  VERIFICATION=evaluate \
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}")
 grep -Fqx huggingface "${ARTIFACT_LOG}"
 grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
-grep -Fq 'Updated model to 0-unstable-2026-08-26.' <<<"${HF_MISMATCH_OUTPUT}"
+grep -Fq 'Updated the pin to 0-unstable-2026-08-26.' <<<"${HF_MISMATCH_OUTPUT}"
 
 PNPM_ARTIFACT_HOOK="${TEST_ROOT}/pnpm-artifact-hook"
 printf '%s\n' \
@@ -347,13 +329,11 @@ run_build_failure_case() {
     GH_TRACK=release \
     TEST_RELEASE_TAG=v1.2.3 \
     TEST_TAGS='' \
-    BUILD_ATTR=codex \
     HASH_MODE=prefetch \
     EXTRA_HASHES="${EXTRA_HASHES_JSON}" \
     PIN_HASHES="${PIN_HASHES_JSON}" \
     BUILD_FAILURE_HASHES="${FAILURE_HASHES}" \
     ARTIFACT_HOOK="${PNPM_ARTIFACT_HOOK}" \
-    VERIFICATION=evaluate \
     SIBLINGS='[]' \
     TEST_BUILD_PLAN="${PLAN}" \
     TEST_BUILD_LOG="${CASE_ROOT}/builds.log" \

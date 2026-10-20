@@ -6,10 +6,12 @@
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
 #   siblings     : sibling-cascade specs
 #   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
+#   packages.default is the only build target, and the publisher builds it: there is no argument
+#     naming a target and none choosing whether one is built. Hash discovery is the exception and it
+#     builds `packages.default` too.
 {
   pkgs,
   source,
-  buildAttr,
   siblings ? [ ],
   siblingRefsInPin ? false,
   hashMode ? "prefetch",
@@ -18,15 +20,9 @@
     if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
   buildFailureHashes ? [ ],
   artifactHook ? null,
-  verification ?
-    if buildFailureHash == null && buildFailureHashes == [ ] then "evaluate" else "build",
   markerEnvironment ? { },
   artifactFingerprint ? "",
 }:
-assert builtins.elem verification [
-  "evaluate"
-  "build"
-];
 assert artifactFingerprint == "" || artifactHook != null;
 assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
@@ -121,7 +117,6 @@ pkgs.writeShellApplication {
       if hfManifest == null then [ ] else hfManifest.exclude or [ ]
     );
     HF_MANIFEST_HASH_FIELD = if hfManifestHashField == null then "" else hfManifestHashField;
-    BUILD_ATTR = buildAttr;
     HASH_MODE = hashMode;
     EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
     PIN_HASHES = builtins.toJSON (
@@ -131,7 +126,6 @@ pkgs.writeShellApplication {
     );
     BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
-    VERIFICATION = verification;
     SIBLINGS = builtins.toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);

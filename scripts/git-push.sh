@@ -24,6 +24,10 @@ remote_ref_sha() {
 # to be replaced for the push, not layered over, and put back afterwards so the read paths
 # keep the run's credential. The local config file is restored from a copy because it is the
 # only way to put a multivar back exactly, comments and ordering included.
+#
+# checkout@v7 writes that credential into a separate file and makes the repository's own
+# config include it, so the keys in this file are not all of them: an include that leads to a
+# credential is dropped for the push as well, and returns with the rest of the file.
 PUSH_CONFIG_PATH=''
 PUSH_CONFIG_BACKUP=''
 
@@ -31,6 +35,17 @@ push_credential_key() {
   local url="${1}" scheme="${1%%://*}" authority="${1#*://}"
   authority="${authority%%/*}"
   printf 'http.%s://%s/.extraheader' "${scheme}" "${authority#*@}"
+}
+
+push_credential_drop_credential_includes() {
+  local key included
+  while IFS= read -r key; do
+    [[ -n ${key} ]] || continue
+    included=$(git config --local --get "${key}") || continue
+    [[ ${included} == /* && -f ${included} ]] || continue
+    git config --file "${included}" --get-regexp '^http\..*\.extraheader$' >/dev/null || continue
+    git config --local --unset-all "${key}"
+  done < <(git config --local --name-only --get-regexp '^include(if\..*)?\.path$')
 }
 
 push_credential_install() {
@@ -48,6 +63,7 @@ push_credential_install() {
   while IFS= read -r key; do
     git config --local --unset-all "${key}"
   done < <(git config --local --name-only --get-regexp '^http\..*\.extraheader$')
+  push_credential_drop_credential_includes
 
   git config --local "$(push_credential_key "${url}")" \
     "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${token}" | base64 | tr -d '\n')"

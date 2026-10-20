@@ -270,7 +270,9 @@ cat >"${STUB_BIN}/git" <<STUB
 #!$(command -v bash)
 if [[ "\${1}" == '-c' || "\${1}" == 'push' ]]; then
   printf '%s\\0' "\${@}" >"\${PUSH_ARGV}"
-  "\${REAL_GIT}" config --local --get-regexp '^http\\..*\\.extraheader\$' >"\${PUSH_CREDENTIALS}"
+  # Effective configuration, not --local: checkout@v7 keeps the run's credential in a
+  # separate file that this repository's config includes, and both reach the request.
+  "\${REAL_GIT}" config --get-regexp '^http\\..*\\.extraheader\$' >"\${PUSH_CREDENTIALS}"
   exit 0
 fi
 exec "\${REAL_GIT}" "\${@}"
@@ -319,5 +321,40 @@ record_push ''
 git -C "${CREDENTIAL_CASE}" remote set-url origin 'git@github.com:o/r.git'
 cp "${CONFIG_PATH}" "${CONFIG_BEFORE}"
 record_push 'push-token'
+[[ ${PUSH_SENT} == "${RUN_CREDENTIAL}" ]]
+[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]
+
+# checkout@v7 writes the run's credential to its own file and reaches it with an includeIf
+# keyed to the git directory, so the extraheader never appears in the repository's config
+# file. The push still sends two Authorization headers, and the run fails the moment the
+# template it lands has something to commit.
+INCLUDE_CASE=$(mktemp -d "${TEST_ROOT}/credential-include.XXXXXX")
+git init -q "${INCLUDE_CASE}"
+git -C "${INCLUDE_CASE}" remote add origin https://github.com/o/r
+git -C "${INCLUDE_CASE}" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m 'base'
+INCLUDE_SHA=$(git -C "${INCLUDE_CASE}" rev-parse HEAD)
+INCLUDE_FILE="${TEST_ROOT}/checkout-credentials"
+printf '[http "https://github.com/"]\n\textraHeader = %s\n' "${RUN_CREDENTIAL}" >"${INCLUDE_FILE}"
+git -C "${INCLUDE_CASE}" config "includeIf.gitdir:${INCLUDE_CASE}/.git.path" "${INCLUDE_FILE}"
+CREDENTIAL_CASE=${INCLUDE_CASE}
+HEAD_SHA=${INCLUDE_SHA}
+CONFIG_PATH="${INCLUDE_CASE}/.git/config"
+cp "${CONFIG_PATH}" "${CONFIG_BEFORE}"
+
+record_push 'push-token'
+if [[ ${PUSH_COUNT} != 1 ]]; then
+  printf 'the push had %s credentials configured, so the server refuses it: %s\n' "${PUSH_COUNT}" "$(tr '\n' '|' <"${PUSH_CREDENTIALS}")" >&2
+  exit 1
+fi
+if [[ ${PUSH_SENT} != "${OUR_CREDENTIAL}" ]]; then
+  printf 'the push presented %s, not the configured push token\n' "${PUSH_SENT}" >&2
+  exit 1
+fi
+[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]] || {
+  printf 'the include that carries the run credential was not put back after the push\n' >&2
+  exit 1
+}
+
+record_push ''
 [[ ${PUSH_SENT} == "${RUN_CREDENTIAL}" ]]
 [[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]

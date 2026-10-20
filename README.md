@@ -11,12 +11,18 @@ branch. There is no copy-and-merge of scripts between repos.
 ```nix
 # High-level: a simple PyPI leaf collapses to one call.
 flake-lib.lib.mkLeafFlake {
-  inherit nixpkgs flake-utils;
+  inherit nixpkgs;
   source  = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };  # pname = PyPI dist (underscore form)
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
   pin     = import ./pin.nix;
 }
 # => packages.<system> = { <attr>; update-version; update-branches; default; }
+
+# Per-system outputs, over the systems this fleet builds for.
+flake-lib.lib.eachDefaultSystem      (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux, aarch64-darwin
+flake-lib.lib.eachDefaultLinuxSystem (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux
+flake-lib.lib.defaultSystems       # [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ]
+flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; }
@@ -162,6 +168,16 @@ sourceHash, pnpmDepsHash }` branch placeholders.
 
 `buildFailureHashes` declares the set of pin fields the build's hash mismatch may name, for a package whose build fails on whichever of its unprefetchable dependencies is stale first: `{ buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ]; }` covers a `fetchPnpmDeps` tree and a `buildGoModule` vendor tree in one bump. A mismatch is attributed to the declared field already holding the hash the build reported as specified, and while no declared field is resolved yet, to the first declared field. `buildFailureHash` and `buildFailureHashes` combine, and each declared field is resolved at most once, so the build runs at most one more time than there are declared fields. A build that still reports a hash mismatch once every declared field is resolved ends the run, as does a mismatch belonging to a pin field no declaration covers.
 
+### Supported systems
+
+`eachDefaultSystem` and `eachDefaultLinuxSystem` replace `flake-utils.lib.eachDefaultSystem`, which still iterates `x86_64-darwin`. Nixpkgs 26.11 dropped that platform. On `nixpkgs-unstable` a revision from late August 2026 on, `import nixpkgs { system = "x86_64-darwin"; }` throws `Nixpkgs 26.11 has dropped support for x86_64-darwin.` from `pkgs/top-level/default.nix`; `nixos-26.05` and earlier 26.11 revisions only warn that 26.05 is the last release to support it, which a verification build run with `--option abort-on-warn true` already turns into an abort. Either way a flake naming that host keeps evaluating until something forces its attributes — `nix flake check`, `nix flake show --all-systems`, a CI matrix over systems, or a consumer resolving `packages.x86_64-darwin.*`. What goes away here is the build host only: a producer can still ship an Intel macOS artifact by cross-compiling or pinning an upstream prebuilt, and the wheel targets below keep naming it as an artifact target.
+
+Reach for `eachDefaultLinuxSystem` when the producer cannot run on macOS at all — a Linux-only binary, something that needs the Linux kernel, an OCI image with no darwin variant. The two lists are exported as well, for code that keys a value by system instead of iterating one, such as a per-system asset map or a CI matrix.
+
+Both helpers merge a system's outputs the way flake-utils does (`packages.<system>.<attr>`) and need no flake input of their own, so a producer that carried flake-utils only to enumerate systems can drop that input. `mkLeafFlake` iterates the same three, so a leaf producer needs no flake-utils at all. This library carries no flake-utils input itself; a consumer that still forwards one to it (`inputs.flake-utils.follows = "flake-utils"` on the `flake-lib` input) earns `input 'flake-lib' has an override for a non-existent input 'flake-utils'`, so that line goes with the rest.
+
+They differ from flake-utils in one case: under `--impure`, flake-utils adds `builtins.currentSystem` to the set when the evaluating host is not already in it, while these helpers iterate exactly the hosts they name.
+
 ### Python wheel closures
 
 `mkPythonWheelhouse` is an `artifactHook` that pins a consumer's complete python
@@ -179,7 +195,7 @@ flake-lib pre-prepares wheel sets for these environments:
 flake-lib.lib.pythonEnvironments
 # {
 #   pythonVersions = [ "3.13" "3.14" ];
-#   systems = flake-utils.lib.defaultSystems;
+#   systems = defaultSystems;  # the standard three
 #   targets = {
 #     x86_64-linux = { uvPlatform = "x86_64-manylinux_2_28"; };
 #     aarch64-linux = { uvPlatform = "aarch64-manylinux_2_28"; };

@@ -1,5 +1,10 @@
-{ pythonEnvironments }:
 let
+  inherit (import ./default-systems.nix)
+    defaultSystems
+    defaultLinuxSystems
+    eachDefaultSystem
+    eachDefaultLinuxSystem
+    ;
   mkPypiPackage = import ./mk-pypi-package.nix;
   mkUpdateVersion = import ./mk-update-version.nix;
   mkUpdateBranches = import ./mk-update-branches.nix;
@@ -11,9 +16,14 @@ let
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   mkLeafFlake = import ./mk-leaf-flake.nix {
-    inherit mkPypiPackage mkUpdateVersion mkUpdateBranches;
+    inherit
+      mkPypiPackage
+      mkUpdateVersion
+      mkUpdateBranches
+      eachDefaultSystem
+      ;
   };
-  pythonWheelhouse = import ./python-wheelhouse.nix { inherit pythonEnvironments; };
+  pythonWheelhouse = import ./python-wheelhouse.nix;
   depsCore = ../scripts/deps_core.py;
 
   warnIfNewerMajor =
@@ -56,6 +66,10 @@ in
     evalMarkerTree
     depsCore
     warnIfNewerMajor
+    defaultSystems
+    defaultLinuxSystems
+    eachDefaultSystem
+    eachDefaultLinuxSystem
     ;
   inherit (pythonWheelhouse)
     pythonEnvironments

@@ -3,10 +3,10 @@
   mkPypiPackage,
   mkUpdateVersion,
   mkUpdateBranches,
+  eachDefaultSystem,
 }:
 {
   nixpkgs,
-  flake-utils,
   source,
   package,
   pin,
@@ -22,7 +22,7 @@
     "python-readiness.json"
   ],
 }:
-flake-utils.lib.eachDefaultSystem (
+eachDefaultSystem (
   system:
   let
     pkgs = import nixpkgs { inherit system; };

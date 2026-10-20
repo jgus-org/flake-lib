@@ -3,7 +3,6 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -14,40 +13,18 @@
     {
       self,
       nixpkgs,
-      flake-utils,
       treefmt-nix,
     }:
     let
-      pythonEnvironments = {
-        pythonVersions = [
-          "3.13"
-          "3.14"
-        ];
-        systems = flake-utils.lib.defaultSystems;
-        targets = {
-          x86_64-linux = {
-            uvPlatform = "x86_64-manylinux_2_28";
-          };
-          aarch64-linux = {
-            uvPlatform = "aarch64-manylinux_2_28";
-          };
-          x86_64-darwin = {
-            uvPlatform = "x86_64-apple-darwin";
-          };
-          aarch64-darwin = {
-            uvPlatform = "aarch64-apple-darwin";
-          };
-        };
-      };
+      lib = import ./lib;
     in
     {
-      lib = import ./lib { inherit pythonEnvironments; };
+      inherit lib;
     }
-    // flake-utils.lib.eachDefaultSystem (
+    // lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        inherit (self) lib;
         treefmtEval = treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";
           programs.nixfmt.enable = true;
@@ -294,6 +271,22 @@
           in
           pkgs.lib.throwIf (failures != [ ]) "evalMarkerTree tests failed" (
             pkgs.runCommand "eval-marker-tree-tests" { } "touch $out"
+          );
+        default-systems-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/default-systems.nix {
+                inherit (lib)
+                  defaultSystems
+                  defaultLinuxSystems
+                  eachDefaultSystem
+                  eachDefaultLinuxSystem
+                  ;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "defaultSystems tests failed" (
+            pkgs.runCommand "default-systems-tests" { } "touch $out"
           );
         wheelhouse-tags-tests =
           let
@@ -972,6 +965,7 @@
             update-branches-tests
             version-matches-comparison-tests
             eval-marker-tree-tests
+            default-systems-tests
             wheelhouse-tags-tests
             wheelhouse-environment-tests
             wheelhouse-fingerprint-tests

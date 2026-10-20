@@ -18,54 +18,9 @@ remote_ref_sha() {
   printf '%s\n' "${output%%[[:space:]]*}"
 }
 
-# actions/checkout configures the run's own credential for the server host, and extraHeader
-# is a multivar: a second key that matches the same request puts two Authorization headers on
-# the wire, and the server refuses the request rather than choose. So the installed value has
-# to be replaced for the push, not layered over, and put back afterwards so the read paths
-# keep the run's credential. The local config file is restored from a copy because it is the
-# only way to put a multivar back exactly, comments and ordering included.
-PUSH_CONFIG_PATH=''
-PUSH_CONFIG_BACKUP=''
-
-push_credential_key() {
-  local url="${1}" scheme="${1%%://*}" authority="${1#*://}"
-  authority="${authority%%/*}"
-  printf 'http.%s://%s/.extraheader' "${scheme}" "${authority#*@}"
-}
-
-push_credential_install() {
-  local token="${1}" url key
-  PUSH_CREDENTIAL_INSTALLED=false
-  [[ -n ${token} ]] || return 0
-  url=$(git remote get-url origin) || return 1
-  [[ ${url} == https://* ]] || return 0
-
-  PUSH_CONFIG_PATH="$(git rev-parse --absolute-git-dir)/config"
-  PUSH_CONFIG_BACKUP=$(mktemp) || return 1
-  cp "${PUSH_CONFIG_PATH}" "${PUSH_CONFIG_BACKUP}" || return 1
-  PUSH_CREDENTIAL_INSTALLED=true
-
-  while IFS= read -r key; do
-    git config --local --unset-all "${key}"
-  done < <(git config --local --name-only --get-regexp '^http\..*\.extraheader$')
-
-  git config --local "$(push_credential_key "${url}")" \
-    "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${token}" | base64 | tr -d '\n')"
-}
-
-push_credential_uninstall() {
-  [[ ${PUSH_CREDENTIAL_INSTALLED:-false} == true ]] || return 0
-  cp "${PUSH_CONFIG_BACKUP}" "${PUSH_CONFIG_PATH}"
-  rm -f "${PUSH_CONFIG_BACKUP}"
-  PUSH_CREDENTIAL_INSTALLED=false
-}
-
 push_ref() {
-  local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}" result=0
-  push_credential_install "${GIT_PUSH_TOKEN:-}" || return 1
-  push_with_retries "${source}" "${ref}" "${expected_sha}" "${mode}" || result=$?
-  push_credential_uninstall
-  return "${result}"
+  local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}"
+  push_with_retries "${source}" "${ref}" "${expected_sha}" "${mode}"
 }
 
 # A failed push can be ambiguous: the server may have updated the ref before

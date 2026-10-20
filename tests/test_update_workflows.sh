@@ -241,26 +241,27 @@ grep -Fq 'templates/workflows/nightly-scan.yml' <<<"${REFUSAL}"
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${BEFORE_SHA}" ]]
 [[ ! -e "${CHECKOUT}/.github/workflows/nightly-scan.yml" ]]
 
-# The push is made as another actor while actions/checkout has configured the run's credential
-# for the server host. extraHeader is a multivar, so a second key that matches the same request
-# puts two Authorization headers on the wire and the server refuses the request rather than
-# choose. The installed value has to be replaced for the push and put back afterwards, so what
-# git would actually send is the assertion: the push is intercepted and the credential set
-# configured at that moment is recorded.
+# The push goes out with the credential the job's checkout configured, whatever shape that
+# takes: checkout@v7 writes it to a separate file and reaches it with an includeIf keyed to
+# the git directory, where a read of the repository's own config file does not see it. The
+# push is intercepted and the credential visible at that moment is recorded, because a second
+# one -- from any extraHeader installed or layered on for the push -- reaches the same
+# request, and the server refuses the request rather than choose between them.
 source "${GIT_PUSH_LIB}"
 
-CREDENTIAL_CASE=$(mktemp -d "${TEST_ROOT}/credential.XXXXXX")
-git init -q "${CREDENTIAL_CASE}"
-git -C "${CREDENTIAL_CASE}" remote add origin https://github.com/o/r
-git -C "${CREDENTIAL_CASE}" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m 'base'
-HEAD_SHA=$(git -C "${CREDENTIAL_CASE}" rev-parse HEAD)
-CREDENTIAL_KEY='http.https://github.com/.extraheader'
-RUN_CREDENTIAL='AUTHORIZATION: basic UnVuQ3JlZGVudGlhbA=='
-OUR_CREDENTIAL="AUTHORIZATION: basic $(printf 'x-access-token:push-token' | base64 | tr -d '\n')"
-git -C "${CREDENTIAL_CASE}" config --local "${CREDENTIAL_KEY}" "${RUN_CREDENTIAL}"
-CONFIG_PATH="${CREDENTIAL_CASE}/.git/config"
+PUSH_CASE=$(mktemp -d "${TEST_ROOT}/push-identity.XXXXXX")
+git init -q "${PUSH_CASE}"
+git -C "${PUSH_CASE}" remote add origin https://github.com/o/r
+git -C "${PUSH_CASE}" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m 'base'
+HEAD_SHA=$(git -C "${PUSH_CASE}" rev-parse HEAD)
+CHECKOUT_CREDENTIAL='AUTHORIZATION: basic UnVuQ3JlZGVudGlhbA=='
+CHECKOUT_CREDENTIALS_FILE="${TEST_ROOT}/checkout-credentials"
+printf '[http "https://github.com/"]\n\textraHeader = %s\n' "${CHECKOUT_CREDENTIAL}" >"${CHECKOUT_CREDENTIALS_FILE}"
+git -C "${PUSH_CASE}" config "includeIf.gitdir:${PUSH_CASE}/.git.path" "${CHECKOUT_CREDENTIALS_FILE}"
+CONFIG_PATH="${PUSH_CASE}/.git/config"
 CONFIG_BEFORE="${TEST_ROOT}/config.before"
 cp "${CONFIG_PATH}" "${CONFIG_BEFORE}"
+[[ "$(git -C "${PUSH_CASE}" config --get-regexp '^http\..*\.extraheader$' | wc -l)" == 1 ]]
 
 STUB_BIN=$(mktemp -d "${TEST_ROOT}/stub.XXXXXX")
 PUSH_ARGV="${TEST_ROOT}/push-argv"
@@ -270,54 +271,46 @@ cat >"${STUB_BIN}/git" <<STUB
 #!$(command -v bash)
 if [[ "\${1}" == '-c' || "\${1}" == 'push' ]]; then
   printf '%s\\0' "\${@}" >"\${PUSH_ARGV}"
-  "\${REAL_GIT}" config --local --get-regexp '^http\\..*\\.extraheader\$' >"\${PUSH_CREDENTIALS}"
+  # Effective configuration, not --local: checkout@v7 keeps the credential in a separate
+  # file that this repository's config includes, and both reach the request.
+  "\${REAL_GIT}" config --get-regexp '^http\\..*\\.extraheader\$' >"\${PUSH_CREDENTIALS}"
   exit 0
 fi
 exec "\${REAL_GIT}" "\${@}"
 STUB
 chmod +x "${STUB_BIN}/git"
 
-record_push() {
-  rm -f "${PUSH_ARGV}" "${PUSH_CREDENTIALS}"
-  (
-    cd "${CREDENTIAL_CASE}"
-    export PUSH_ARGV PUSH_CREDENTIALS REAL_GIT
-    PATH="${STUB_BIN}:${PATH}"
-    GIT_PUSH_TOKEN="${1}"
+(
+  cd "${PUSH_CASE}"
+  export PUSH_ARGV PUSH_CREDENTIALS REAL_GIT
+  PATH="${STUB_BIN}:${PATH}"
+  # A caller that offers the push its own token is refused the same way the server would
+  # refuse it, so the shape that caused the duplicate header cannot come back unnoticed.
+  GIT_PUSH_TOKEN='pusher-token' \
+    PUSH_MAX_ATTEMPTS=1 PUSH_RETRY_DELAY_SECONDS=0 \
     push_ref HEAD main "${HEAD_SHA}" lease
-  )
-  mapfile -t -d '' PUSH_INVOCATION <"${PUSH_ARGV}"
-  PUSH_COUNT=$(wc -l <"${PUSH_CREDENTIALS}")
-  PUSH_SENT=$(cut -d' ' -f2- "${PUSH_CREDENTIALS}")
-}
+)
+mapfile -t -d '' PUSH_INVOCATION <"${PUSH_ARGV}"
 
-record_push 'push-token'
-if [[ ${PUSH_COUNT} != 1 ]]; then
-  printf 'the push had %s credentials configured, so the server refuses it: %s\n' "${PUSH_COUNT}" "$(tr '\n' '|' <"${PUSH_CREDENTIALS}")" >&2
+if [[ "$(wc -l <"${PUSH_CREDENTIALS}")" != 1 ]]; then
+  printf 'the push had %s credentials visible, so the server refuses it: %s\n' \
+    "$(wc -l <"${PUSH_CREDENTIALS}")" "$(tr '\n' '|' <"${PUSH_CREDENTIALS}")" >&2
   exit 1
 fi
-if [[ ${PUSH_SENT} != "${OUR_CREDENTIAL}" ]]; then
-  printf 'the push presented %s, not the configured push token\n' "${PUSH_SENT}" >&2
-  exit 1
-fi
-[[ ${PUSH_INVOCATION[0]} == 'push' ]] || {
-  printf 'the push carried a layered credential argument, so two Authorization headers go out\n' >&2
+[[ "$(cut -d' ' -f2- "${PUSH_CREDENTIALS}")" == "${CHECKOUT_CREDENTIAL}" ]] || {
+  printf 'the push would not have carried the credential this job checked out with\n' >&2
   exit 1
 }
+if printf '%s\n' "${PUSH_INVOCATION[@]}" | grep -qx -- '-c'; then
+  printf 'the push carried a credential override of its own: %s\n' "${PUSH_INVOCATION[*]}" >&2
+  exit 1
+fi
 [[ " ${PUSH_INVOCATION[*]} " == *' origin '* ]]
-[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]] || {
-  printf 'the run credential was not put back after the push\n' >&2
+[[ " ${PUSH_INVOCATION[*]} " == *'--force-with-lease=refs/heads/main:'* ]] || {
+  printf 'the refresh must push under a lease on the branch it read\n' >&2
   exit 1
 }
-
-# With no token there is nothing to replace, and a remote with no header mechanism leaves the
-# configuration alone: in both cases the run actor's own credential must survive untouched.
-record_push ''
-[[ ${PUSH_SENT} == "${RUN_CREDENTIAL}" ]]
-[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]
-
-git -C "${CREDENTIAL_CASE}" remote set-url origin 'git@github.com:o/r.git'
-cp "${CONFIG_PATH}" "${CONFIG_BEFORE}"
-record_push 'push-token'
-[[ ${PUSH_SENT} == "${RUN_CREDENTIAL}" ]]
-[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]]
+[[ "$(cat "${CONFIG_PATH}")" == "$(cat "${CONFIG_BEFORE}")" ]] || {
+  printf 'the push rewrote the repository configuration\n' >&2
+  exit 1
+}

@@ -12,7 +12,8 @@
 #
 # Failures: per-branch input-refresh or update-version failures and aggregate targets missing the discovery base commit are surfaced as GH Actions ::warning::
 # annotations + a step summary, and cause a non-zero exit at the end of the run. An aggregate whose current tip is reachable from neither the new target nor
-# any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate.
+# any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate. An aggregate that already contains its
+# target is left where it is without being retained; it is ahead of the target, not stranded from it.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
 #   SOURCE_TYPE          pypi | github | github-release-asset | gitlab | oci
@@ -794,6 +795,12 @@ publish_aggregates() {
     fi
     if [[ ${cur_sha} == "${target_sha}" ]]; then
       echo "  ${agg} already at ${target_branch}"
+      continue
+    fi
+    # A commit merged onto the aggregate after discovery captured the base leaves it ahead of the
+    # target rather than behind it; the next run discovers that tip and carries it into the exact branches.
+    if [[ -n ${cur_sha} ]] && git merge-base --is-ancestor "${target_sha}" "${cur_sha}"; then
+      echo "  ${agg} is ahead of ${target_branch} (tip ${cur_sha:0:8} carries it)"
       continue
     fi
     if ! git merge-base --is-ancestor "${BASE_SHA}" "${target_sha}"; then

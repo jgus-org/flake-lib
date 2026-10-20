@@ -374,19 +374,16 @@ assert_ref_sha main "${SPECIFICATION_SHA}"
 assert_contains_specification v1.2.3-rc1
 assert_same_ref v1.2 v1.2.3-rc1
 
-# Keeping an aggregate stable can choose an exact branch outside the tracked set. It also needs the specification, even when every attempted update succeeded.
+# Keeping an aggregate stable can choose an exact branch outside the tracked set. An aggregate already carrying that branch's tip plus a newer main-only commit needs no move.
 initialize_repository
 seed_exact_branch 1.1.0
 point_aggregate main 1.1.0
 commit_specification
-export GITHUB_STEP_SUMMARY="${CASE_ROOT}/summary.md"
-run_failed_update '1.2.0-rc1'
+run_update '1.2.0-rc1'
 assert_ref_sha main "${SPECIFICATION_SHA}"
 assert_contains_specification v1.2.0-rc1
 assert_same_ref v1.2 v1.2.0-rc1
 assert_same_ref v1 v1.2.0-rc1
-grep -Fq 'main' "${GITHUB_STEP_SUMMARY}"
-unset GITHUB_STEP_SUMMARY
 
 # Successful refreshes publish the specification and remain idempotent on the next run.
 initialize_repository
@@ -429,6 +426,21 @@ run_update '1.2.0'
 assert_same_ref main v1.2.0
 assert_contains_specification main
 assert_contains_specification v1.2.0
+
+# A main-only commit on top of the published target leaves main ahead of the target rather than stranded from it: publication leaves every ref alone.
+initialize_repository
+seed_exact_branch 1.2.0
+PLAN=$(run_command '1.2.0' list)
+BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
+VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
+run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0
+run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}"
+commit_specification
+run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}"
+assert_ref_sha main "${SPECIFICATION_SHA}"
+assert_contains_specification main
+assert_same_ref v1.2 v1.2.0
+assert_same_ref v1 v1.2.0
 
 initialize_repository
 run_update $'V1.2.2\nv1.2.3'

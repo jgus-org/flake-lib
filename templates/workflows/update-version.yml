@@ -40,12 +40,6 @@ jobs:
     outputs:
       sha: ${{ steps.update.outputs.sha }}
     steps:
-      # This job's commit rewrites files under .github/workflows, which the run's own token
-      # cannot write -- that scope is a GitHub App installation permission, and no
-      # `permissions` block can ask for it. So the identity the job pushes with is chosen
-      # here, where checkout configures it for the job's git commands and removes it when the
-      # job ends. Without the organization secret the job keeps the run credential and the
-      # server refuses the push, which is what happened before the identity moved.
       - uses: actions/checkout@v7
         with:
           token: ${{ secrets.ORG_UPDATE_TOKEN || github.token }}

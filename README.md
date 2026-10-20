@@ -11,7 +11,7 @@ branch. There is no copy-and-merge of scripts between repos.
 ```nix
 # High-level: a simple PyPI leaf collapses to one call.
 flake-lib.lib.mkLeafFlake {
-  inherit nixpkgs flake-utils;
+  inherit nixpkgs;
   source  = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };  # pname = PyPI dist (underscore form)
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
   pin     = import ./pin.nix;
@@ -174,9 +174,9 @@ sourceHash, pnpmDepsHash }` branch placeholders.
 
 Reach for `eachDefaultLinuxSystem` when the producer cannot run on macOS at all — a Linux-only binary, something that needs the Linux kernel, an OCI image with no darwin variant. The two lists are exported as well, for code that keys a value by system instead of iterating one, such as a per-system asset map or a CI matrix.
 
-Both helpers merge a system's outputs the way flake-utils does (`packages.<system>.<attr>`) and need no flake input of their own, so a producer that carried flake-utils only to enumerate systems can drop that input. They differ from flake-utils in one case: under `--impure`, flake-utils adds `builtins.currentSystem` to the set when the evaluating host is not already in it, while these helpers iterate exactly the hosts they name.
+Both helpers merge a system's outputs the way flake-utils does (`packages.<system>.<attr>`) and need no flake input of their own, so a producer that carried flake-utils only to enumerate systems can drop that input. `mkLeafFlake` iterates the same three, so a leaf producer needs no flake-utils at all. This library carries no flake-utils input itself; a consumer that still forwards one to it (`inputs.flake-utils.follows = "flake-utils"` on the `flake-lib` input) earns `input 'flake-lib' has an override for a non-existent input 'flake-utils'`, so that line goes with the rest.
 
-`mkLeafFlake` still takes `flake-utils` and iterates its defaults, and this flake's own outputs and `pythonEnvironments` iteration do the same, so those sites keep advertising `x86_64-darwin` until they move to the helpers above.
+They differ from flake-utils in one case: under `--impure`, flake-utils adds `builtins.currentSystem` to the set when the evaluating host is not already in it, while these helpers iterate exactly the hosts they name.
 
 ### Python wheel closures
 
@@ -195,7 +195,7 @@ flake-lib pre-prepares wheel sets for these environments:
 flake-lib.lib.pythonEnvironments
 # {
 #   pythonVersions = [ "3.13" "3.14" ];
-#   systems = flake-utils.lib.defaultSystems;
+#   systems = defaultSystems;  # the standard three
 #   targets = {
 #     x86_64-linux = { uvPlatform = "x86_64-manylinux_2_28"; };
 #     aarch64-linux = { uvPlatform = "aarch64-manylinux_2_28"; };

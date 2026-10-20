@@ -3,41 +3,61 @@
   defaultLinuxSystems,
   eachDefaultSystem,
   eachDefaultLinuxSystem,
-  flake-utils,
 }:
 let
-  standardThree = [
-    "aarch64-darwin"
-    "aarch64-linux"
-    "x86_64-linux"
-  ];
-  standardTwo = [
-    "aarch64-linux"
-    "x86_64-linux"
-  ];
   sample = system: {
-    packages = {
-      default = system;
-      tool = "${system}-tool";
-    };
-    checks.smoke = { inherit system; };
+    packages.default = system;
+    devShells.default = [ system ];
   };
 in
 {
   testDefaultSystemsAreTheStandardThree = {
     expr = defaultSystems;
-    expected = standardThree;
+    expected = [
+      "aarch64-darwin"
+      "aarch64-linux"
+      "x86_64-linux"
+    ];
   };
   testDefaultLinuxSystemsAreTheStandardTwo = {
     expr = defaultLinuxSystems;
-    expected = standardTwo;
+    expected = [
+      "aarch64-linux"
+      "x86_64-linux"
+    ];
   };
-  testIterationMatchesFlakeUtils = {
-    expr = eachDefaultSystem sample == flake-utils.lib.eachSystem standardThree sample;
-    expected = true;
+  testEveryOutputIsKeyedByHost = {
+    expr = eachDefaultSystem sample;
+    expected = {
+      packages = {
+        aarch64-darwin = {
+          default = "aarch64-darwin";
+        };
+        aarch64-linux = {
+          default = "aarch64-linux";
+        };
+        x86_64-linux = {
+          default = "x86_64-linux";
+        };
+      };
+      devShells = {
+        aarch64-darwin = {
+          default = [ "aarch64-darwin" ];
+        };
+        aarch64-linux = {
+          default = [ "aarch64-linux" ];
+        };
+        x86_64-linux = {
+          default = [ "x86_64-linux" ];
+        };
+      };
+    };
   };
-  testLinuxIterationMatchesFlakeUtils = {
-    expr = eachDefaultLinuxSystem sample == flake-utils.lib.eachSystem standardTwo sample;
-    expected = true;
+  testLinuxIteratesOnlyTheLinuxHosts = {
+    expr = builtins.attrNames (eachDefaultLinuxSystem sample).packages;
+    expected = [
+      "aarch64-linux"
+      "x86_64-linux"
+    ];
   };
 }

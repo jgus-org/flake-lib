@@ -1,5 +1,29 @@
-{ pythonEnvironments }:
 let
+  inherit (import ./default-systems.nix) defaultSystems;
+
+  pythonEnvironments = {
+    pythonVersions = [
+      "3.13"
+      "3.14"
+    ];
+    systems = defaultSystems;
+    targets = {
+      x86_64-linux = {
+        uvPlatform = "x86_64-manylinux_2_28";
+      };
+      aarch64-linux = {
+        uvPlatform = "aarch64-manylinux_2_28";
+      };
+      # Not a build host any more, but an Intel macOS wheel remains a target a producer can ask for.
+      x86_64-darwin = {
+        uvPlatform = "x86_64-apple-darwin";
+      };
+      aarch64-darwin = {
+        uvPlatform = "aarch64-apple-darwin";
+      };
+    };
+  };
+
   platformTags =
     {
       pythonVersion,

@@ -32,9 +32,15 @@ jobs:
     outputs:
       sha: ${{ steps.update.outputs.sha }}
     steps:
+      # The refresher commits changes under .github/workflows, which the run's own token
+      # cannot write: that scope belongs to the GitHub App installation, and no
+      # `permissions` block can ask for it. So the identity this job pushes with is chosen
+      # here -- checkout installs it for the job's git commands and removes it when the job
+      # ends -- and the push itself carries no credential of its own. Without the
+      # organization secret the server refuses the push.
       - uses: actions/checkout@v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.ORG_UPDATE_TOKEN || github.token }}
 
       - uses: cachix/install-nix-action@v31
 
@@ -44,8 +50,6 @@ jobs:
 
       - name: Update workflows from flake-lib templates
         id: update
-        env:
-          GIT_PUSH_TOKEN: ${{ secrets.ORG_UPDATE_TOKEN }}
         run: nix run github:jgus-org/flake-lib/v1#update-workflows
 
   # A producer whose flake takes inputs from other producers here must not pin them before

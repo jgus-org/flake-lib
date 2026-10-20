@@ -18,13 +18,6 @@ remote_ref_sha() {
   printf '%s\n' "${output%%[[:space:]]*}"
 }
 
-# Which identity a push carries is not this helper's business. actions/checkout configures
-# the run's credential for the repository's git commands and removes it when the job ends,
-# so a job that pushes as another identity declares it on its own checkout step -- see the
-# `token:` input in the refresher workflows -- and every push here goes out with whatever
-# that installed. A credential added here would reach the request as a second Authorization
-# header, extraHeader being a multivar, and the server refuses the request rather than
-# choose between them.
 push_ref() {
   local source="${1}" ref="${2}" expected_sha="${3}" mode="${4}"
   push_with_retries "${source}" "${ref}" "${expected_sha}" "${mode}"

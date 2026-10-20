@@ -295,6 +295,23 @@
           pkgs.lib.throwIf (failures != [ ]) "evalMarkerTree tests failed" (
             pkgs.runCommand "eval-marker-tree-tests" { } "touch $out"
           );
+        default-systems-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/default-systems.nix {
+                inherit flake-utils;
+                inherit (lib)
+                  defaultSystems
+                  defaultLinuxSystems
+                  eachDefaultSystem
+                  eachDefaultLinuxSystem
+                  ;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "defaultSystems tests failed" (
+            pkgs.runCommand "default-systems-tests" { } "touch $out"
+          );
         wheelhouse-tags-tests =
           let
             failures = pkgs.lib.runTests (import ./tests/wheelhouse-tags.nix { inherit (lib) platformTags; });
@@ -972,6 +989,7 @@
             update-branches-tests
             version-matches-comparison-tests
             eval-marker-tree-tests
+            default-systems-tests
             wheelhouse-tags-tests
             wheelhouse-environment-tests
             wheelhouse-fingerprint-tests

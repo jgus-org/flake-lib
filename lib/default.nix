@@ -57,6 +57,12 @@ in
     depsCore
     warnIfNewerMajor
     ;
+  inherit (import ./default-systems.nix)
+    defaultSystems
+    defaultLinuxSystems
+    eachDefaultSystem
+    eachDefaultLinuxSystem
+    ;
   inherit (pythonWheelhouse)
     pythonEnvironments
     platformTags

@@ -18,6 +18,12 @@ flake-lib.lib.mkLeafFlake {
 }
 # => packages.<system> = { <attr>; update-version; update-branches; default; }
 
+# Per-system outputs, over the systems this fleet builds for.
+flake-lib.lib.eachDefaultSystem      (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux, aarch64-darwin
+flake-lib.lib.eachDefaultLinuxSystem (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux
+flake-lib.lib.defaultSystems       # [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ]
+flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
+
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
@@ -161,6 +167,16 @@ Use `pinSchema = "github-pnpm"` for the corresponding `{ version, sourceRev,
 sourceHash, pnpmDepsHash }` branch placeholders.
 
 `buildFailureHashes` declares the set of pin fields the build's hash mismatch may name, for a package whose build fails on whichever of its unprefetchable dependencies is stale first: `{ buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ]; }` covers a `fetchPnpmDeps` tree and a `buildGoModule` vendor tree in one bump. A mismatch is attributed to the declared field already holding the hash the build reported as specified, and while no declared field is resolved yet, to the first declared field. `buildFailureHash` and `buildFailureHashes` combine, and each declared field is resolved at most once, so the build runs at most one more time than there are declared fields. A build that still reports a hash mismatch once every declared field is resolved ends the run, as does a mismatch belonging to a pin field no declaration covers.
+
+### Supported systems
+
+`eachDefaultSystem` and `eachDefaultLinuxSystem` replace `flake-utils.lib.eachDefaultSystem`, which still iterates `x86_64-darwin`. Nixpkgs 26.11 dropped that platform. On `nixpkgs-unstable` a revision from late August 2026 on, `import nixpkgs { system = "x86_64-darwin"; }` throws `Nixpkgs 26.11 has dropped support for x86_64-darwin.` from `pkgs/top-level/default.nix`; `nixos-26.05` and earlier 26.11 revisions only warn that 26.05 is the last release to support it, which a verification build run with `--option abort-on-warn true` already turns into an abort. Either way a flake naming that host keeps evaluating until something forces its attributes — `nix flake check`, `nix flake show --all-systems`, a CI matrix over systems, or a consumer resolving `packages.x86_64-darwin.*`. What goes away here is the build host only: a producer can still ship an Intel macOS artifact by cross-compiling or pinning an upstream prebuilt, and the wheel targets below keep naming it as an artifact target.
+
+Reach for `eachDefaultLinuxSystem` when the producer cannot run on macOS at all — a Linux-only binary, something that needs the Linux kernel, an OCI image with no darwin variant. The two lists are exported as well, for code that keys a value by system instead of iterating one, such as a per-system asset map or a CI matrix.
+
+Both helpers merge a system's outputs the way flake-utils does (`packages.<system>.<attr>`) and need no flake input of their own, so a producer that carried flake-utils only to enumerate systems can drop that input. They differ from flake-utils in one case: under `--impure`, flake-utils adds `builtins.currentSystem` to the set when the evaluating host is not already in it, while these helpers iterate exactly the hosts they name.
+
+`mkLeafFlake` still takes `flake-utils` and iterates its defaults, and this flake's own outputs and `pythonEnvironments` iteration do the same, so those sites keep advertising `x86_64-darwin` until they move to the helpers above.
 
 ### Python wheel closures
 

@@ -980,8 +980,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     problems = []
     if not read_token:
         problems.append("no GH_TOKEN or GITHUB_TOKEN, so no run history can be read")
-    if "/" not in repository:
-        problems.append("no GITHUB_REPOSITORY, so no organisation can be inferred")
+    if not (args.org or "/" in repository):
+        problems.append("no --org, and no GITHUB_REPOSITORY to take the organisation from")
+    if args.report_issue and "/" not in repository:
+        problems.append("--report-issue needs GITHUB_REPOSITORY, the repository whose issue is written")
     if problems:
         for problem in problems:
             print(f"error: {problem}", file=sys.stderr)

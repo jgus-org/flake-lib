@@ -917,6 +917,23 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(report.api.requests, [])
         self.assertEqual(producers["bun-flake"].reads, 0)
 
+    def test_an_organisation_named_on_the_command_line_needs_no_repository(self) -> None:
+        producers = {"bun-flake": Producer(runs=[success(1)])}
+        report = self.sweep(producers, ("--org", ORG), environment={"GITHUB_TOKEN": "fixture"})
+        self.assertEqual(report.status, 0)
+        self.assertEqual(producers["bun-flake"].reads, 1)
+
+    def test_an_issue_needs_the_repository_it_is_written_into(self) -> None:
+        producers = {"bun-flake": Producer(runs=[failure(4, age=3600), failure(3, age=86400)])}
+        report = self.sweep(
+            producers,
+            ("--org", ORG, "--report-issue"),
+            environment={"GITHUB_TOKEN": "fixture"},
+        )
+        self.assertEqual(report.status, 1)
+        self.assertIn("GITHUB_REPOSITORY", report.stderr)
+        self.assertEqual(report.api.writes(), ([], [], []))
+
     def test_the_report_is_deterministic(self) -> None:
         runs = [failure(4, age=3600), failure(3, age=86400), success(2, age=172800)]
         first = self.sweep({"bun-flake": Producer(runs=runs), "tidarr-flake": Producer(runs=[success(1)])})

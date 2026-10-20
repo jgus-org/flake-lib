@@ -457,13 +457,14 @@ GH_TOKEN=github_pat_… GITHUB_REPOSITORY=jgus-org/flake-lib \
 ```
 
 Run this way it prints the report and writes nothing. A token is needed to read any run
-history at all, and `GITHUB_REPOSITORY` says whose organisation to sweep. `--report-issue` keeps
-one tracking issue in that repository current instead, and *Producer updater health* is
-flake-lib's own scheduled workflow doing exactly that: the issue is updated in place, commented
-on only when the set of producers that are not publishing changes, and closed when the fleet is
-green. The signal lives here rather than in the producers because the fleet's build gate for
-published versions already lives here, and because a signal that every producer must install is
-a signal missing wherever it was not installed — this one needs no producer change at all.
+history at all, and the organisation to sweep comes from `GITHUB_REPOSITORY` or from `--org`. Only
+`--report-issue` needs a repository of its own, because that is the repository whose tracking issue
+is written. *Producer updater health* is flake-lib's own scheduled workflow doing exactly that: the
+issue is updated in place, commented on only when the set of producers that are not publishing
+changes, and closed when the fleet is green. The signal lives here rather than in the producers
+because the fleet's build gate for published versions already lives here, and because a signal that
+every producer must install is a signal missing wherever it was not installed — this one needs no
+producer change at all.
 
 The sweep reads each non-archived `jgus-org/*-flake` repository's own run list rather than the
 workflow files it has now, because a run records the path its workflow had when it ran. That is

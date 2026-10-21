@@ -511,6 +511,54 @@ assert_same_ref v1 v1.2.3
 assert_same_ref v1.2 v1.2.3
 assert_same_ref v1.3 v1.3.0-rc1
 
+# The publisher that runs before the maintenance matrix scopes itself to the aggregates its own version carries, so the lines that matrix has not refreshed yet are neither moved nor reported.
+initialize_repository
+seed_exact_branch 1.2.1
+point_aggregate v1.2 1.2.1
+point_aggregate v1 1.2.1
+point_aggregate main 1.2.1
+commit_specification
+VERSIONS=$'1.2.1\n1.3.0'
+PLAN=$(run_command "${VERSIONS}" list)
+BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
+VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
+STALE_V121_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/v1.2.1)
+run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.3.0 --upstream-version 1.3.0
+run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" --for-version 1.3.0 >"${CASE_ROOT}/early-publish.log" 2>&1
+assert_same_ref main v1.3.0
+assert_same_ref v1 v1.3.0
+assert_same_ref v1.3 v1.3.0
+assert_ref_sha v1.2 "${STALE_V121_SHA}"
+if grep -Fq 'no candidate for' "${CASE_ROOT}/early-publish.log"; then
+  echo 'the scoped publisher reported an aggregate outside its scope' >&2
+  exit 1
+fi
+
+# Publication without a scope still retains an aggregate whose every exact branch predates the specification, and the next refresh releases it.
+PUBLISH_EXIT=0
+set +e
+run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" >"${CASE_ROOT}/final-publish.log" 2>&1
+PUBLISH_EXIT=$?
+set -e
+grep -Fq 'No candidate for v1.2 contains discovery base' "${CASE_ROOT}/final-publish.log"
+[[ ${PUBLISH_EXIT} == 1 ]]
+run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.2.1 --upstream-version 1.2.1
+run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}"
+assert_same_ref v1.2 v1.2.1
+
+# A scoped publication rejects a version the manifest does not track.
+initialize_repository
+PLAN=$(run_command '1.2.0' list)
+BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
+VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
+SCOPE_EXIT=0
+set +e
+run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" --for-version 9.9.9 >"${CASE_ROOT}/scope.log" 2>&1
+SCOPE_EXIT=$?
+set -e
+[[ ${SCOPE_EXIT} == 2 ]]
+grep -Fq 'not a tracked version in the manifest' "${CASE_ROOT}/scope.log"
+
 # GitHub tags accepted by the existing version grammar are retained even when they are not PEP 440; a final release sorts ahead of its same-core prerelease.
 initialize_repository
 PLAN=$(run_command $'1.2.3-ubuntu1\n1.2.3' list)

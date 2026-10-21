@@ -359,7 +359,7 @@ maintenance across jobs:
 ```console
 update-branches list
 update-branches refresh --base-sha SHA --version CANONICAL --upstream-version RAW
-update-branches publish --base-sha SHA --versions-json JSON
+update-branches publish --base-sha SHA --versions-json JSON [--for-version CANONICAL]
 ```
 
 `list` writes exactly one compact JSON object to stdout; progress goes to stderr:
@@ -380,10 +380,15 @@ merges exactly one `v<version>` branch from `baseSha`, then updates and pushes
 that branch. Publication consumes the unchanged `versions` array, considers only
 exact refs containing `baseSha`, and updates aggregates independently. When the
 highest candidate is a prerelease but an aggregate is stable, the aggregate
-advances to the highest successful stable candidate. Invoking `update-branches`
-without arguments retains the compatible all-in-one behavior.
+advances to the highest successful stable candidate. `--for-version` narrows a
+publication pass to the aggregates that version carries: it selects which
+aggregates the pass may move, never which version one moves to, so a publisher
+that runs before the maintenance fan-out has refreshed the other lines reports
+nothing about them. Invoking `update-branches` without arguments retains the
+compatible all-in-one behavior.
 
-The workflow template uses the newest stable entry as a fast path, refreshes all
+The workflow template uses the newest stable entry as a fast path, publishing
+the aggregates that entry carries before the matrix starts, refreshes all
 remaining exact versions in a parallel matrix, and runs a final publisher even
 when a maintenance job fails. Both publishers and every exact job reuse the
 discovery SHA and version manifest. Every job restores Nix from the shared

@@ -15,6 +15,10 @@
 # any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate. An aggregate that already contains its
 # target is left where it is without being retained; it is ahead of the target, not stranded from it.
 #
+# A publisher that runs before the rest of the fan-out has refreshed the other exact branches passes `--for-version`, publishing only the aggregates that
+# version carries. Every other line has no refreshed candidate at that point, so an unscoped early publisher would report each of them as retained on every
+# run where the specification moved, minutes before the final publisher moves those same refs.
+#
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
 #   SOURCE_TYPE          pypi | github | github-release-asset | gitlab | oci
 #   VERSION_SOURCE_TYPE  the source whose named versions drive discovery; for an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
@@ -436,7 +440,7 @@ Usage:
   update-branches
   update-branches list
   update-branches refresh --base-sha SHA --version VERSION --upstream-version VERSION
-  update-branches publish --base-sha SHA --versions-json JSON
+  update-branches publish --base-sha SHA --versions-json JSON [--for-version VERSION]
 EOF
 }
 
@@ -717,9 +721,12 @@ aggregate_tip_retained_elsewhere() {
 publish_aggregates() {
   # Aggregate refs move to a commit an exact branch already published, and that
   # refresh built packages.default before pushing it; nothing is built here.
-  local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v
-  local -a keys=() aggregates=()
-  local -A highest_any=() highest_stable=() aggregate_set=()
+  # A scope restricts the pass to the aggregates one version carries; it never
+  # changes which version an aggregate moves to.
+  local scope="${1:-}"
+  local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v key
+  local -a keys=() aggregates=() scoped=()
+  local -A highest_any=() highest_stable=() aggregate_set=() scope_keys=()
   blocked_aggregates=()
   blocked_aggregate_reasons=()
 
@@ -750,6 +757,14 @@ publish_aggregates() {
   echo "=== Updating aggregate pointers from base ${BASE_SHA:0:8}"
   if ((${#aggregate_set[@]} > 0)); then
     mapfile -t aggregates < <(printf '%s\n' "${!aggregate_set[@]}" | sort)
+  fi
+  if [[ -n ${scope} ]]; then
+    mapfile -t keys < <(aggregate_keys_for_version "${scope}")
+    for key in "${keys[@]}"; do scope_keys["${key}"]=1; done
+    for agg in "${aggregates[@]}"; do
+      if [[ -n ${scope_keys[${agg}]+set} ]]; then scoped+=("${agg}"); fi
+    done
+    aggregates=("${scoped[@]}")
   fi
   for agg in "${aggregates[@]}"; do
     if [[ -z ${highest_any[${agg}]+set} ]]; then
@@ -934,7 +949,7 @@ command_refresh() {
 }
 
 command_publish() {
-  local BASE="" JSON=""
+  local BASE="" JSON="" FOR_VERSION=""
   local -a failed=()
   local -A reasons=()
   shift
@@ -956,6 +971,14 @@ command_publish() {
       JSON="${2}"
       shift 2
       ;;
+    --for-version)
+      [[ $# -ge 2 ]] || {
+        usage
+        return 2
+      }
+      FOR_VERSION="${2}"
+      shift 2
+      ;;
     *)
       usage
       return 2
@@ -968,7 +991,11 @@ command_publish() {
   fi
   use_base_sha "${BASE}"
   load_versions_json "${JSON}"
-  publish_aggregates
+  if [[ -n ${FOR_VERSION} ]] && ! printf '%s\n' "${tracked[@]}" | grep -Fxq -- "${FOR_VERSION}"; then
+    echo "error: --for-version ${FOR_VERSION} is not a tracked version in the manifest" >&2
+    return 2
+  fi
+  publish_aggregates "${FOR_VERSION}"
   write_failure_summary failed reasons
   if ((${#blocked_aggregates[@]} > 0)); then return 1; fi
   echo "Done."

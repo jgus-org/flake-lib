@@ -70,6 +70,13 @@
           runtimeInputs = [ pkgs.python3 ];
           text = ''exec python3 ${./scripts/wait_for_deps.py} "$@"'';
         };
+        # The fleet's update health is read here rather than in each producer, so it is a package
+        # of flake-lib's own and nothing a producer installs.
+        updater-health = pkgs.writeShellApplication {
+          name = "updater-health";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''exec python3 ${./scripts/updater_health.py} "$@"'';
+        };
         update-version-pypi-cargo = lib.mkUpdateVersion {
           inherit pkgs;
           source = exampleSource;
@@ -902,10 +909,20 @@
               python3 ${./tests/test_wait_for_deps.py}
               touch $out
             '';
+        updater-health-tests =
+          pkgs.runCommand "updater-health-tests"
+            {
+              nativeBuildInputs = [ pkgs.python3 ];
+              UPDATER_HEALTH = ./scripts/updater_health.py;
+            }
+            ''
+              python3 ${./tests/test_updater_health.py}
+              touch $out
+            '';
         workflow-templates =
           pkgs.runCommand "workflow-templates-check" { nativeBuildInputs = [ pkgs.yq-go ]; }
             ''
-              for f in ${./templates/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
+              for f in ${./templates/workflows}/*.yml ${./.github/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
                 yq eval 'true' "$f" > /dev/null
               done
               touch $out
@@ -918,6 +935,7 @@
             update-branches
             update-workflows
             wait-for-deps
+            updater-health
             update-version-pypi-cargo
             update-branches-pypi-cargo
             update-version-github
@@ -979,7 +997,12 @@
             huggingface-model-manager-tests
             ;
           inherit update-version-tests;
-          inherit update-workflows-tests wait-for-deps-tests workflow-templates;
+          inherit
+            update-workflows-tests
+            wait-for-deps-tests
+            updater-health-tests
+            workflow-templates
+            ;
           inherit oci-image-tests;
         };
       }

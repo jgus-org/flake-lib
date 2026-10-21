@@ -497,6 +497,125 @@ cancel GitHub Actions workflows" is Write. The templates pass one organization s
 anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
 nothing and proceeds, in the same shape as the Attic cache action's fallback.
 
+## Report a producer whose updater is red (`updater-health`)
+
+A producer publishes the tree its last green update run built, so
+`nix build .#packages.x86_64-linux.default` on its `main` keeps passing while its updater has
+been red for weeks: the repository looks maintained and publishes nothing. Producers have no
+pull-request CI and a red scheduled run notifies nobody, so nothing in the fleet joins those
+two facts.
+
+```console
+GH_TOKEN=github_pat_… GITHUB_REPOSITORY=jgus-org/flake-lib \
+  nix run github:jgus-org/flake-lib/v1#updater-health
+```
+
+Run this way it prints the report and writes nothing. A token is needed to read any run
+history at all, and the organisation to sweep comes from `GITHUB_REPOSITORY` or from `--org`. Only
+`--report-issue` needs a repository of its own, because that is the repository whose tracking issue
+is written. *Producer updater health* is flake-lib's own scheduled workflow doing exactly that: the
+issue is updated in place, commented on only when the set of producers that are not publishing
+changes, and closed when the fleet is green. The signal lives here rather than in the producers
+because the fleet's build gate for published versions already lives here, and because a signal that
+every producer must install is a signal missing wherever it was not installed — this one needs no
+producer change at all.
+
+The sweep reads each non-archived `jgus-org/*-flake` repository's own run list rather than the
+workflow files it has now, because a run records the path its workflow had when it ran. That is
+the difference between a true and a false report: a producer whose fourteen-night failure streak
+accumulated under a workflow file it has since replaced shows a single green run in the file it
+has now, and a sweep that asks the current files a question can only see that. Each updater
+workflow a producer has is judged on its own runs, and named in the report when the producer has
+more than one, because one updater publishing says nothing about the one failing beside it.
+Silence is judged for the producer instead, so that a workflow file flake-lib's own templates
+replaced is not reported as a producer waiting to publish. Only the `schedule` trigger is
+judged, because a manual dispatch that succeeds says nothing about a schedule that fails every
+night; and a run that has not finished has no conclusion, so it counts as neither.
+
+| state | means | opens the issue |
+| --- | --- | --- |
+| `behind` | its aggregate names an older release than the newest release branch it holds, which no green run rules out | yes |
+| `red` | at least `--fail-streak` scheduled runs in a row failed (default 2), and the failure was the producer's or unexplained | yes |
+| `stale` | no updater has finished a scheduled run within `--stale-after` (default 3 days): the schedule is gone, or its runs never finish | yes |
+| `denied` | the failure was an endpoint refusing a read (401 or 403) rather than failing to answer: a credential or an access list, which no retry clears | yes, the first time |
+| `infra` | the failure named an endpoint or a substituter rather than the producer's own work: the cache was unreachable, not the updater | after `--infra-streak` in a row (default 3) |
+| `first-failure` | the most recent schedule failed once, which is not yet a standing condition | no |
+| `pending` | no finished scheduled run yet — a fresh install, or a workflow never put on a schedule | no |
+| `no-updater` | none of its newest runs came from an updater workflow, so there is no publication to judge. Most of the fleet's producers in this state publish by hand and have no scheduled publication path to be late for, and the sweep cannot tell one of those from a producer that never installed a template; the report names the schedule the producer does run, so an updater under another name can be judged once it is passed to `--workflow` | no |
+| `unobserved` | its runs cannot be read — a private producer and no token that sees it | no |
+| `healthy` | its most recent scheduled run succeeded | no |
+
+Nothing here asks a producer to participate. The sweep reads run histories by organisation, so it
+judges a producer that took a flake-lib template, one that wrote its own updater, and one that has
+neither, and it reads no producer's options, flags, or configuration: a producer cannot opt out of
+being reported by forgetting to set something, which is how the fleet's build-before-publish check
+failed to cover the branches template.
+
+A run's conclusion is not evidence about its producer either, so every failure the report would
+print — a streak, or a schedule's first failure — is asked what it failed on. Up to
+`--cause-probes` recent failures (default 2) have their logs read for a build error or a refused
+push, and for an endpoint or substituter that would not answer: `unable to download`, `no
+substituter that can build it`, `SSL connect error`, `Failed to connect`, a connection timeout. A
+failure that names an endpoint is `infra`, not `red`, because on 2026-10-19 an unreachable cache
+put five healthy producers red at once and a report of five broken producers where none is broken
+is a report that gets muted. Two probes rather than one because the newest failure being
+infrastructure only says the last attempt was unlucky: if the attempt before it failed for the
+producer, the producer is still red and the report says so. Only a log that positively names an
+endpoint spares a producer — text that cannot be read, or that matches nothing, stays red, because
+an unexplained failure is the condition the whole sweep is for. The producer's own schedule is the
+retry: the sweep re-dispatches nothing in another repository, which would need fleet-wide
+`actions: write` and could push a commit. An endpoint that answers and refuses is a different
+fault from one that does not answer: a 401 or 403 is `denied`, which no retry clears and which is
+a standing condition the first time it is seen rather than after `--infra-streak` of them.
+
+The line a report quotes is the first such match in the run's log, not the line from the job that
+failed it. caddy's 2026-10-19 run names a connection timeout in `deps` and a refused connection
+five times in the `workflows` job that failed, and the report quotes the timeout. Both name the
+same unreachable cache, so the state is `infra` either way, but a quoted line is not an
+attribution: which job failed is answered by the run's own log and not by this report.
+
+A run that succeeds is not evidence that the producer published what it has, so the version on the
+default branch is read against the repository's release branches. A branch is a release only when
+the pin on that branch is the version in its name, which is what rules out a moving branch like
+`v0.8` sitting at 0.8.7; a prerelease is exact and still not what an aggregate should have moved
+to, so it is passed over. A producer whose aggregate names an older release than its newest
+release branch is `behind`, and it leads the report even when every job is green, because whoever
+consumes that aggregate has the older release either way. A repository with no `pin.nix` has no
+aggregate and is not judged for one, and a release history that cannot be read claims nothing.
+
+The windows are assumptions about the fleet's cadence rather than facts, and each is a knob:
+`--fail-streak`, `--stale-after` (longer than the fleet's slowest schedule, since a producer on a
+weekly cron is silent between runs by design), and `--workflow` for an updater renamed out of the
+template names, which would otherwise read as `no-updater`. A history is read from the 100
+newest runs GitHub answers with, so `no-updater` and `red` are both judged against that page: a
+producer busy enough to page past its own updater would read as having no updater at all.
+A cancelled run counts as a failure, being a run that published nothing.
+
+The report goes to stdout and to the job summary either way. The exit status is failure only when
+the sweep itself is broken — the organisation cannot be listed, nothing was swept, no producer's
+runs could be read, or the issue could not be written — and never because a producer is red: a
+monitor that is red because the thing it watches is red gets muted, and then it is not a monitor.
+Losing sight of the fleet is a broken sweep rather than a green fleet.
+
+What lands is a report a human reads, and nothing more: it blocks no publish, pages nobody, and
+opens no pull request in a producer. That is the shape the condition asks for — fourteen red nights
+is standing rather than urgent — but it does mean the signal works only while somebody reads
+flake-lib's issues, which is precisely how caddy-flake stayed red for fourteen runs. What the issue
+buys over a job that goes red is that it cannot be muted by being red all the time: it stays open
+with each producer's current streak, is commented on when the set of silent producers changes
+rather than whenever anything happened, and closes itself when the fleet is green.
+
+Reading the fleet's run histories needs a token that sees its private producers, so the workflow
+passes the same `ORG_UPDATE_TOKEN` the templates do, and falls back to the run's own token and the
+public producers where no such secret exists; the report says how many repositories were swept,
+which is where a shorter sight would show up. The tracking issue is written with the run's own
+token, which needs `issues: write` and no secret at all. The judgement is tested offline against a
+stand-in API as `checks.x86_64-linux.updater-health-tests` — including the failure classifier, which
+is tested on captured runner log text and a served log archive rather than a live endpoint — so no
+build or check target ever reaches the GitHub API; the live sweep exists only as the workflow. The
+token is not sent to the log archive's host: the API's redirect is read by hand and the archive is
+fetched unauthenticated, which the suite asserts.
+
 ## Versioning
 
 Hand-versioned via git tags (`vX.Y.Z`) with a moving `v1` aggregate branch. Breaking

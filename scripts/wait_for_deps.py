@@ -10,7 +10,10 @@ consumers, so no dependency can report its own completion to the repository wait
 this reads each dependency's update runs and waits. A dependency that has finished within the
 freshness window is done; one that is running is waited for; one that is neither is started
 and then waited for. Every failure to establish ordering ends in continuing without waiting,
-because a dependency that will not or cannot report its state must not stop the fleet.
+because a dependency that will not or cannot report its state must not stop the fleet. The
+one exception is a credential the API refuses: nothing can be observed or started through it,
+so a wait that could see nothing through the credential at all is an error rather than a
+result.
 """
 
 from __future__ import annotations
@@ -43,6 +46,9 @@ MAX_CONCURRENCY = 8
 # A repository whose state cannot be read at all. Polling it again for the whole budget would
 # spend the wait and report nothing new.
 UNOBSERVABLE = (401, 403, 404, 451)
+# The members of UNOBSERVABLE that say the credential is what is missing rather than the
+# repository being out of sight: through them no run can be read and none can be started.
+REFUSED = (401, 403)
 INFLIGHT = frozenset({"queued", "requested", "waiting", "pending", "in_progress"})
 SUCCEEDED = frozenset({"success", "neutral", "skipped"})
 
@@ -82,6 +88,8 @@ class Outcome:
     repo: str
     state: str
     detail: str
+    # The refusal that ended the wait, when a refusal did. `detail` says the same as prose.
+    status: int | None = None
 
     def __str__(self) -> str:
         return f"{self.repo}: {self.state} ({self.detail})"
@@ -96,6 +104,10 @@ class GitHubError(RuntimeError):
     def transient(self) -> bool:
         # status 0 is a transport failure, which is as retryable as a server-side one.
         return self.status == 0 or self.status >= 500 or self.status == 429
+
+    @property
+    def refused(self) -> bool:
+        return self.status in REFUSED
 
 
 class GitHub:
@@ -120,6 +132,9 @@ class GitHub:
                 payload = response.read()
         except urllib.error.HTTPError as error:
             detail = error.read().decode(errors="replace").strip()[:200]
+            # The response body outlives this frame otherwise, and its eventual collection
+            # prints a ResourceWarning into the middle of the run's report.
+            error.close()
             raise GitHubError(error.code, detail or error.reason) from error
         except urllib.error.URLError as error:
             raise GitHubError(0, str(error.reason)) from error
@@ -193,7 +208,7 @@ def wait_for_dependency(
         workflow = client.update_workflow(repo, config.workflows)
         ref = client.default_branch(repo) if workflow else ""
     except GitHubError as error:
-        return Outcome(repo, "unobserved", f"its workflows cannot be read: {error}")
+        return Outcome(repo, "unobserved", f"its workflows cannot be read: {error}", error.status)
     if workflow is None:
         return Outcome(repo, "no-update-workflow", f"ships no {', '.join(config.workflows)}")
 
@@ -202,19 +217,19 @@ def wait_for_dependency(
     started = False
     reason = f"no completed run within {int(config.fresh_window.total_seconds())}s"
 
-    def outcome(state: str, detail: str) -> Outcome:
+    def outcome(state: str, detail: str, status: int | None = None) -> Outcome:
         # A wait that ended by starting the dependency did something to the fleet, and the
         # log has to say so: the dependency's own run is not attributable to this one.
         if not started:
-            return Outcome(repo, state, detail)
-        return Outcome(repo, state, f"{detail}; started by this run")
+            return Outcome(repo, state, detail, status)
+        return Outcome(repo, state, f"{detail}; started by this run", status)
 
     while True:
         try:
             runs = client.runs(repo, workflow)
         except GitHubError as error:
             if error.status in UNOBSERVABLE:
-                return outcome("unobserved", f"its runs cannot be read: {error}")
+                return outcome("unobserved", f"its runs cannot be read: {error}", error.status)
             warn(f"{repo}: run list unavailable, retrying ({error})")
             reason = f"its runs stayed unreadable ({error})"
             if not pause(deadline, config.poll_interval):
@@ -239,6 +254,10 @@ def wait_for_dependency(
                 started = True
                 reason = "its update did not finish in time"
             except GitHubError as error:
+                if error.refused:
+                    # The dispatch is the only way this branch changes, and the credential
+                    # may not make one, so nothing remains to wait for.
+                    return outcome("cannot-start", f"its update cannot be started: {error}", error.status)
                 reason = f"its update could not be started ({error})"
                 dispatches = config.max_dispatches
         if not pause(deadline, config.poll_interval):
@@ -320,7 +339,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         outcomes = list(pool.map(wait, dependencies))
     for outcome in outcomes:
         print(f"dep {outcome}")
-    return 0
+
+    refused = [outcome for outcome in outcomes if outcome.status in REFUSED]
+    if not refused:
+        return 0
+    if len(refused) < len(outcomes):
+        print(
+            f"warning: the GitHub API refused the credential for {len(refused)} of "
+            f"{len(outcomes)} dependency updates against {repository}: those updates were not "
+            "started or waited for",
+            file=sys.stderr,
+        )
+        return 0
+    print(
+        f"error: the GitHub API refused the credential for every one of the "
+        f"{len(outcomes)} dependency updates against {repository}: none of them was started "
+        "or waited for",
+        file=sys.stderr,
+    )
+    return 1
 
 
 if __name__ == "__main__":

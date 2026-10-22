@@ -325,13 +325,26 @@ class WaitForDepsTests(unittest.TestCase):
             report.line_for("tokenizers-flake"),
         )
 
-    def test_refused_dispatch_is_not_retried(self) -> None:
-        dependency = Dependency(reads=[succeeded(STALE)], dispatch_status=403)
-        report = self.run_gate({"unsloth-zoo-flake": dependency})
+    def test_refused_dispatch_is_not_retried_or_waited_for(self) -> None:
+        dependencies = {
+            "unsloth-zoo-flake": Dependency(reads=[succeeded(STALE)], dispatch_status=403),
+            "click-flake": Dependency(reads=[succeeded()]),
+        }
+        report = self.run_gate(dependencies)
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/unsloth-zoo-flake": "timed-out"})
-        self.assertEqual(dependency.dispatches, 1)
-        self.assertIn("its update could not be started", report.line_for("unsloth-zoo-flake"))
+        self.assertEqual(
+            report.states,
+            {
+                f"{OWNER}/unsloth-zoo-flake": "cannot-start",
+                f"{OWNER}/click-flake": "updated",
+            },
+        )
+        # One read told it everything: the branch cannot change without the dispatch the
+        # credential was refused, so polling it for the rest of the budget would prove nothing.
+        self.assertEqual(dependencies["unsloth-zoo-flake"].dispatches, 1)
+        self.assertEqual(dependencies["unsloth-zoo-flake"].reads_taken, 1)
+        self.assertIn("its update cannot be started", report.line_for("unsloth-zoo-flake"))
+        self.assertIn("refused the credential for 1 of 2 dependency updates", report.stderr)
 
     def test_dependency_without_an_update_workflow_is_reported(self) -> None:
         dependency = Dependency(reads=[succeeded()], workflow=None)
@@ -342,11 +355,29 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertIn("ships no", report.line_for("caddy-flake"))
 
     def test_unreadable_dependency_is_reported_once(self) -> None:
-        dependency = Dependency(reads=[403])
+        dependency = Dependency(reads=[404])
         report = self.run_gate({"private-flake": dependency})
         self.assertEqual(report.status, 0)
         self.assertEqual(report.states, {f"{OWNER}/private-flake": "unobserved"})
         self.assertEqual(dependency.reads_taken, 1)
+        self.assertEqual(report.stderr, "")
+
+    def test_credential_refused_for_every_dependency_is_an_error(self) -> None:
+        dependencies = {
+            "unsloth-zoo-flake": Dependency(reads=[403]),
+            "caddy-flake": Dependency(reads=[403]),
+        }
+        report = self.run_gate(dependencies)
+        self.assertEqual(report.status, 1)
+        self.assertEqual(
+            report.states,
+            {f"{OWNER}/unsloth-zoo-flake": "unobserved", f"{OWNER}/caddy-flake": "unobserved"},
+        )
+        self.assertEqual(dependencies["caddy-flake"].reads_taken, 1)
+        self.assertIn(
+            "error: the GitHub API refused the credential for every one of the 2 dependency updates",
+            report.stderr,
+        )
 
     def test_transient_read_failure_is_retried(self) -> None:
         dependency = Dependency(reads=[500, succeeded()])

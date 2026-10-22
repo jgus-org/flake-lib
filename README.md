@@ -484,11 +484,17 @@ waited for. Dependencies are waited for concurrently, so the wait is the slowest
 dependency rather than their sum, and a chain of them resolves in real dependency depth
 rather than in fixed slots.
 
-Every failure to establish ordering ends in continuing without waiting, and the exit status
-is always success: a dependency that cannot be observed, that fails, or that never finishes
-must not stop the fleet. The report says which of those happened, and says so when the
-dependency's update was started by this run, since that run is not otherwise attributable
-to the consumer that began it.
+Every failure to establish ordering other than a refused credential ends in continuing
+without waiting, and the exit status is success: a dependency that cannot be observed, that
+fails, or that never finishes must not stop the fleet. The report says which of those
+happened, and says so when the dependency's update was started by this run, since that run is
+not otherwise attributable to the consumer that began it.
+
+A credential the API refuses is the exception, because it is the one failure that says the
+wait was never going to observe anything: through it no run can be read and none can be
+started. The gate names the dependencies it could not order, and exits with status 1 when
+that is every one of them, so the run that asked to be ordered ends red rather than updating
+with its dependencies unpublished.
 
 Reading another repository's runs needs Actions read, and starting its update needs
 Actions write — the first repository role that grants "create, edit, run, re-run, and

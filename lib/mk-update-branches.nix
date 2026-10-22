@@ -10,9 +10,6 @@
 #   trackStableOnly    : true excludes prereleases from branches, maintenance, and publication (default false).
 #   buildVerificationSkip : true publishes a refreshed version branch without building `packages.default` (default false). Set it only where that build is prohibitively expensive, and say why in a comment beside it; the reason is the flake's, not the option's.
 {
-  pkgs,
-  source,
-  pinSchema,
   branchOwnedFiles ? [
     "pin.nix"
     "flake.lock"
@@ -21,14 +18,17 @@
     "wheels-*.json"
     "python-readiness.json"
   ],
+  buildVerificationSkip ? false,
   extraBranchOwnedFiles ? [ ],
   extraHashes ? [ ],
-  versionOverrides ? { },
-  versionCanon ? [ ],
   minVersionComponents ? 3,
   minimumTrackingVersion ? "0.0.0",
+  pinSchema,
+  pkgs,
+  source,
   trackStableOnly ? false,
-  buildVerificationSkip ? false,
+  versionCanon ? [ ],
+  versionOverrides ? { },
 }:
 assert builtins.elem minVersionComponents [
   1
@@ -52,23 +52,20 @@ assert versionSource.type != "github-release-asset" || versionSourceTrack == "re
 # its git tags, which is also where its updater resolves a release from.
 assert versionSourceTrack != "tag" || versionSource.type == "github";
 pkgs.writeShellApplication {
-  name = "update-branches";
   # VERSION_OVERRIDES is a JSON string (quotes/braces) consumed via jq at runtime; the generated export trips SC2089/SC2090 (false positive).
   excludeShellChecks = [
     "SC2089"
     "SC2090"
   ];
-  runtimeInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
+  name = "update-branches";
   runtimeEnv = {
-    SOURCE_TYPE = source.type;
-    VERSION_SOURCE_TYPE = versionSource.type;
-    VERSION_TRACK = versionSourceTrack;
-    PYPI_NAME = source.pname or "";
-    PYPI_FORMAT = source.format or "sdist";
+    BRANCH_OWNED_FILES = pkgs.lib.concatStringsSep " " ownedFiles;
+    BUILD_VERIFICATION_SKIP = pkgs.lib.boolToString buildVerificationSkip;
+    CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
+    DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
+    EXTRA_HASHES = builtins.toJSON extraHashes;
     GH_OWNER = versionSource.owner or "";
     GH_REPO = versionSource.repo or "";
-    GITLAB_OWNER = versionSource.owner or "";
-    GITLAB_REPO = versionSource.repo or "";
     GH_TAG_PREFIXES = builtins.toJSON (
       if versionSource ? tagPrefix then
         [ versionSource.tagPrefix ]
@@ -79,18 +76,21 @@ pkgs.writeShellApplication {
           ""
         ]
     );
-    PIN_SCHEMA = pinSchema;
-    BRANCH_OWNED_FILES = pkgs.lib.concatStringsSep " " ownedFiles;
-    EXTRA_HASHES = builtins.toJSON extraHashes;
-    VERSION_OVERRIDES = builtins.toJSON versionOverrides;
-    VERSION_CANON = pkgs.lib.concatStringsSep "\n" versionCanon;
-    MIN_VERSION_COMPONENTS = toString minVersionComponents;
-    CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
-    DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
+    GITLAB_OWNER = versionSource.owner or "";
+    GITLAB_REPO = versionSource.repo or "";
     GIT_PUSH_LIB = "${pkgs.copyPathToStore ../scripts/git-push.sh}";
     MINIMUM_TRACKING_VERSION = minimumTrackingVersion;
+    MIN_VERSION_COMPONENTS = toString minVersionComponents;
+    PIN_SCHEMA = pinSchema;
+    PYPI_FORMAT = source.format or "sdist";
+    PYPI_NAME = source.pname or "";
+    SOURCE_TYPE = source.type;
     TRACK_STABLE_ONLY = pkgs.lib.boolToString trackStableOnly;
-    BUILD_VERIFICATION_SKIP = pkgs.lib.boolToString buildVerificationSkip;
+    VERSION_CANON = pkgs.lib.concatStringsSep "\n" versionCanon;
+    VERSION_OVERRIDES = builtins.toJSON versionOverrides;
+    VERSION_SOURCE_TYPE = versionSource.type;
+    VERSION_TRACK = versionSourceTrack;
   };
+  runtimeInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
   text = ''exec ${../scripts/update-branches-core.sh} "$@"'';
 }

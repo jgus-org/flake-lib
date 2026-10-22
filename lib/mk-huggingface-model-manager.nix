@@ -1,8 +1,8 @@
 {
-  pkgs,
-  name,
   manifest,
   model,
+  name,
+  pkgs,
   stampName ? ".${name}-verified.json",
 }:
 let

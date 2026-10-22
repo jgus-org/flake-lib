@@ -8,26 +8,18 @@ let
     ];
     systems = defaultSystems;
     targets = {
-      x86_64-linux = {
-        uvPlatform = "x86_64-manylinux_2_28";
-      };
-      aarch64-linux = {
-        uvPlatform = "aarch64-manylinux_2_28";
-      };
+      aarch64-darwin.uvPlatform = "aarch64-apple-darwin";
+      aarch64-linux.uvPlatform = "aarch64-manylinux_2_28";
       # Not a build host any more, but an Intel macOS wheel remains a target a producer can ask for.
-      x86_64-darwin = {
-        uvPlatform = "x86_64-apple-darwin";
-      };
-      aarch64-darwin = {
-        uvPlatform = "aarch64-apple-darwin";
-      };
+      x86_64-darwin.uvPlatform = "x86_64-apple-darwin";
+      x86_64-linux.uvPlatform = "x86_64-manylinux_2_28";
     };
   };
 
   platformTags =
     {
-      pythonVersion,
       platform,
+      pythonVersion,
     }:
     let
       pythonParts = builtins.match "([0-9]+)\\.([0-9]+)" pythonVersion;
@@ -67,18 +59,18 @@ let
         };
       in
       {
-        python = pythonVersion;
-        uvPythonVersion = pythonVersion;
-        uvPythonPlatform = platform;
-        pipPythonVersion = pythonMajor + pythonMinor;
+        inherit markerEnvironment;
+        pipAbi = "cp" + pythonMajor + pythonMinor;
         pipPlatforms =
           if isDarwin then
             [ "macosx_14_0_${if platformArch == "aarch64" then "arm64" else platformArch}" ]
           else
             pipPlatformLadder platformArch platformVendor;
-        pipAbi = "cp" + pythonMajor + pythonMinor;
+        pipPythonVersion = pythonMajor + pythonMinor;
+        python = pythonVersion;
         uvEnvironment = if isDarwin then { MACOSX_DEPLOYMENT_TARGET = "14.0"; } else { };
-        inherit markerEnvironment;
+        uvPythonPlatform = platform;
+        uvPythonVersion = pythonVersion;
       };
 
   pipPlatformLadder =
@@ -119,14 +111,14 @@ let
 
   mkPythonWheelhouse =
     {
-      pkgs,
-      sources,
-      extraRequirements ? [ ],
-      noEmit ? [ ],
-      pythonVersions ? pythonEnvironments.pythonVersions,
-      systems ? pythonEnvironments.systems,
-      index ? "https://pypi.org/simple",
       depsCore ? ../scripts/deps_core.py,
+      extraRequirements ? [ ],
+      index ? "https://pypi.org/simple",
+      noEmit ? [ ],
+      pkgs,
+      pythonVersions ? pythonEnvironments.pythonVersions,
+      sources,
+      systems ? pythonEnvironments.systems,
     }:
     let
       lib = pkgs.lib;
@@ -162,18 +154,18 @@ let
       ) pythonVersions;
       generationSpec = {
         inherit
-          sources
+          environments
           extraRequirements
           noEmit
-          environments
+          sources
           ;
         generator = {
-          script = builtins.hashFile "sha256" ../scripts/python-wheelhouse.py;
           depsCore = builtins.hashFile "sha256" depsCore;
-          uv = pkgs.uv.version;
-          python = pkgs.python3.version;
-          pip = pkgs.python3Packages.pip.version;
           packaging = pkgs.python3Packages.packaging.version;
+          pip = pkgs.python3Packages.pip.version;
+          python = pkgs.python3.version;
+          script = builtins.hashFile "sha256" ../scripts/python-wheelhouse.py;
+          uv = pkgs.uv.version;
         };
         indexUrl = index;
       };
@@ -193,12 +185,17 @@ let
       throw "python-wheelhouse: systems must not contain duplicates"
     else
       {
+        inherit fingerprint;
         hook = pkgs.writeShellApplication {
-          name = "python-wheelhouse";
           excludeShellChecks = [
             "SC2089"
             "SC2090"
           ];
+          name = "python-wheelhouse";
+          runtimeEnv = {
+            DEPS_CORE = "${pkgs.copyPathToStore depsCore}";
+            WHEELHOUSE_SPEC = builtins.toJSON (generationSpec // { inherit fingerprint; });
+          };
           runtimeInputs = with pkgs; [
             cacert
             coreutils
@@ -206,13 +203,8 @@ let
             uv
             artifactPython
           ];
-          runtimeEnv = {
-            WHEELHOUSE_SPEC = builtins.toJSON (generationSpec // { inherit fingerprint; });
-            DEPS_CORE = "${pkgs.copyPathToStore depsCore}";
-          };
           text = "exec ${artifactPython}/bin/python ${../scripts/python-wheelhouse.py}";
         };
-        inherit fingerprint;
       };
 
   manifestFromWheels =
@@ -220,10 +212,10 @@ let
 
   wheelhouseArtifactPaths =
     {
-      root,
       pythonVersion,
-      system,
       pythonVersions ? pythonEnvironments.pythonVersions,
+      root,
+      system,
     }:
     if !(builtins.elem pythonVersion pythonVersions) then
       throw "python-wheelhouse: unsupported pythonVersion \"${pythonVersion}\""
@@ -245,9 +237,9 @@ let
   # manifest records it; a listed name that matches nothing is reported, not ignored.
   mkWheelhouse =
     {
+      noEmit ? [ ],
       pkgs,
       wheels,
-      noEmit ? [ ],
     }:
     let
       lib = pkgs.lib;
@@ -262,14 +254,14 @@ let
       files = map (
         wheel:
         pkgs.fetchurl {
-          inherit (wheel) url sha256;
+          inherit (wheel) sha256 url;
           name = wheel.filename;
         }
       ) selected;
       wheelhouse = pkgs.linkFarm "python-wheelhouse" (
         lib.zipListsWith (wheel: path: {
-          name = wheel.filename;
           inherit path;
+          name = wheel.filename;
         }) selected files
       );
     in
@@ -293,12 +285,12 @@ let
   # here instead of at the first import in production.
   mkWheelhouseSiteTree =
     {
+      buildInputs ? [ ],
+      checkImports ? [ ],
+      nativeBuildInputs ? [ ],
       pkgs,
       python,
       wheelhouse,
-      checkImports ? [ ],
-      nativeBuildInputs ? [ ],
-      buildInputs ? [ ],
       ...
     }@args:
     let
@@ -315,18 +307,18 @@ let
     pkgs.stdenv.mkDerivation (
       inherited
       // {
-        sitePackages = python.sitePackages;
-        nativeBuildInputs = [
-          pkgs.uv
-          pkgs.autoPatchelfHook
-          python
-        ]
-        ++ nativeBuildInputs;
         buildInputs = [
           pkgs.stdenv.cc.cc.lib
           pkgs.zlib
         ]
         ++ buildInputs;
+        doInstallCheck = checkImports != [ ];
+        installCheckPhase = ''
+          runHook preInstallCheck
+          env -i PYTHONPATH="$out/$sitePackages" ${python}/bin/${python.executable} \
+            -c '${lib.concatStringsSep "; " (map (module: "import ${module}") checkImports)}'
+          runHook postInstallCheck
+        '';
         installPhase = ''
           runHook preInstall
           export HOME="$TMPDIR"
@@ -337,24 +329,24 @@ let
           }}
           runHook postInstall
         '';
-        doInstallCheck = checkImports != [ ];
-        installCheckPhase = ''
-          runHook preInstallCheck
-          env -i PYTHONPATH="$out/$sitePackages" ${python}/bin/${python.executable} \
-            -c '${lib.concatStringsSep "; " (map (module: "import ${module}") checkImports)}'
-          runHook postInstallCheck
-        '';
+        nativeBuildInputs = [
+          pkgs.uv
+          pkgs.autoPatchelfHook
+          python
+        ]
+        ++ nativeBuildInputs;
+        sitePackages = python.sitePackages;
       }
     );
 in
 {
   inherit
-    pythonEnvironments
-    platformTags
-    mkPythonWheelhouse
-    wheelhouseArtifactPaths
-    mkWheelhouse
     installWheelhouse
+    mkPythonWheelhouse
+    mkWheelhouse
     mkWheelhouseSiteTree
+    platformTags
+    pythonEnvironments
+    wheelhouseArtifactPaths
     ;
 }

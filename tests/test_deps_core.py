@@ -45,9 +45,16 @@ class ReaderTests(unittest.TestCase):
         )
 
     def test_requirements_file_rejects_directives(self) -> None:
-        for directive in ("-r other.txt", "--requirement other.txt", "-c constraints.txt", "--constraint constraints.txt"):
+        for directive in (
+            "-r other.txt",
+            "--requirement other.txt",
+            "-c constraints.txt",
+            "--constraint constraints.txt",
+        ):
             with self.subTest(directive=directive):
-                with self.assertRaisesRegex(ValueError, "unsupported requirements-file directive"):
+                with self.assertRaisesRegex(
+                    ValueError, "unsupported requirements-file directive"
+                ):
                     DEPS.requirements_file_requirements(directive)
 
     def test_pyproject_reads_dependencies_and_selected_groups(self) -> None:
@@ -65,8 +72,13 @@ other = ["ignored"]
         )
 
     def test_metadata_reads_requires_dist(self) -> None:
-        metadata = {"info": {"requires_dist": ["a==1", "b; python_version >= '3.10'"]}}
-        self.assertEqual(DEPS.metadata_requires_dist(metadata), ["a==1", "b; python_version >= '3.10'"])
+        metadata = {
+            "info": {"requires_dist": ["a==1", "b; python_version >= '3.10'"]}
+        }
+        self.assertEqual(
+            DEPS.metadata_requires_dist(metadata),
+            ["a==1", "b; python_version >= '3.10'"],
+        )
 
     def test_metadata_without_info_yields_empty(self) -> None:
         self.assertEqual(DEPS.metadata_requires_dist({}), [])
@@ -120,7 +132,9 @@ class ApplicabilityTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            DEPS.applicability('python_version < "3.11" or python_version >= "3.12"', {}),
+            DEPS.applicability(
+                'python_version < "3.11" or python_version >= "3.12"', {}
+            ),
             (
                 "any",
                 (
@@ -130,11 +144,16 @@ class ApplicabilityTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            DEPS.applicability('python_version < "3.11" or sys_platform == "win32"', {"sys_platform": "linux"}),
+            DEPS.applicability(
+                'python_version < "3.11" or sys_platform == "win32"',
+                {"sys_platform": "linux"},
+            ),
             ("cmp", "python_version", "<", "3.11"),
         )
         self.assertEqual(
-            DEPS.applicability('python_version < "3.11" or python_version > "3.10"', {}),
+            DEPS.applicability(
+                'python_version < "3.11" or python_version > "3.10"', {}
+            ),
             (
                 "any",
                 (
@@ -155,43 +174,72 @@ class ApplicabilityTests(unittest.TestCase):
 
     def test_version_comparison_uses_version_ordering(self) -> None:
         self.assertIs(
-            DEPS.applicability('python_version >= "3.10"', {"python_version": "3.9"}), False
+            DEPS.applicability(
+                'python_version >= "3.10"', {"python_version": "3.9"}
+            ),
+            False,
         )
         self.assertIs(
-            DEPS.applicability('python_version > "3.9"', {"python_version": "3.9.1"}), True
+            DEPS.applicability(
+                'python_version > "3.9"', {"python_version": "3.9.1"}
+            ),
+            True,
         )
 
     def test_version_variable_equality_ignores_trailing_zeros(self) -> None:
         self.assertIs(
-            DEPS.applicability('python_full_version == "3.13"', {"python_full_version": "3.13.0"}),
+            DEPS.applicability(
+                'python_full_version == "3.13"',
+                {"python_full_version": "3.13.0"},
+            ),
             True,
         )
         self.assertIs(
-            DEPS.applicability('python_full_version != "3.13"', {"python_full_version": "3.13.0"}),
+            DEPS.applicability(
+                'python_full_version != "3.13"',
+                {"python_full_version": "3.13.0"},
+            ),
             False,
         )
 
     def test_arbitrary_equality_is_exact_string_match(self) -> None:
         self.assertIs(
-            DEPS.applicability('python_full_version === "3.13"', {"python_full_version": "3.13.0"}),
+            DEPS.applicability(
+                'python_full_version === "3.13"',
+                {"python_full_version": "3.13.0"},
+            ),
             False,
         )
         self.assertIs(
-            DEPS.applicability('python_full_version === "3.13.0"', {"python_full_version": "3.13.0"}),
+            DEPS.applicability(
+                'python_full_version === "3.13.0"',
+                {"python_full_version": "3.13.0"},
+            ),
             True,
         )
 
     def test_ordered_non_version_variable_is_unsupported(self) -> None:
         with self.assertRaises(ValueError):
-            DEPS.applicability('sys_platform < "win32"', {"sys_platform": "linux"})
+            DEPS.applicability(
+                'sys_platform < "win32"', {"sys_platform": "linux"}
+            )
 
-    def test_unparseable_version_literal_in_ordering_is_unsupported(self) -> None:
+    def test_unparseable_version_literal_in_ordering_is_unsupported(
+        self,
+    ) -> None:
         with self.assertRaises(ValueError):
-            DEPS.applicability('python_version < "3.x"', {"python_version": "3.13"})
+            DEPS.applicability(
+                'python_version < "3.x"', {"python_version": "3.13"}
+            )
 
-    def test_equality_falls_back_to_string_match_on_invalid_versions(self) -> None:
+    def test_equality_falls_back_to_string_match_on_invalid_versions(
+        self,
+    ) -> None:
         self.assertIs(
-            DEPS.applicability('python_version == "3.x"', {"python_version": "3.x"}), True
+            DEPS.applicability(
+                'python_version == "3.x"', {"python_version": "3.x"}
+            ),
+            True,
         )
 
     def test_in_and_not_in_are_unsupported(self) -> None:

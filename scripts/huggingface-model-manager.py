@@ -11,7 +11,9 @@ from pathlib import Path
 def verify_file(directory: Path, item: dict[str, object]) -> None:
     relative_path = item["path"]
     expected_size = item["bytes"]
-    if not isinstance(relative_path, str) or not isinstance(expected_size, int):
+    if not isinstance(relative_path, str) or not isinstance(
+        expected_size, int
+    ):
         raise SystemExit("Manifest file entry has an invalid path or size")
     path = directory / relative_path
     if not path.is_file() or path.stat().st_size != expected_size:
@@ -26,7 +28,9 @@ def verify_file(directory: Path, item: dict[str, object]) -> None:
         digest.update(f"blob {expected_size}\0".encode())
         expected_digest = git_blob
     else:
-        raise SystemExit(f"Manifest file entry has no checksum: {relative_path}")
+        raise SystemExit(
+            f"Manifest file entry has no checksum: {relative_path}"
+        )
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
@@ -50,7 +54,12 @@ def main() -> None:
     revision = manifest.get("revision")
     repository = manifest.get("repo")
     total_bytes = manifest.get("total_bytes")
-    if not isinstance(files, list) or not isinstance(revision, str) or not isinstance(repository, str) or not isinstance(total_bytes, int):
+    if (
+        not isinstance(files, list)
+        or not isinstance(revision, str)
+        or not isinstance(repository, str)
+        or not isinstance(total_bytes, int)
+    ):
         raise SystemExit("Manifest is missing required model metadata")
 
     args.directory.mkdir(parents=True, exist_ok=True)
@@ -77,13 +86,30 @@ def main() -> None:
             )
         if args.action == "check":
             if not stamp.exists() or json.loads(stamp.read_text()) != expected:
-                raise SystemExit("Model has not passed verification with this manifest")
+                raise SystemExit(
+                    "Model has not passed verification with this manifest"
+                )
             for item in files:
-                relative_path = item.get("path") if isinstance(item, dict) else None
-                expected_size = item.get("bytes") if isinstance(item, dict) else None
-                path = args.directory / relative_path if isinstance(relative_path, str) else None
-                if path is None or not isinstance(expected_size, int) or not path.is_file() or path.stat().st_size != expected_size:
-                    raise SystemExit(f"Missing file or wrong size: {relative_path}")
+                relative_path = (
+                    item.get("path") if isinstance(item, dict) else None
+                )
+                expected_size = (
+                    item.get("bytes") if isinstance(item, dict) else None
+                )
+                path = (
+                    args.directory / relative_path
+                    if isinstance(relative_path, str)
+                    else None
+                )
+                if (
+                    path is None
+                    or not isinstance(expected_size, int)
+                    or not path.is_file()
+                    or path.stat().st_size != expected_size
+                ):
+                    raise SystemExit(
+                        f"Missing file or wrong size: {relative_path}"
+                    )
         else:
             for item in files:
                 if not isinstance(item, dict):
@@ -93,7 +119,9 @@ def main() -> None:
             temporary.write_text(json.dumps(expected, indent=2) + "\n")
             temporary.replace(stamp)
 
-    print(f"Model {revision}: {len(files)} files, {total_bytes} bytes; {args.action} passed")
+    print(
+        f"Model {revision}: {len(files)} files, {total_bytes} bytes; {args.action} passed"
+    )
 
 
 if __name__ == "__main__":

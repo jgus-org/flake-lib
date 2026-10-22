@@ -10,9 +10,9 @@ bindings:
 let
   evaluateComparison =
     {
-      variable,
-      operator,
       literal,
+      operator,
+      variable,
     }:
     let
       observed =

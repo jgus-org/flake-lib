@@ -16,7 +16,11 @@ TOKEN_PATTERN = re.compile(
     re.VERBOSE,
 )
 
-VERSION_VARIABLES = {"python_version", "python_full_version", "implementation_version"}
+VERSION_VARIABLES = {
+    "python_version",
+    "python_full_version",
+    "implementation_version",
+}
 
 MIRRORED_OPERATORS = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}
 
@@ -28,7 +32,9 @@ def clean_requirement_lines(lines: Iterable[str]) -> list[str]:
     for line in lines:
         value = line.split(" #", 1)[0].strip()
         if value.startswith("-"):
-            raise ValueError(f"unsupported requirements-file directive: {value}")
+            raise ValueError(
+                f"unsupported requirements-file directive: {value}"
+            )
         if value and not value.startswith("#"):
             cleaned.append(value)
     return cleaned
@@ -38,7 +44,9 @@ def requirements_file_requirements(text: str) -> list[str]:
     return clean_requirement_lines(text.splitlines())
 
 
-def pyproject_requirements(document: str, optional_groups: Iterable[str]) -> list[str]:
+def pyproject_requirements(
+    document: str, optional_groups: Iterable[str]
+) -> list[str]:
     project = tomllib.loads(document).get("project", {})
     requirements = list(project.get("dependencies") or [])
     optional_dependencies = project.get("optional-dependencies") or {}
@@ -51,7 +59,9 @@ def metadata_requires_dist(metadata: Mapping[str, Any]) -> list[str]:
     return list(metadata.get("info", {}).get("requires_dist") or [])
 
 
-def compare_values(variable: str, observed: str, operator: str, literal: str) -> bool:
+def compare_values(
+    variable: str, observed: str, operator: str, literal: str
+) -> bool:
     if variable not in VERSION_VARIABLES:
         if operator in {"==", "==="}:
             return observed == literal
@@ -123,7 +133,10 @@ def applicability(marker: str | None, bound: Mapping[str, str]) -> Tree:
         if kind not in {"word", "string"}:
             raise ValueError(f"unsupported environment marker: {marker}")
         index += 1
-        return ("variable" if kind == "word" else "literal", value.strip("'\""))
+        return (
+            "variable" if kind == "word" else "literal",
+            value.strip("'\""),
+        )
 
     def parse_comparison() -> Tree:
         nonlocal index
@@ -189,4 +202,7 @@ def to_jsonable(tree: Tree) -> bool | dict:
             "operator": operator,
             "literal": literal,
         }
-    return {"kind": kind, "conditions": [to_jsonable(child) for child in tree[1]]}
+    return {
+        "kind": kind,
+        "conditions": [to_jsonable(child) for child in tree[1]],
+    }

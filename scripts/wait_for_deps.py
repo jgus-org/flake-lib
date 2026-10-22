@@ -37,7 +37,11 @@ DEFAULT_API = "https://api.github.com"
 # The workflow files flake-lib's templates install, then the name producers wrote by hand
 # before flake-lib shipped templates. A dependency whose repository has none of these has no
 # update run to wait for.
-WORKFLOW_CANDIDATES = ("update-branches.yml", "update-version.yml", "update.yml")
+WORKFLOW_CANDIDATES = (
+    "update-branches.yml",
+    "update-version.yml",
+    "update.yml",
+)
 # The library every producer takes as an input, and the one dependency that is not a
 # dependency: its own revision is advanced by the refresh job that runs before this one.
 LIBRARY_REPO = "flake-lib"
@@ -49,7 +53,9 @@ UNOBSERVABLE = (401, 403, 404, 451)
 # The members of UNOBSERVABLE that say the credential is what is missing rather than the
 # repository being out of sight: through them no run can be read and none can be started.
 REFUSED = (401, 403)
-INFLIGHT = frozenset({"queued", "requested", "waiting", "pending", "in_progress"})
+INFLIGHT = frozenset(
+    {"queued", "requested", "waiting", "pending", "in_progress"}
+)
 SUCCEEDED = frozenset({"success", "neutral", "skipped"})
 
 
@@ -115,7 +121,9 @@ class GitHub:
         self.api = api.rstrip("/")
         self.token = token
 
-    def _call(self, method: str, path: str, body: Mapping[str, str] | None = None) -> Any:
+    def _call(
+        self, method: str, path: str, body: Mapping[str, str] | None = None
+    ) -> Any:
         request = urllib.request.Request(
             f"{self.api}{path}",
             method=method,
@@ -128,7 +136,9 @@ class GitHub:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:
+            with urllib.request.urlopen(
+                request, timeout=REQUEST_TIMEOUT_S
+            ) as response:
                 payload = response.read()
         except urllib.error.HTTPError as error:
             detail = error.read().decode(errors="replace").strip()[:200]
@@ -143,8 +153,12 @@ class GitHub:
     def default_branch(self, repo: str) -> str:
         return self._call("GET", f"/repos/{repo}")["default_branch"]
 
-    def update_workflow(self, repo: str, candidates: Sequence[str]) -> str | None:
-        page = self._call("GET", f"/repos/{repo}/actions/workflows?per_page=100")
+    def update_workflow(
+        self, repo: str, candidates: Sequence[str]
+    ) -> str | None:
+        page = self._call(
+            "GET", f"/repos/{repo}/actions/workflows?per_page=100"
+        )
         active = {
             Path(workflow["path"]).name
             for workflow in page.get("workflows", [])
@@ -172,13 +186,17 @@ def parse_run(item: Mapping[str, Any]) -> Run | None:
             number=item["run_number"],
             status=item["status"],
             conclusion=item.get("conclusion"),
-            updated_at=datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")),
+            updated_at=datetime.fromisoformat(
+                item["updated_at"].replace("Z", "+00:00")
+            ),
         )
     except (KeyError, TypeError, ValueError):
         return None
 
 
-def discover_dependencies(lock_path: Path, owner: str, self_repo: str) -> list[str]:
+def discover_dependencies(
+    lock_path: Path, owner: str, self_repo: str
+) -> list[str]:
     lock = json.loads(lock_path.read_text())
     dependencies = set()
     for node in lock.get("nodes", {}).values():
@@ -192,9 +210,13 @@ def discover_dependencies(lock_path: Path, owner: str, self_repo: str) -> list[s
     return sorted(dependencies)
 
 
-def completed_within(runs: Sequence[Run], window: timedelta, now: datetime) -> list[Run]:
+def completed_within(
+    runs: Sequence[Run], window: timedelta, now: datetime
+) -> list[Run]:
     threshold = now - window
-    return [run for run in runs if run.completed and run.updated_at >= threshold]
+    return [
+        run for run in runs if run.completed and run.updated_at >= threshold
+    ]
 
 
 def newest(runs: Sequence[Run]) -> Run:
@@ -208,14 +230,25 @@ def wait_for_dependency(
         workflow = client.update_workflow(repo, config.workflows)
         ref = client.default_branch(repo) if workflow else ""
     except GitHubError as error:
-        return Outcome(repo, "unobserved", f"its workflows cannot be read: {error}", error.status)
+        return Outcome(
+            repo,
+            "unobserved",
+            f"its workflows cannot be read: {error}",
+            error.status,
+        )
     if workflow is None:
-        return Outcome(repo, "no-update-workflow", f"ships no {', '.join(config.workflows)}")
+        return Outcome(
+            repo,
+            "no-update-workflow",
+            f"ships no {', '.join(config.workflows)}",
+        )
 
     deadline = time.monotonic() + config.timeout
     dispatches = 0
     started = False
-    reason = f"no completed run within {int(config.fresh_window.total_seconds())}s"
+    reason = (
+        f"no completed run within {int(config.fresh_window.total_seconds())}s"
+    )
 
     def outcome(state: str, detail: str, status: int | None = None) -> Outcome:
         # A wait that ended by starting the dependency did something to the fleet, and the
@@ -229,14 +262,20 @@ def wait_for_dependency(
             runs = client.runs(repo, workflow)
         except GitHubError as error:
             if error.status in UNOBSERVABLE:
-                return outcome("unobserved", f"its runs cannot be read: {error}", error.status)
+                return outcome(
+                    "unobserved",
+                    f"its runs cannot be read: {error}",
+                    error.status,
+                )
             warn(f"{repo}: run list unavailable, retrying ({error})")
             reason = f"its runs stayed unreadable ({error})"
             if not pause(deadline, config.poll_interval):
                 return outcome("timed-out", reason)
             continue
 
-        recent = completed_within(runs, config.fresh_window, datetime.now(timezone.utc))
+        recent = completed_within(
+            runs, config.fresh_window, datetime.now(timezone.utc)
+        )
         if any(run.succeeded for run in recent):
             run = newest([run for run in recent if run.succeeded])
             return outcome("updated", f"run {run.number} succeeded")
@@ -257,7 +296,11 @@ def wait_for_dependency(
                 if error.refused:
                     # The dispatch is the only way this branch changes, and the credential
                     # may not make one, so nothing remains to wait for.
-                    return outcome("cannot-start", f"its update cannot be started: {error}", error.status)
+                    return outcome(
+                        "cannot-start",
+                        f"its update cannot be started: {error}",
+                        error.status,
+                    )
                 reason = f"its update could not be started ({error})"
                 dispatches = config.max_dispatches
         if not pause(deadline, config.poll_interval):
@@ -277,24 +320,46 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         description=__doc__.splitlines()[0],
         argument_default=None,
     )
-    parser.add_argument("--flake-root", type=Path, help="repository whose flake.lock declares the inputs")
-    parser.add_argument("--api", help=f"github API base URL (default {DEFAULT_API})")
+    parser.add_argument(
+        "--flake-root",
+        type=Path,
+        help="repository whose flake.lock declares the inputs",
+    )
+    parser.add_argument(
+        "--api", help=f"github API base URL (default {DEFAULT_API})"
+    )
     parser.add_argument(
         "--workflow",
         action="append",
         dest="workflows",
         help="workflow file to treat as a dependency's update, most preferred first; repeatable",
     )
-    parser.add_argument("--fresh-window", type=float, help="seconds a finished run stays good for")
-    parser.add_argument("--timeout", type=float, help="seconds to wait for one dependency")
-    parser.add_argument("--poll-interval", type=float, help="seconds between reads of a dependency")
-    parser.add_argument("--max-dispatches", type=int, help="times this run may start a dependency's update")
+    parser.add_argument(
+        "--fresh-window",
+        type=float,
+        help="seconds a finished run stays good for",
+    )
+    parser.add_argument(
+        "--timeout", type=float, help="seconds to wait for one dependency"
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        help="seconds between reads of a dependency",
+    )
+    parser.add_argument(
+        "--max-dispatches",
+        type=int,
+        help="times this run may start a dependency's update",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    warn: Callable[[str], None] = lambda message: print(f"warning: {message}", file=sys.stderr)
+    warn: Callable[[str], None] = lambda message: print(
+        f"warning: {message}", file=sys.stderr
+    )
 
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
     repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -310,10 +375,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    root = Path(args.flake_root) if args.flake_root else Path(os.environ.get("FLAKE_ROOT", "."))
+    root = (
+        Path(args.flake_root)
+        if args.flake_root
+        else Path(os.environ.get("FLAKE_ROOT", "."))
+    )
     lock_path = root / "flake.lock"
     if not lock_path.is_file():
-        warn(f"{lock_path} does not exist, so no dependency can be identified: continuing without waiting")
+        warn(
+            f"{lock_path} does not exist, so no dependency can be identified: continuing without waiting"
+        )
         return 0
 
     owner, _, self_repo = repository.partition("/")
@@ -324,11 +395,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     config = Config(
         api=args.api or DEFAULT_API,
-        workflows=tuple(args.workflows) if args.workflows else WORKFLOW_CANDIDATES,
+        workflows=tuple(args.workflows)
+        if args.workflows
+        else WORKFLOW_CANDIDATES,
         fresh_window=timedelta(seconds=args.fresh_window or 3600),
         timeout=args.timeout if args.timeout is not None else 5400.0,
-        poll_interval=args.poll_interval if args.poll_interval is not None else 60.0,
-        max_dispatches=args.max_dispatches if args.max_dispatches is not None else 1,
+        poll_interval=args.poll_interval
+        if args.poll_interval is not None
+        else 60.0,
+        max_dispatches=args.max_dispatches
+        if args.max_dispatches is not None
+        else 1,
     )
     client = GitHub(config.api, token)
 
@@ -345,12 +422,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         flush=True,
     )
     outcomes: list[Outcome] = []
-    with ThreadPoolExecutor(max_workers=min(len(dependencies), MAX_CONCURRENCY)) as pool:
+    with ThreadPoolExecutor(
+        max_workers=min(len(dependencies), MAX_CONCURRENCY)
+    ) as pool:
         waiting = [pool.submit(wait, repo) for repo in dependencies]
         for finished in as_completed(waiting):
             outcome = finished.result()
             outcomes.append(outcome)
-            print(f"dep {outcome} [{len(outcomes)}/{len(dependencies)}]", flush=True)
+            print(
+                f"dep {outcome} [{len(outcomes)}/{len(dependencies)}]",
+                flush=True,
+            )
 
     refused = [outcome for outcome in outcomes if outcome.status in REFUSED]
     if not refused:

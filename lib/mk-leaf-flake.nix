@@ -1,18 +1,11 @@
 # Assembles a leaf flake's per-system outputs (package, update-version, optional update-branches) from a source/package/pin spec.
 {
-  mkPypiPackage,
-  mkUpdateVersion,
-  mkUpdateBranches,
   eachDefaultSystem,
+  mkPypiPackage,
+  mkUpdateBranches,
+  mkUpdateVersion,
 }:
 {
-  nixpkgs,
-  source,
-  package,
-  pin,
-  branches ? true,
-  siblings ? [ ],
-  siblingRefsInPin ? false,
   branchOwnedFiles ? [
     "pin.nix"
     "flake.lock"
@@ -21,6 +14,13 @@
     "wheels-*.json"
     "python-readiness.json"
   ],
+  branches ? true,
+  nixpkgs,
+  package,
+  pin,
+  siblingRefsInPin ? false,
+  siblings ? [ ],
+  source,
 }:
 eachDefaultSystem (
   system:
@@ -28,35 +28,35 @@ eachDefaultSystem (
     pkgs = import nixpkgs { inherit system; };
     pkg = mkPypiPackage {
       inherit
-        pkgs
-        source
         package
         pin
+        pkgs
+        source
         ;
     };
     pinSchema = if source.type == "pypi" then "pypi" else "github";
     update-version = mkUpdateVersion {
       inherit
         pkgs
-        source
-        siblings
         siblingRefsInPin
+        siblings
+        source
         ;
     };
     update-branches = mkUpdateBranches {
       inherit
+        branchOwnedFiles
+        pinSchema
         pkgs
         source
-        pinSchema
-        branchOwnedFiles
         ;
     };
   in
   {
     packages = {
+      inherit update-version;
       ${package.attr} = pkg;
       default = pkg;
-      inherit update-version;
     }
     // pkgs.lib.optionalAttrs branches { inherit update-branches; };
   }

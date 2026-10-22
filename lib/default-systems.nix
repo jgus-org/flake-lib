@@ -37,9 +37,7 @@ let
     builtins.foldl' addSystem { } systems;
 in
 {
-  inherit defaultSystems defaultLinuxSystems;
-
-  eachDefaultSystem = eachSystem defaultSystems;
-
+  inherit defaultLinuxSystems defaultSystems;
   eachDefaultLinuxSystem = eachSystem defaultLinuxSystems;
+  eachDefaultSystem = eachSystem defaultSystems;
 }

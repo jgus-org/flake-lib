@@ -2,12 +2,12 @@
 assert !(source ? versions) || !(source ? tag);
 let
   settings = {
-    imageName = source.imageName;
-    tag = source.tag or "latest";
-    os = source.os or "linux";
     arch = source.arch or "amd64";
-    variant = source.variant or "";
     finalImageName = source.finalImageName or source.imageName;
+    imageName = source.imageName;
+    os = source.os or "linux";
+    tag = source.tag or "latest";
+    variant = source.variant or "";
   }
   // pkgs.lib.optionalAttrs (source ? finalImageTag) { inherit (source) finalImageTag; };
   registry = builtins.head (pkgs.lib.splitString "/" settings.imageName);

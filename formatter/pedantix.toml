@@ -1,0 +1,19 @@
+formatter = "nixfmt"
+
+[args]
+sort = true
+first = [ "self" ]
+
+[attrs]
+sort = true
+merge = true
+flatten = true
+
+[lets]
+sort = false
+
+[inherits]
+sort = true
+
+[lists]
+sort = false

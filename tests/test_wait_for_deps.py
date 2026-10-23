@@ -237,10 +237,12 @@ class WaitForDepsTests(unittest.TestCase):
         dependencies: dict[str, Dependency],
         arguments: list[str] | None = None,
         environment: dict[str, str] | None = None,
+        stdout: StringIO | None = None,
     ) -> Report:
         self.write_lock(sorted(dependencies), foreign=["nixpkgs"])
         api = Api(dependencies)
-        stdout, stderr = StringIO(), StringIO()
+        stdout = stdout if stdout is not None else StringIO()
+        stderr = StringIO()
         overrides = environment if environment is not None else {
             "GITHUB_TOKEN": "fixture",
             "GITHUB_REPOSITORY": f"{OWNER}/{SELF}",
@@ -405,6 +407,51 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(report.status, 0)
         self.assertEqual(set(report.states.values()), {"updated"})
         self.assertGreater(report.api.peak, 1)
+
+    def test_dependencies_are_reported_as_they_settle(self) -> None:
+        # a-flake holds its reads open and z-flake does not, so z-flake can only be reported
+        # first if each dependency is reported as it finishes rather than in lock order after
+        # the whole set has.
+        dependencies = {
+            "a-flake": Dependency(reads=[in_flight(), succeeded()], delay=0.4),
+            "z-flake": Dependency(reads=[succeeded()]),
+        }
+        report = self.run_gate(dependencies, ["--timeout", "10"])
+        self.assertEqual(
+            report.lines[0],
+            "waiting for 2 dependency updates, each for up to 10s: "
+            f"{OWNER}/a-flake, {OWNER}/z-flake",
+        )
+        self.assertEqual(
+            [line for line in report.lines if line.startswith("dep ")],
+            [
+                f"dep {OWNER}/z-flake: updated (run 7 succeeded) [1/2]",
+                f"dep {OWNER}/a-flake: updated (run 7 succeeded) [2/2]",
+            ],
+        )
+
+    def test_the_report_is_flushed_as_it_is_written(self) -> None:
+        # A consumer runs the gate with its output on a pipe, where python holds every line
+        # until something flushes it, so a report that is only written reaches the log when
+        # the process ends rather than while the wait runs.
+        flushed: list[str] = []
+
+        class Pipe(StringIO):
+            def flush(self) -> None:
+                flushed.append(self.getvalue())
+                super().flush()
+
+        report = self.run_gate(
+            {"click-flake": Dependency(reads=[succeeded()])},
+            ["--timeout", "20"],
+            stdout=Pipe(),
+        )
+        self.assertEqual(report.status, 0)
+        announced = f"waiting for 1 dependency updates, each for up to 20s: {OWNER}/click-flake\n"
+        self.assertEqual(
+            flushed,
+            [announced, announced + f"dep {OWNER}/click-flake: updated (run 7 succeeded) [1/1]\n"],
+        )
 
     def test_a_leaf_producer_reports_nothing_to_wait_for(self) -> None:
         report = self.run_gate({})

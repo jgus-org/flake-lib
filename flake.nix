@@ -993,6 +993,10 @@
               for TEMPLATE in ${./templates/workflows}/*.yml; do
                 actionlint "$TEMPLATE"
               done
+              # flake-lib is not one of its own inputs, so the refresher that keeps every
+              # other repository's installed copy current has nothing to refresh here: the
+              # copy this repository runs is kept honest by comparison.
+              cmp ${./templates/workflows/build-and-check.yml} ${./.github/workflows/build-and-check.yml}
               # A template naming a tool this flake does not publish breaks every
               # repository that installs it at once, so the names are read from what is
               # published rather than from a second list that could disagree.

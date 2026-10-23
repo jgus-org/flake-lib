@@ -110,7 +110,7 @@ STUB_NIX_SELECTION='{"build": ["8bitdo-2c-re", "a.b"], "skip": []}' run_tool
 )" ]]
 
 # A flake with no packages family for this system is not a failure: the run says what it
-# found and builds nothing, which is what lets a flake with no buildables pass the run.
+# found and builds nothing, which is what lets every published flake carry the gate.
 STUB_NIX_EVAL_STATUS=1 \
   STUB_NIX_EVAL_STDERR="error: flake 'github:eg/x' does not provide attribute 'packages.x86_64-linux.packages.aarch64-darwin', 'legacyPackages.x86_64-linux.packages.aarch64-darwin' or 'packages.aarch64-darwin'" \
   run_tool --system aarch64-darwin

@@ -314,12 +314,13 @@ environment that runs it.
 `templates/workflows/` holds the workflow files a consuming repo installs under
 `.github/workflows/` under the same names: `update-branches.yml` drives the
 orchestrator for a source with named releases, `update-version.yml` moves one
-current pin for a source tracked by commit. A producer refreshes whichever it has
-installed by running `nix run github:jgus-org/flake-lib/v1#update-workflows` --
-flake-lib's own instance of the tool, rather than a copy each producer republishes;
-see below.
+current pin for a source tracked by commit, and `build-and-check.yml` is the gate every
+pull request passes -- build what the flake publishes, then check it. A producer
+refreshes whichever it has installed by running
+`nix run github:jgus-org/flake-lib/v1#update-workflows` -- flake-lib's own instance
+of the tool, rather than a copy each producer republishes; see below.
 
-Both templates cache through `.github/actions/fleet-nix-cache`, a composite action
+Every template caches through `.github/actions/fleet-nix-cache`, a composite action
 that points Nix at the fleet Attic cache and pushes what a job builds to it whenever
 the `ATTIC_TOKEN` secret resolves -- one organization secret covers every repository
 -- and falls back to the repository's Actions cache when it does not, so repositories
@@ -328,9 +329,11 @@ and fork pull requests without a token behave as before.
 ### Publication builds the tracked package
 
 `packages.default` is the tracked package, by standard rather than by convention: it is
-the only attr any part of flake-lib builds, evaluates, or repairs hashes against, and a
-producer's own package attr name is an alias with no publication meaning. The publisher
-is the only thing that builds, because it is the thing that cannot be trusted to have
+the only attr flake-lib's publication machinery builds, evaluates, or repairs hashes
+against, and a producer's own package attr name is an alias with no publication meaning.
+The pull-request gate deliberately covers more than the tracked attr, because everything a
+producer publishes is what its consumers build. On the publication path the publisher is
+the only thing that builds, because it is the thing that cannot be trusted to have
 checked -- and the publisher differs by model, so there are two call sites and one
 definition. The version model publishes from its workflow, and `update-version.yml`
 builds `.#default` between the updater and its commit. A refresh publishes from the
@@ -525,21 +528,39 @@ cancel GitHub Actions workflows" is Write. The templates pass one organization s
 anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
 nothing and proceeds, in the same shape as the Attic cache action's fallback.
 
-### Build every published package (`build-packages`)
+### Gate a pull request (`build-packages`)
 
 A flake's packages are the surface its consumers build, and nothing in a producer's CI built
 them: `nix flake check` builds `checks` and only looks at the shape of `packages`, and the
-updater's own build runs after the change is already merged. This tool builds them, reading the
-tree it is run in rather than anything baked into a caller:
+updater's own build runs after the change is already merged.
+`templates/workflows/build-and-check.yml` is the gate that builds them, running flake-lib's
+own instance of the tool:
 
 ```console
 nix run github:jgus-org/flake-lib/v1#build-packages
 ```
 
-It builds every package the flake publishes for the system it runs on, so a package added later
-is built by the next run without anything being updated. `--dry-run` prints the installables it
-would build, which is how a repository is audited before it is wired up; `--system` selects
-another system's family and `--flake` reads another tree.
+It builds every package the flake publishes for the system the runner is on, reading the
+calling tree rather than anything baked into the workflow, so a package a producer adds
+later is gated by the next pull request without a workflow change. `--dry-run` prints the
+installables it would build, which is how a repository is audited before adopting;
+`--system` selects another system's family and `--flake` reads another tree.
+
+Adopting it names the template the way every other flake-lib workflow is adopted, and it
+then refreshes with the rest:
+
+```console
+nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt build-and-check.yml
+```
+
+A flake that locks a private repository needs one secret, because nix fetches a github input
+anonymously: `BUILD_TOKEN`, a credential that can read the contents of every private repository
+the flake locks. It is inert where the secret does not resolve, so a repository of public inputs
+declares nothing, and a run without it fetches the public inputs alone. Set it on the
+repositories that need it rather than organization-wide: a secret an organization grants every
+repository is readable by the pull requests of every public one, which is a wider circle than a
+contents credential justifies. GitHub gives a fork pull request no secrets at all, so a flake
+with a private input is gated by pull requests from inside the organization.
 
 A package a hosted runner cannot build excuses itself, with the reason in the comment beside
 the marker:
@@ -555,7 +576,7 @@ packages.${system}.vm-test =
 
 A VM suite usually does not need the marker. `nixosTest` publishes its driver beside its run
 derivation, and building the driver type-checks the test script and builds every guest system
-while booting nothing, so the package that earns a build is the driver and the part that needs
+while booting nothing, so the package that earns a gate is the driver and the part that needs
 `kvm` stays unpublished.
 
 The run names every package it excused, so an exemption cannot go unnoticed, and a marker
@@ -563,10 +584,15 @@ that is not a boolean fails the run. It is the per-package sibling of the public
 `buildVerificationSkip`; the two gate different builds.
 
 One system per run, which is a scope decision rather than a limit: hosted arm64 runners
-exist and a second caller could build `aarch64-linux`. Apps and devShells are not built -- an
+exist and a second job could gate `aarch64-linux`. Apps and devShells are not built -- an
 app names a program to run, and a `mkShell` derivation has no build phase to fail. A flake
-that publishes nothing buildable for the system it runs on reports that and passes, so a flake
-with no buildables is still worth pointing a build at.
+that publishes nothing buildable for the runner's system reports that and passes, which is
+why every published flake installs the gate whatever it publishes.
+
+The gate triggers on a pull request and a dispatch, not a push: an updater's commit is
+pushed with the run's `GITHUB_TOKEN`, which starts no workflow, and it is built by the
+publication path that made it. A push trigger would build the whole family to verify a
+workflows refresh, which is what most of a producer's machine-made commits are.
 
 ### Org-standard formatting (`mkFormatting`)
 

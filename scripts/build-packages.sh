@@ -1,8 +1,8 @@
 #!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#jq nixpkgs#coreutils --command bash
 
 # Builds every package a flake publishes for one system, which is the part of a flake's
-# published surface that `nix flake check` only evaluates. See "Build every published
-# package" in README.md for what it deliberately leaves out.
+# published surface that `nix flake check` only evaluates. See "Gate a pull request" in
+# README.md for the gate this belongs to and for what it deliberately leaves out.
 #
 # Like the workflow refresher this is flake-lib's own tool rather than a copy each producer
 # republishes, because nothing about the calling flake is baked into it: what to build is

@@ -108,6 +108,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: nix run .#update-version
 
+      # A machine commit that is not formatted leaves the repository failing its own
+      # formatting check until a human formats the tree. Formatting comes before the build
+      # so the build covers exactly what the commit makes.
+      - name: Format what the run changed
+        run: nix fmt
+
       # The updater exits early when the upstream commit has not moved, so this runs
       # unconditionally: nixpkgs can have moved underneath a pin that did not, and a
       # run that only pins files without building them says nothing about the result.

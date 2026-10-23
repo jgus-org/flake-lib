@@ -87,11 +87,26 @@ finish_unchanged() {
   exit 0
 }
 
-write_sibling_refs() {
+# The org formatter sorts attributes, so a pin written in any other order comes back changed
+# from the next format of the tree, traded between the updater's commit and a human's reformat.
+write_pin_fields() {
+  local -n fields="${1}"
+  local NAME
+  while IFS= read -r NAME; do
+    printf '%s\n' "${fields[${NAME}]}"
+  done < <(printf '%s\n' "${!fields[@]}" | LC_ALL=C sort)
+}
+
+pin_sibling_refs_field() {
+  local -n fields="${1}"
   [[ -z ${SIBLING_REFS_IN_PIN} ]] && return 0
-  echo "  dependencies = {"
-  jq -r 'to_entries[] | "    " + (.key | tojson) + " = " + (.value | tojson) + ";"' <<<"${RESOLVED_SIBLING_REFS}"
-  echo "  };"
+  fields[dependencies]="$(
+    {
+      echo "  dependencies = {"
+      jq -r 'to_entries | sort_by(.key)[] | "    " + (.key | tojson) + " = " + (.value | tojson) + ";"' <<<"${RESOLVED_SIBLING_REFS}"
+      echo "  };"
+    }
+  )"
 }
 
 sibling_refs_current() {
@@ -103,14 +118,16 @@ sibling_refs_current() {
 
 write_pypi_pin() {
   local VERSION="${1}" HASH="${2}" NAME
+  local -A FIELDS=()
+  FIELDS[version]="  version = \"${VERSION}\";"
+  FIELDS[hash]="  hash = \"${HASH}\";"
+  for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
+    FIELDS["${NAME}"]="  ${NAME} = \"${extra[${NAME}]:-}\";"
+  done
+  pin_sibling_refs_field FIELDS
   {
     echo "{"
-    echo "  version = \"${VERSION}\";"
-    echo "  hash = \"${HASH}\";"
-    for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-      echo "  ${NAME} = \"${extra[${NAME}]:-}\";"
-    done
-    write_sibling_refs
+    write_pin_fields FIELDS
     echo "}"
   } >"${pin}"
 }
@@ -302,40 +319,46 @@ resolve_siblings_from_metadata() {
 }
 
 write_source_pin() {
-  local v="$1" rev="$2" h="$3" name
+  local VERSION="${1}" REV="${2}" HASH="${3}" NAME
+  local -A FIELDS=()
+  FIELDS[version]="  version = \"${VERSION}\";"
+  FIELDS[sourceRev]="  sourceRev = \"${REV}\";"
+  FIELDS[sourceHash]="  sourceHash = \"${HASH}\";"
+  for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
+    FIELDS["${NAME}"]="  ${NAME} = \"${extra[${NAME}]:-}\";"
+  done
+  pin_sibling_refs_field FIELDS
   {
     echo '# Auto-managed by `nix run .#update-version`. Manual edits will be overwritten by the next bump.'
     echo "{"
-    echo "  version = \"${v}\";"
-    echo "  sourceRev = \"${rev}\";"
-    echo "  sourceHash = \"${h}\";"
-    for name in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-      echo "  ${name} = \"${extra[${name}]:-}\";"
-    done
-    write_sibling_refs
+    write_pin_fields FIELDS
     echo "}"
   } >"${pin}"
 }
 
 write_huggingface_pin() {
   local VERSION="${1}" REV="${2}" FILE FILE_LITERAL HASH_LITERAL NAME
-  {
-    echo '# Auto-managed by `nix run .#update-version`. Manual edits will be overwritten by the next bump.'
-    echo "{"
-    echo "  version = \"${VERSION}\";"
-    echo "  sourceRev = \"${REV}\";"
-    if [[ "$(jq 'length' <<<"${HF_FILES}")" -gt 0 ]]; then
+  local -A FIELDS=()
+  FIELDS[version]="  version = \"${VERSION}\";"
+  FIELDS[sourceRev]="  sourceRev = \"${REV}\";"
+  if [[ "$(jq 'length' <<<"${HF_FILES}")" -gt 0 ]]; then
+    FIELDS[hashes]="$(
       echo "  hashes = {"
       while IFS= read -r FILE; do
         FILE_LITERAL=$(jq -Rn --arg VALUE "${FILE}" '$VALUE')
         HASH_LITERAL=$(jq -Rn --arg VALUE "${HF_HASHES[${FILE}]}" '$VALUE')
         printf '    %s = %s;\n' "${FILE_LITERAL}" "${HASH_LITERAL}"
-      done < <(jq -r '.[]' <<<"${HF_FILES}")
+      done < <(jq -r '.[]' <<<"${HF_FILES}" | LC_ALL=C sort)
       echo "  };"
-    fi
-    for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-      echo "  ${NAME} = \"${extra[${NAME}]:-}\";"
-    done
+    )"
+  fi
+  for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
+    FIELDS["${NAME}"]="  ${NAME} = \"${extra[${NAME}]:-}\";"
+  done
+  {
+    echo '# Auto-managed by `nix run .#update-version`. Manual edits will be overwritten by the next bump.'
+    echo "{"
+    write_pin_fields FIELDS
     echo "}"
   } >"${pin}"
 }

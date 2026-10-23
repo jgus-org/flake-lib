@@ -11,7 +11,7 @@ inputs:
       configured, so the run substitutes from the public cache and pushes
       nothing.
     required: false
-    default: ''
+    default: ""
   endpoint:
     description: Attic server endpoint.
     default: https://nix-cache.gustafson.me

@@ -1,218 +1,218 @@
 { evalMarkerTree }:
 let
   bindings = {
-    python_version = "3.13";
-    python_full_version = "3.13.5";
-    sys_platform = "linux";
     platform_machine = "x86_64";
+    python_full_version = "3.13.5";
+    python_version = "3.13";
+    sys_platform = "linux";
   };
   bound = evalMarkerTree bindings;
 in
 {
-  testNullMarkerIsApplicable = {
-    expr = bound null;
-    expected = true;
-  };
-  testFalseMarkerIsNotApplicable = {
-    expr = bound false;
+  testAllConditionFails = {
     expected = false;
-  };
-  testPythonVersionComparison = {
     expr = bound {
-      kind = "cmp";
-      variable = "python_version";
-      operator = ">=";
-      literal = "3.10";
+      conditions = [
+        {
+          kind = "cmp";
+          literal = "3.10";
+          operator = ">=";
+          variable = "python_version";
+        }
+        {
+          kind = "cmp";
+          literal = "ARM64";
+          operator = "==";
+          variable = "platform_machine";
+        }
+      ];
+      kind = "all";
     };
-    expected = true;
-  };
-  testPythonVersionBelowFails = {
-    expr = bound {
-      kind = "cmp";
-      variable = "python_version";
-      operator = "<";
-      literal = "3.10";
-    };
-    expected = false;
-  };
-  testPythonVersionTrailingZeroEquivalence = {
-    expr = bound {
-      kind = "cmp";
-      variable = "python_full_version";
-      operator = "==";
-      literal = "3.13.5.0";
-    };
-    expected = true;
-  };
-  testPlatformMachineEquality = {
-    expr = bound {
-      kind = "cmp";
-      variable = "platform_machine";
-      operator = "==";
-      literal = "x86_64";
-    };
-    expected = true;
-  };
-  testPlatformMachineInequality = {
-    expr = bound {
-      kind = "cmp";
-      variable = "platform_machine";
-      operator = "!=";
-      literal = "ARM64";
-    };
-    expected = true;
-  };
-  testExactOperatorMatches = {
-    expr = bound {
-      kind = "cmp";
-      variable = "python_version";
-      operator = "===";
-      literal = "3.13";
-    };
-    expected = true;
   };
   testAllConditions = {
-    expr = bound {
-      kind = "all";
-      conditions = [
-        {
-          kind = "cmp";
-          variable = "python_version";
-          operator = ">=";
-          literal = "3.10";
-        }
-        {
-          kind = "cmp";
-          variable = "platform_machine";
-          operator = "!=";
-          literal = "ARM64";
-        }
-      ];
-    };
     expected = true;
-  };
-  testAllConditionFails = {
     expr = bound {
-      kind = "all";
       conditions = [
         {
           kind = "cmp";
-          variable = "python_version";
-          operator = ">=";
           literal = "3.10";
+          operator = ">=";
+          variable = "python_version";
         }
         {
           kind = "cmp";
-          variable = "platform_machine";
-          operator = "==";
           literal = "ARM64";
+          operator = "!=";
+          variable = "platform_machine";
         }
       ];
+      kind = "all";
     };
-    expected = false;
   };
   testAnyCondition = {
+    expected = true;
     expr = bound {
-      kind = "any";
       conditions = [
         {
           kind = "cmp";
-          variable = "python_version";
-          operator = "<";
           literal = "3.10";
+          operator = "<";
+          variable = "python_version";
         }
         {
           kind = "cmp";
-          variable = "platform_machine";
-          operator = "!=";
           literal = "ARM64";
+          operator = "!=";
+          variable = "platform_machine";
         }
       ];
+      kind = "any";
     };
-    expected = true;
   };
   testAnyConditionFails = {
+    expected = false;
     expr = bound {
-      kind = "any";
       conditions = [
         {
           kind = "cmp";
-          variable = "python_version";
-          operator = "<";
           literal = "3.10";
+          operator = "<";
+          variable = "python_version";
         }
         {
           kind = "cmp";
-          variable = "python_full_version";
-          operator = "<";
           literal = "3.0";
+          operator = "<";
+          variable = "python_full_version";
         }
       ];
+      kind = "any";
     };
+  };
+  testExactOperatorMatches = {
+    expected = true;
+    expr = bound {
+      kind = "cmp";
+      literal = "3.13";
+      operator = "===";
+      variable = "python_version";
+    };
+  };
+  testFalseMarkerIsNotApplicable = {
     expected = false;
+    expr = bound false;
   };
   testNestedGroups = {
+    expected = true;
     expr = bound {
-      kind = "any";
       conditions = [
         {
-          kind = "all";
           conditions = [
             {
               kind = "cmp";
-              variable = "python_version";
-              operator = ">=";
               literal = "3.12";
+              operator = ">=";
+              variable = "python_version";
             }
             {
               kind = "cmp";
-              variable = "platform_machine";
-              operator = "==";
               literal = "ARM64";
+              operator = "==";
+              variable = "platform_machine";
             }
           ];
+          kind = "all";
         }
         {
           kind = "cmp";
-          variable = "sys_platform";
-          operator = "==";
           literal = "linux";
+          operator = "==";
+          variable = "sys_platform";
         }
       ];
+      kind = "any";
     };
+  };
+  testNullMarkerIsApplicable = {
     expected = true;
+    expr = bound null;
   };
   testOrderedNonVersionVariableThrows = {
-    expr = builtins.tryEval (bound {
-      kind = "cmp";
-      variable = "sys_platform";
-      operator = "<";
-      literal = "win32";
-    });
     expected = {
       success = false;
       value = false;
     };
-  };
-  testUnknownVariableThrows = {
     expr = builtins.tryEval (bound {
       kind = "cmp";
-      variable = "platform_release";
-      operator = "==";
-      literal = "";
+      literal = "win32";
+      operator = "<";
+      variable = "sys_platform";
     });
-    expected = {
-      success = false;
-      value = false;
+  };
+  testPlatformMachineEquality = {
+    expected = true;
+    expr = bound {
+      kind = "cmp";
+      literal = "x86_64";
+      operator = "==";
+      variable = "platform_machine";
+    };
+  };
+  testPlatformMachineInequality = {
+    expected = true;
+    expr = bound {
+      kind = "cmp";
+      literal = "ARM64";
+      operator = "!=";
+      variable = "platform_machine";
+    };
+  };
+  testPythonVersionBelowFails = {
+    expected = false;
+    expr = bound {
+      kind = "cmp";
+      literal = "3.10";
+      operator = "<";
+      variable = "python_version";
+    };
+  };
+  testPythonVersionComparison = {
+    expected = true;
+    expr = bound {
+      kind = "cmp";
+      literal = "3.10";
+      operator = ">=";
+      variable = "python_version";
+    };
+  };
+  testPythonVersionTrailingZeroEquivalence = {
+    expected = true;
+    expr = bound {
+      kind = "cmp";
+      literal = "3.13.5.0";
+      operator = "==";
+      variable = "python_full_version";
     };
   };
   testUnknownKindThrows = {
-    expr = builtins.tryEval (bound {
-      kind = "bogus";
-    });
     expected = {
       success = false;
       value = false;
     };
+    expr = builtins.tryEval (bound {
+      kind = "bogus";
+    });
+  };
+  testUnknownVariableThrows = {
+    expected = {
+      success = false;
+      value = false;
+    };
+    expr = builtins.tryEval (bound {
+      kind = "cmp";
+      literal = "";
+      operator = "==";
+      variable = "platform_release";
+    });
   };
 }

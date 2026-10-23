@@ -35,14 +35,20 @@ class CascadeTests(unittest.TestCase):
             "v1.8",
         )
 
-    def test_bounded_range_fetches_pypi_releases_when_not_supplied(self) -> None:
+    def test_bounded_range_fetches_pypi_releases_when_not_supplied(
+        self,
+    ) -> None:
         releases_payload = json.dumps(
             {"releases": {"1.2.0": [], "1.8.4": [], "2.0.0": []}}
         ).encode()
         response = io.BytesIO(releases_payload)
-        with mock.patch("urllib.request.urlopen", return_value=response) as urlopen:
+        with mock.patch(
+            "urllib.request.urlopen", return_value=response
+        ) as urlopen:
             self.assertEqual(
-                CASCADE.resolve_ref("resolve", "sibling-package", SpecifierSet(">=1.2,<2")),
+                CASCADE.resolve_ref(
+                    "resolve", "sibling-package", SpecifierSet(">=1.2,<2")
+                ),
                 "v1.8",
             )
             urlopen.assert_called_once()
@@ -60,7 +66,8 @@ class CascadeTests(unittest.TestCase):
 
     def test_unbounded_minimum_uses_main(self) -> None:
         self.assertEqual(
-            CASCADE.resolve_ref("resolve", "", SpecifierSet(">=2026.8.16")), "main"
+            CASCADE.resolve_ref("resolve", "", SpecifierSet(">=2026.8.16")),
+            "main",
         )
 
     def test_metadata_normalizes_names_and_evaluates_markers(self) -> None:
@@ -85,7 +92,9 @@ class CascadeTests(unittest.TestCase):
             "v2.4.1",
         )
 
-    def test_requirements_evaluate_markers_and_combine_constraints(self) -> None:
+    def test_requirements_evaluate_markers_and_combine_constraints(
+        self,
+    ) -> None:
         requirements = [
             "sibling-package>=1.0",
             "Sibling_Package==2.4.1; python_version >= '3.12'",
@@ -123,7 +132,8 @@ studio = [
     def test_final_release_sorts_after_prerelease(self) -> None:
         versions = ["3.4.4", "3.4.3", "3.4.4a1"]
         self.assertEqual(
-            CASCADE.sorted_versions(versions, "0.0.0"), ["3.4.3", "3.4.4a1", "3.4.4"]
+            CASCADE.sorted_versions(versions, "0.0.0"),
+            ["3.4.3", "3.4.4a1", "3.4.4"],
         )
         self.assertEqual(
             CASCADE.sorted_versions(versions, "0.0.0", stable_only=True),

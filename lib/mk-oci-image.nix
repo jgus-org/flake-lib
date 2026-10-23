@@ -1,7 +1,7 @@
 {
+  pin,
   pkgs,
   source,
-  pin,
 }:
 let
   contract = import ./oci-image.nix { inherit pkgs source; };
@@ -9,16 +9,12 @@ let
   image =
     pkgs.runCommand "oci-image-${pkgs.lib.removePrefix "sha256:" pin.imageDigest}"
       {
-        outputHashMode = "recursive";
-        outputHashAlgo = "sha256";
-        outputHash = pin.imageHash;
         nativeBuildInputs = [ contract.skopeo ];
+        outputHash = pin.imageHash;
+        outputHashAlgo = "sha256";
+        outputHashMode = "recursive";
         passthru = rec {
           inherit (pin) imageDigest;
-          imageName = settings.finalImageName;
-          # A branch seeded before its image resolved carries no version and stays tagged by digest.
-          imageTag =
-            settings.finalImageTag or pin.version or (pkgs.lib.removePrefix "sha256:" pin.imageDigest);
           copyTo = pkgs.writeShellApplication {
             name = "copy-to";
             runtimeInputs = [ contract.skopeo ];
@@ -32,6 +28,10 @@ let
               exec ${pkgs.lib.getExe copyTo} containers-storage:${imageName}:${imageTag} "''${@}"
             '';
           };
+          imageName = settings.finalImageName;
+          # A branch seeded before its image resolved carries no version and stays tagged by digest.
+          imageTag =
+            settings.finalImageTag or pin.version or (pkgs.lib.removePrefix "sha256:" pin.imageDigest);
         };
       }
       ''

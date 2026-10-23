@@ -48,10 +48,14 @@ STALE = 7200.0
 
 
 def stamp(age: float) -> str:
-    return (datetime.now(timezone.utc) - timedelta(seconds=age)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (datetime.now(timezone.utc) - timedelta(seconds=age)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
 
-def run(number: int, status: str, conclusion: str | None, age: float) -> dict[str, Any]:
+def run(
+    number: int, status: str, conclusion: str | None, age: float
+) -> dict[str, Any]:
     return {
         "run_number": number,
         "status": status,
@@ -69,7 +73,10 @@ def failed(age: float = 10.0) -> list[dict[str, Any]]:
 
 
 def in_flight() -> list[dict[str, Any]]:
-    return [run(9, "in_progress", None, 0.0), run(7, "completed", "success", STALE)]
+    return [
+        run(9, "in_progress", None, 0.0),
+        run(7, "completed", "success", STALE),
+    ]
 
 
 @dataclass
@@ -105,7 +112,8 @@ class Api:
     def was_requested(self, method: str, suffix: str) -> bool:
         with self._gate:
             return any(
-                line.startswith(f"{method} ") and line.endswith(suffix) for line in self.requests
+                line.startswith(f"{method} ") and line.endswith(suffix)
+                for line in self.requests
             )
 
     def _handler(self) -> type[BaseHTTPRequestHandler]:
@@ -123,7 +131,9 @@ class Api:
 
         return Handler
 
-    def _dispatch_request(self, handler: BaseHTTPRequestHandler, method: str) -> None:
+    def _dispatch_request(
+        self, handler: BaseHTTPRequestHandler, method: str
+    ) -> None:
         with self._gate:
             self.active += 1
             self.peak = max(self.peak, self.active)
@@ -161,20 +171,30 @@ class Api:
                     }
                 ]
             )
-            self._reply(handler, 200, {"workflows": workflows, "total_count": len(workflows)})
+            self._reply(
+                handler,
+                200,
+                {"workflows": workflows, "total_count": len(workflows)},
+            )
             return
         if len(rest) != 4 or rest[2] != dependency.workflow:
             self._refuse(handler, 404)
             return
         if rest[3] == "runs" and method == "GET":
-            page = dependency.reads[min(dependency.reads_taken, len(dependency.reads) - 1)]
+            page = dependency.reads[
+                min(dependency.reads_taken, len(dependency.reads) - 1)
+            ]
             dependency.reads_taken += 1
             if dependency.delay:
                 time.sleep(dependency.delay)
             if isinstance(page, int):
                 self._refuse(handler, page)
             else:
-                self._reply(handler, 200, {"workflow_runs": page, "total_count": len(page)})
+                self._reply(
+                    handler,
+                    200,
+                    {"workflow_runs": page, "total_count": len(page)},
+                )
             return
         if rest[3] == "dispatches" and method == "POST":
             dependency.dispatches += 1
@@ -191,7 +211,9 @@ class Api:
         Api._reply(handler, status, {"message": "fixture refusal"})
 
     @staticmethod
-    def _reply(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
+    def _reply(
+        handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]
+    ) -> None:
         body = json.dumps(payload).encode()
         handler.send_response(status)
         handler.send_header("Content-Type", "application/json")
@@ -209,8 +231,14 @@ class Report:
     api: Api
 
     def line_for(self, repo: str) -> str:
-        matches = [line for line in self.lines if line.startswith(f"dep {OWNER}/{repo}:")]
-        assert len(matches) == 1, f"expected one report line for {repo}, got {self.lines}"
+        matches = [
+            line
+            for line in self.lines
+            if line.startswith(f"dep {OWNER}/{repo}:")
+        ]
+        assert len(matches) == 1, (
+            f"expected one report line for {repo}, got {self.lines}"
+        )
         return matches[0]
 
 
@@ -222,12 +250,19 @@ class WaitForDepsTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def write_lock(self, dependencies: list[str], foreign: list[str] = ()) -> None:
+    def write_lock(
+        self, dependencies: list[str], foreign: list[str] = ()
+    ) -> None:
         nodes: dict[str, Any] = {"root": {"inputs": {}}}
         for repo in ["flake-lib", SELF, *dependencies, *foreign]:
             owner = "NixOS" if repo in foreign else OWNER
             nodes[repo] = {
-                "locked": {"type": "github", "owner": owner, "repo": repo, "rev": "0" * 40}
+                "locked": {
+                    "type": "github",
+                    "owner": owner,
+                    "repo": repo,
+                    "rev": "0" * 40,
+                }
             }
             nodes["root"]["inputs"][repo] = repo
         (self.root / "flake.lock").write_text(json.dumps({"nodes": nodes}))
@@ -243,10 +278,14 @@ class WaitForDepsTests(unittest.TestCase):
         api = Api(dependencies)
         stdout = stdout if stdout is not None else StringIO()
         stderr = StringIO()
-        overrides = environment if environment is not None else {
-            "GITHUB_TOKEN": "fixture",
-            "GITHUB_REPOSITORY": f"{OWNER}/{SELF}",
-        }
+        overrides = (
+            environment
+            if environment is not None
+            else {
+                "GITHUB_TOKEN": "fixture",
+                "GITHUB_REPOSITORY": f"{OWNER}/{SELF}",
+            }
+        )
         try:
             with (
                 mock.patch.dict(os.environ, overrides),
@@ -279,7 +318,9 @@ class WaitForDepsTests(unittest.TestCase):
         return Report(status, states, lines, stderr.getvalue(), api)
 
     def test_recent_success_is_not_waited_for(self) -> None:
-        report = self.run_gate({"click-flake": Dependency(reads=[succeeded()])})
+        report = self.run_gate(
+            {"click-flake": Dependency(reads=[succeeded()])}
+        )
         self.assertEqual(report.status, 0)
         self.assertEqual(report.states, {f"{OWNER}/click-flake": "updated"})
         self.assertEqual(report.stderr, "")
@@ -287,40 +328,60 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(report.api.dependencies["click-flake"].reads_taken, 1)
 
     def test_recent_failure_is_reported_and_not_waited_for(self) -> None:
-        report = self.run_gate({"pydantic-flake": Dependency(reads=[failed()])})
+        report = self.run_gate(
+            {"pydantic-flake": Dependency(reads=[failed()])}
+        )
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/pydantic-flake": "dep-failed"})
-        self.assertIn("run 8 ended failure; continuing without waiting", report.stderr)
-        self.assertEqual(report.api.dependencies["pydantic-flake"].dispatches, 0)
+        self.assertEqual(
+            report.states, {f"{OWNER}/pydantic-flake": "dep-failed"}
+        )
+        self.assertIn(
+            "run 8 ended failure; continuing without waiting", report.stderr
+        )
+        self.assertEqual(
+            report.api.dependencies["pydantic-flake"].dispatches, 0
+        )
 
     def test_running_dependency_is_waited_for_without_dispatch(self) -> None:
         dependency = Dependency(reads=[in_flight(), in_flight(), succeeded()])
         report = self.run_gate({"huggingface-hub-flake": dependency})
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/huggingface-hub-flake": "updated"})
+        self.assertEqual(
+            report.states, {f"{OWNER}/huggingface-hub-flake": "updated"}
+        )
         self.assertEqual(dependency.dispatches, 0)
         self.assertEqual(dependency.reads_taken, 3)
         self.assertEqual(report.stderr, "")
 
     def test_stale_dependency_is_started_once(self) -> None:
-        dependency = Dependency(reads=[succeeded(STALE), in_flight(), succeeded()])
+        dependency = Dependency(
+            reads=[succeeded(STALE), in_flight(), succeeded()]
+        )
         report = self.run_gate({"pydantic-core-flake": dependency})
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/pydantic-core-flake": "updated"})
+        self.assertEqual(
+            report.states, {f"{OWNER}/pydantic-core-flake": "updated"}
+        )
         self.assertEqual(dependency.dispatches, 1)
         self.assertTrue(
             report.api.was_requested(
                 "POST", "/actions/workflows/update-branches.yml/dispatches"
             )
         )
-        self.assertIn("run 7 succeeded", report.line_for("pydantic-core-flake"))
-        self.assertIn("started by this run", report.line_for("pydantic-core-flake"))
+        self.assertIn(
+            "run 7 succeeded", report.line_for("pydantic-core-flake")
+        )
+        self.assertIn(
+            "started by this run", report.line_for("pydantic-core-flake")
+        )
 
     def test_a_dependency_with_no_runs_at_all_is_started(self) -> None:
         dependency = Dependency(reads=[[]])
         report = self.run_gate({"tokenizers-flake": dependency})
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/tokenizers-flake": "timed-out"})
+        self.assertEqual(
+            report.states, {f"{OWNER}/tokenizers-flake": "timed-out"}
+        )
         self.assertEqual(dependency.dispatches, 1)
         self.assertIn(
             "its update did not finish in time; started by this run",
@@ -329,7 +390,9 @@ class WaitForDepsTests(unittest.TestCase):
 
     def test_refused_dispatch_is_not_retried_or_waited_for(self) -> None:
         dependencies = {
-            "unsloth-zoo-flake": Dependency(reads=[succeeded(STALE)], dispatch_status=403),
+            "unsloth-zoo-flake": Dependency(
+                reads=[succeeded(STALE)], dispatch_status=403
+            ),
             "click-flake": Dependency(reads=[succeeded()]),
         }
         report = self.run_gate(dependencies)
@@ -345,14 +408,22 @@ class WaitForDepsTests(unittest.TestCase):
         # credential was refused, so polling it for the rest of the budget would prove nothing.
         self.assertEqual(dependencies["unsloth-zoo-flake"].dispatches, 1)
         self.assertEqual(dependencies["unsloth-zoo-flake"].reads_taken, 1)
-        self.assertIn("its update cannot be started", report.line_for("unsloth-zoo-flake"))
-        self.assertIn("refused the credential for 1 of 2 dependency updates", report.stderr)
+        self.assertIn(
+            "its update cannot be started",
+            report.line_for("unsloth-zoo-flake"),
+        )
+        self.assertIn(
+            "refused the credential for 1 of 2 dependency updates",
+            report.stderr,
+        )
 
     def test_dependency_without_an_update_workflow_is_reported(self) -> None:
         dependency = Dependency(reads=[succeeded()], workflow=None)
         report = self.run_gate({"caddy-flake": dependency})
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/caddy-flake": "no-update-workflow"})
+        self.assertEqual(
+            report.states, {f"{OWNER}/caddy-flake": "no-update-workflow"}
+        )
         self.assertEqual(dependency.reads_taken, 0)
         self.assertIn("ships no", report.line_for("caddy-flake"))
 
@@ -360,7 +431,9 @@ class WaitForDepsTests(unittest.TestCase):
         dependency = Dependency(reads=[404])
         report = self.run_gate({"private-flake": dependency})
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/private-flake": "unobserved"})
+        self.assertEqual(
+            report.states, {f"{OWNER}/private-flake": "unobserved"}
+        )
         self.assertEqual(dependency.reads_taken, 1)
         self.assertEqual(report.stderr, "")
 
@@ -373,7 +446,10 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(report.status, 1)
         self.assertEqual(
             report.states,
-            {f"{OWNER}/unsloth-zoo-flake": "unobserved", f"{OWNER}/caddy-flake": "unobserved"},
+            {
+                f"{OWNER}/unsloth-zoo-flake": "unobserved",
+                f"{OWNER}/caddy-flake": "unobserved",
+            },
         )
         self.assertEqual(dependencies["caddy-flake"].reads_taken, 1)
         self.assertIn(
@@ -389,19 +465,27 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(dependency.reads_taken, 2)
         self.assertIn("run list unavailable, retrying", report.stderr)
 
-    def test_dependency_that_never_finishes_times_out_and_continues(self) -> None:
+    def test_dependency_that_never_finishes_times_out_and_continues(
+        self,
+    ) -> None:
         dependency = Dependency(reads=[in_flight()])
         report = self.run_gate({"freeimage-for-es-de-flake": dependency})
         self.assertEqual(report.status, 0)
-        self.assertEqual(report.states, {f"{OWNER}/freeimage-for-es-de-flake": "timed-out"})
+        self.assertEqual(
+            report.states, {f"{OWNER}/freeimage-for-es-de-flake": "timed-out"}
+        )
         self.assertEqual(dependency.dispatches, 0)
 
     def test_dependencies_are_waited_for_at_once(self) -> None:
         # Each dependency holds its read open, so both can only be observed together if the
         # waits run concurrently rather than one after the other.
         dependencies = {
-            "click-flake": Dependency(reads=[in_flight(), succeeded()], delay=0.3),
-            "hf-xet-flake": Dependency(reads=[in_flight(), succeeded()], delay=0.3),
+            "click-flake": Dependency(
+                reads=[in_flight(), succeeded()], delay=0.3
+            ),
+            "hf-xet-flake": Dependency(
+                reads=[in_flight(), succeeded()], delay=0.3
+            ),
         }
         report = self.run_gate(dependencies, ["--timeout", "10"])
         self.assertEqual(report.status, 0)
@@ -450,7 +534,11 @@ class WaitForDepsTests(unittest.TestCase):
         announced = f"waiting for 1 dependency updates, each for up to 20s: {OWNER}/click-flake\n"
         self.assertEqual(
             flushed,
-            [announced, announced + f"dep {OWNER}/click-flake: updated (run 7 succeeded) [1/1]\n"],
+            [
+                announced,
+                announced
+                + f"dep {OWNER}/click-flake: updated (run 7 succeeded) [1/1]\n",
+            ],
         )
 
     def test_a_leaf_producer_reports_nothing_to_wait_for(self) -> None:
@@ -464,7 +552,11 @@ class WaitForDepsTests(unittest.TestCase):
         self.write_lock(["click-flake"])
         stdout, stderr = StringIO(), StringIO()
         with (
-            mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": f"{OWNER}/{SELF}"}, clear=True),
+            mock.patch.dict(
+                os.environ,
+                {"GITHUB_REPOSITORY": f"{OWNER}/{SELF}"},
+                clear=True,
+            ),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
@@ -479,7 +571,9 @@ class WaitForDepsTests(unittest.TestCase):
         self.write_lock(["click-flake"])
         stdout, stderr = StringIO(), StringIO()
         with (
-            mock.patch.dict(os.environ, {"GITHUB_TOKEN": "fixture"}, clear=True),
+            mock.patch.dict(
+                os.environ, {"GITHUB_TOKEN": "fixture"}, clear=True
+            ),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
@@ -490,16 +584,26 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
 
     def test_discovery_keeps_only_same_owner_inputs(self) -> None:
-        self.write_lock(["click-flake", "pydantic-core-flake"], foreign=["nixpkgs"])
+        self.write_lock(
+            ["click-flake", "pydantic-core-flake"], foreign=["nixpkgs"]
+        )
         self.assertEqual(
             GATE.discover_dependencies(self.root / "flake.lock", OWNER, SELF),
             [f"{OWNER}/click-flake", f"{OWNER}/pydantic-core-flake"],
         )
 
     def test_unparsable_run_is_skipped(self) -> None:
-        self.assertIsNone(GATE.parse_run({"run_number": 1, "status": "completed"}))
+        self.assertIsNone(
+            GATE.parse_run({"run_number": 1, "status": "completed"})
+        )
         self.assertEqual(
-            GATE.parse_run({"run_number": 1, "status": "completed", "updated_at": stamp(5)}).number,
+            GATE.parse_run(
+                {
+                    "run_number": 1,
+                    "status": "completed",
+                    "updated_at": stamp(5),
+                }
+            ).number,
             1,
         )
 

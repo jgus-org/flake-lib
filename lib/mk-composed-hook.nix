@@ -1,7 +1,7 @@
 # Composes several flake-lib artifactHooks into one executable usable in a single `artifactHook` slot.
 {
-  pkgs,
   hooks,
+  pkgs,
 }:
 let
   inherit (pkgs) lib;

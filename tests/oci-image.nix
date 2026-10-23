@@ -1,29 +1,29 @@
-{ pkgs, lib }:
+{ lib, pkgs }:
 let
   fixture = pkgs.runCommand "oci-image-fixture" { nativeBuildInputs = [ pkgs.jq ]; } ''
     mkdir "''${out}"
     printf '%s' '${
       builtins.toJSON {
         architecture = "amd64";
-        os = "linux";
         config = {
-          Entrypoint = [ "/init" ];
           Cmd = [ "serve" ];
+          Entrypoint = [ "/init" ];
           Env = [ "FIXTURE=preserved" ];
-          User = "123:456";
-          WorkingDir = "/data";
-          Labels.fixture = "preserved";
-          Volumes."/data" = { };
           ExposedPorts."8123/tcp" = { };
-          StopSignal = "SIGINT";
           Healthcheck.Test = [
             "CMD"
             "true"
           ];
+          Labels.fixture = "preserved";
+          StopSignal = "SIGINT";
+          User = "123:456";
+          Volumes."/data" = { };
+          WorkingDir = "/data";
         };
+        os = "linux";
         rootfs = {
-          type = "layers";
           diff_ids = [ ];
+          type = "layers";
         };
       }
     }' > "''${out}/config"
@@ -47,43 +47,43 @@ let
     inherit skopeo;
   };
   image = lib.mkOciImage {
-    pkgs = testPkgs;
-    source = {
-      type = "oci";
-      imageName = "registry.example/image";
-      tag = "stable";
-    };
     pin = {
       imageDigest = "sha256:${pkgs.lib.concatStrings (pkgs.lib.replicate 64 "a")}";
       imageHash = "sha256-pdvWZEkndjjekvTaWJlBHmUbIJlGVkiBjJJJs7/3xiQ=";
     };
+    pkgs = testPkgs;
+    source = {
+      imageName = "registry.example/image";
+      tag = "stable";
+      type = "oci";
+    };
   };
   versionedPin = {
-    version = "1.2.3";
     imageDigest = "sha256:${pkgs.lib.concatStrings (pkgs.lib.replicate 64 "a")}";
     imageHash = "sha256-pdvWZEkndjjekvTaWJlBHmUbIJlGVkiBjJJJs7/3xiQ=";
+    version = "1.2.3";
   };
   versionedImage = lib.mkOciImage {
+    pin = versionedPin;
     pkgs = testPkgs;
     source = {
-      type = "oci";
       imageName = "registry.example/image";
+      type = "oci";
       versions = {
-        type = "github";
         owner = "example";
         repo = "example";
+        type = "github";
       };
     };
-    pin = versionedPin;
   };
   overrideTaggedImage = lib.mkOciImage {
+    pin = versionedPin;
     pkgs = testPkgs;
     source = {
-      type = "oci";
-      imageName = "registry.example/image";
       finalImageTag = "local-override";
+      imageName = "registry.example/image";
+      type = "oci";
     };
-    pin = versionedPin;
   };
 in
 pkgs.runCommand "oci-image-tests" { nativeBuildInputs = [ pkgs.jq ]; } ''

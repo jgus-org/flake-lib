@@ -1,9 +1,10 @@
+{ nixpkgs, treefmt-nix }:
 let
   inherit (import ./default-systems.nix)
-    defaultSystems
     defaultLinuxSystems
-    eachDefaultSystem
+    defaultSystems
     eachDefaultLinuxSystem
+    eachDefaultSystem
     ;
   mkPypiPackage = import ./mk-pypi-package.nix;
   mkUpdateVersion = import ./mk-update-version.nix;
@@ -17,20 +18,23 @@ let
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   mkLeafFlake = import ./mk-leaf-flake.nix {
     inherit
-      mkPypiPackage
-      mkUpdateVersion
-      mkUpdateBranches
       eachDefaultSystem
+      mkPypiPackage
+      mkUpdateBranches
+      mkUpdateVersion
       ;
   };
   pythonWheelhouse = import ./python-wheelhouse.nix;
+  formatting = import ./mk-formatting.nix {
+    inherit nixpkgs treefmt-nix;
+  };
   depsCore = ../scripts/deps_core.py;
 
   warnIfNewerMajor =
     {
-      pkgs,
-      name,
       lib ? pkgs.lib,
+      name,
+      pkgs,
     }:
     let
       parts = builtins.match "([^0-9]*)([0-9]+)(.*)" name;
@@ -53,31 +57,32 @@ let
 in
 {
   inherit
-    mkPypiPackage
-    mkUpdateVersion
-    mkUpdateBranches
-    mkRevalidateHash
-    mkJsDepsHook
+    defaultLinuxSystems
+    defaultSystems
+    depsCore
+    eachDefaultLinuxSystem
+    eachDefaultSystem
+    evalMarkerTree
     mkComposedHook
     mkHuggingFaceModelManager
-    mkOciImage
+    mkJsDepsHook
     mkLeafFlake
+    mkOciImage
+    mkPypiPackage
+    mkRevalidateHash
+    mkUpdateBranches
+    mkUpdateVersion
     versionMatchesComparison
-    evalMarkerTree
-    depsCore
     warnIfNewerMajor
-    defaultSystems
-    defaultLinuxSystems
-    eachDefaultSystem
-    eachDefaultLinuxSystem
     ;
   inherit (pythonWheelhouse)
-    pythonEnvironments
-    platformTags
-    mkPythonWheelhouse
-    wheelhouseArtifactPaths
-    mkWheelhouse
     installWheelhouse
+    mkPythonWheelhouse
+    mkWheelhouse
     mkWheelhouseSiteTree
+    platformTags
+    pythonEnvironments
+    wheelhouseArtifactPaths
     ;
+  inherit (formatting) mkFormatting;
 }

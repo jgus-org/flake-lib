@@ -1,63 +1,51 @@
 {
-  defaultSystems,
   defaultLinuxSystems,
-  eachDefaultSystem,
+  defaultSystems,
   eachDefaultLinuxSystem,
+  eachDefaultSystem,
 }:
 let
   sample = system: {
-    packages.default = system;
     devShells.default = [ system ];
+    packages.default = system;
   };
 in
 {
+  testDefaultLinuxSystemsAreTheStandardTwo = {
+    expected = [
+      "aarch64-linux"
+      "x86_64-linux"
+    ];
+    expr = defaultLinuxSystems;
+  };
   testDefaultSystemsAreTheStandardThree = {
-    expr = defaultSystems;
     expected = [
       "aarch64-darwin"
       "aarch64-linux"
       "x86_64-linux"
     ];
-  };
-  testDefaultLinuxSystemsAreTheStandardTwo = {
-    expr = defaultLinuxSystems;
-    expected = [
-      "aarch64-linux"
-      "x86_64-linux"
-    ];
+    expr = defaultSystems;
   };
   testEveryOutputIsKeyedByHost = {
-    expr = eachDefaultSystem sample;
     expected = {
-      packages = {
-        aarch64-darwin = {
-          default = "aarch64-darwin";
-        };
-        aarch64-linux = {
-          default = "aarch64-linux";
-        };
-        x86_64-linux = {
-          default = "x86_64-linux";
-        };
-      };
       devShells = {
-        aarch64-darwin = {
-          default = [ "aarch64-darwin" ];
-        };
-        aarch64-linux = {
-          default = [ "aarch64-linux" ];
-        };
-        x86_64-linux = {
-          default = [ "x86_64-linux" ];
-        };
+        aarch64-darwin.default = [ "aarch64-darwin" ];
+        aarch64-linux.default = [ "aarch64-linux" ];
+        x86_64-linux.default = [ "x86_64-linux" ];
+      };
+      packages = {
+        aarch64-darwin.default = "aarch64-darwin";
+        aarch64-linux.default = "aarch64-linux";
+        x86_64-linux.default = "x86_64-linux";
       };
     };
+    expr = eachDefaultSystem sample;
   };
   testLinuxIteratesOnlyTheLinuxHosts = {
-    expr = builtins.attrNames (eachDefaultLinuxSystem sample).packages;
     expected = [
       "aarch64-linux"
       "x86_64-linux"
     ];
+    expr = builtins.attrNames (eachDefaultLinuxSystem sample).packages;
   };
 }

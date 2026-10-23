@@ -15,8 +15,12 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-DEPS_CORE = os.environ.get("DEPS_CORE") or str(Path(__file__).resolve().parent / "deps_core.py")
-_deps_core_spec = importlib.util.spec_from_file_location("deps_core", DEPS_CORE)
+DEPS_CORE = os.environ.get("DEPS_CORE") or str(
+    Path(__file__).resolve().parent / "deps_core.py"
+)
+_deps_core_spec = importlib.util.spec_from_file_location(
+    "deps_core", DEPS_CORE
+)
 assert _deps_core_spec is not None
 assert _deps_core_spec.loader is not None
 deps_core = importlib.util.module_from_spec(_deps_core_spec)
@@ -134,7 +138,9 @@ def requirements_specifiers(
         if canonicalize_name(requirement.name) != normalized_name:
             continue
         applicable = deps_core.applicability(
-            str(requirement.marker) if requirement.marker is not None else None,
+            str(requirement.marker)
+            if requirement.marker is not None
+            else None,
             marker_environment,
         )
         if applicable is False:
@@ -182,7 +188,9 @@ def resolve_metadata_ref(
     mode: str,
     environment: Mapping[str, str],
 ) -> str | None:
-    specifiers = requirement_specifiers(metadata, requirement_name, environment)
+    specifiers = requirement_specifiers(
+        metadata, requirement_name, environment
+    )
     if specifiers is None:
         return None
     return resolve_ref(mode, pypi_name or requirement_name, specifiers)
@@ -261,18 +269,29 @@ def main(arguments: list[str]) -> None:
         if ref is not None:
             print(ref)
         return
-    if command in {"metadata", "requirements", "pyproject"} and marker_environment is None:
+    if (
+        command in {"metadata", "requirements", "pyproject"}
+        and marker_environment is None
+    ):
         raise ValueError(f"command {command} requires --marker-env")
     if command == "metadata":
         ref = resolve_metadata_ref(
-            json.load(sys.stdin), arguments[2], arguments[3], arguments[4], marker_environment
+            json.load(sys.stdin),
+            arguments[2],
+            arguments[3],
+            arguments[4],
+            marker_environment,
         )
         if ref is not None:
             print(ref)
         return
     if command == "requirements":
         ref = resolve_requirements_ref(
-            sys.stdin, arguments[2], arguments[3], arguments[4], marker_environment
+            sys.stdin,
+            arguments[2],
+            arguments[3],
+            arguments[4],
+            marker_environment,
         )
         if ref is not None:
             print(ref)

@@ -10,18 +10,18 @@
 #     naming a target and none choosing whether one is built. Hash discovery is the exception and it
 #     builds `packages.default` too.
 {
-  pkgs,
-  source,
-  siblings ? [ ],
-  siblingRefsInPin ? false,
-  hashMode ? "prefetch",
-  extraHashes ? [ ],
+  artifactFingerprint ? "",
+  artifactHook ? null,
   buildFailureHash ?
     if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
   buildFailureHashes ? [ ],
-  artifactHook ? null,
+  extraHashes ? [ ],
+  hashMode ? "prefetch",
   markerEnvironment ? { },
-  artifactFingerprint ? "",
+  pkgs,
+  siblingRefsInPin ? false,
+  siblings ? [ ],
+  source,
 }:
 assert artifactFingerprint == "" || artifactHook != null;
 assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
@@ -39,19 +39,19 @@ let
     ++ pkgs.lib.optional (hfManifestHashField != null) hfManifestHashField
   );
   defaultMarkerEnvironment = {
+    extra = "";
     implementation_name = "cpython";
     implementation_version = pkgs.python3.version;
     os_name = "posix";
     platform_machine = "x86_64";
+    platform_python_implementation = "CPython";
     platform_release = "";
     platform_system = "Linux";
     platform_version = "";
-    platform_python_implementation = "CPython";
     python_full_version = pkgs.python3.version;
     python_version = pkgs.python3.pythonVersion;
     sys_platform = "linux";
     sys_version = "";
-    extra = "";
   };
 in
 assert hfManifest == null || source.type == "huggingface";
@@ -67,27 +67,26 @@ assert
     && hashMode == "prefetch"
   );
 pkgs.writeShellApplication {
-  name = "update-version";
   # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
   excludeShellChecks = [
     "SC2016"
     "SC2089"
     "SC2090"
   ];
-  runtimeInputs = [
-    pkgs.git
-  ]
-  ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
+  name = "update-version";
   runtimeEnv = {
-    SOURCE_TYPE = source.type;
-    OCI_SETTINGS = if oci == null then "" else builtins.toJSON oci.settings;
-    OCI_SKOPEO = if oci == null then "" else pkgs.lib.getExe oci.skopeo;
-    VERSION_SOURCE_TYPE = source.versions.type or "";
-    MUTABLE_URL = source.url or "";
-    PYPI_NAME = source.pname or "";
-    PYPI_FORMAT = source.format or "sdist";
+    ARTIFACT_FINGERPRINT = artifactFingerprint;
+    ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
+    BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
+    CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
+    DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
+    EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
+    GH_ASSET = source.asset or ""; # github-release-asset: filename template, tokens ${version} and ${tag}
+    GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
+    GH_FETCH_SUBMODULES = if (source.fetchSubmodules or false) then "1" else ""; # hash the tree with submodules (src must set fetchSubmodules = true)
     GH_OWNER = versionSource.owner or "";
     GH_REPO = versionSource.repo or "";
+    GH_TAG = source.tag or ""; # github-release-asset: tag template, token ${version} (default v${version})
     GH_TAG_PREFIXES = builtins.toJSON (
       if versionSource ? tagPrefix then
         [ versionSource.tagPrefix ]
@@ -99,40 +98,41 @@ pkgs.writeShellApplication {
         ]
     );
     GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)
-    GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
-    GH_FETCH_SUBMODULES = if (source.fetchSubmodules or false) then "1" else ""; # hash the tree with submodules (src must set fetchSubmodules = true)
-    GH_ASSET = source.asset or ""; # github-release-asset: filename template, tokens ${version} and ${tag}
-    GH_TAG = source.tag or ""; # github-release-asset: tag template, token ${version} (default v${version})
     GITLAB_OWNER = source.owner or "";
     GITLAB_REPO = source.repo or "";
     GITLAB_TRACK = source.track or "commit"; # release (tags -> X.Y.Z) | commit (master HEAD -> 0-unstable-DATE)
-    HF_REPO = if source.type == "huggingface" then source.repo else "";
-    HF_REVISION = source.revision or "main";
+    HASH_MODE = hashMode;
     HF_FILES = builtins.toJSON (source.files or [ ]);
-    HF_MANIFEST_PATH = if hfManifest == null then "" else hfManifest.path;
-    HF_MANIFEST_INCLUDE = builtins.toJSON (
-      if hfManifest == null then [ ] else hfManifest.include or [ ]
-    );
     HF_MANIFEST_EXCLUDE = builtins.toJSON (
       if hfManifest == null then [ ] else hfManifest.exclude or [ ]
     );
     HF_MANIFEST_HASH_FIELD = if hfManifestHashField == null then "" else hfManifestHashField;
-    HASH_MODE = hashMode;
-    EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
+    HF_MANIFEST_INCLUDE = builtins.toJSON (
+      if hfManifest == null then [ ] else hfManifest.include or [ ]
+    );
+    HF_MANIFEST_PATH = if hfManifest == null then "" else hfManifest.path;
+    HF_REPO = if source.type == "huggingface" then source.repo else "";
+    HF_REVISION = source.revision or "main";
+    MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
+    MUTABLE_URL = source.url or "";
+    NIX_PATH = "nixpkgs=${pkgs.path}";
+    OCI_SETTINGS = if oci == null then "" else builtins.toJSON oci.settings;
+    OCI_SKOPEO = if oci == null then "" else pkgs.lib.getExe oci.skopeo;
     PIN_HASHES = builtins.toJSON (
       pkgs.lib.unique (
         effectiveExtraHashes ++ pkgs.lib.filter (name: name != "sourceHash") buildFailureFields
       )
     );
-    BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
-    ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
+    PYPI_FORMAT = source.format or "sdist";
+    PYPI_NAME = source.pname or "";
     SIBLINGS = builtins.toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
-    MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
-    ARTIFACT_FINGERPRINT = artifactFingerprint;
-    NIX_PATH = "nixpkgs=${pkgs.path}";
-    CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
-    DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
+    SOURCE_TYPE = source.type;
+    VERSION_SOURCE_TYPE = source.versions.type or "";
   };
+  runtimeInputs = [
+    pkgs.git
+  ]
+  ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
   text = ''exec ${../scripts/update-version.sh} "$@"'';
 }

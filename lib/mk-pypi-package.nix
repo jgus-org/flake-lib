@@ -1,14 +1,14 @@
 # Builds a PyPI-sourced python package (or application) from a pin + spec.
 {
-  pkgs,
-  source,
   package,
   pin,
+  pkgs,
+  source,
 }:
 let
   inherit (pkgs) lib;
   ps = pkgs.python3Packages;
-  inherit (pin) version hash;
+  inherit (pin) hash version;
 
   kind = package.kind or "pythonPackage";
   builder = if kind == "pythonApplication" then ps.buildPythonApplication else ps.buildPythonPackage;
@@ -24,28 +24,28 @@ let
         format = "wheel";
         # Universal wheel. fetchPypi's `dist` (URL path segment) and `python` (filename tag) both default to py2.py3; a py3-none-any wheel needs both set to py3, else the path 404s. Platform-specific wheels aren't covered here.
         src = ps.fetchPypi {
-          pname = source.pname;
-          format = "wheel";
+          inherit hash version;
           dist = "py3";
+          format = "wheel";
+          pname = source.pname;
           python = "py3";
-          inherit version hash;
         };
       }
     else
       {
+        build-system = (package.buildSystem or (p: [ p.setuptools ])) ps;
         pyproject = true;
         src = ps.fetchPypi {
+          inherit hash version;
           pname = source.pname;
-          inherit version hash;
         };
-        build-system = (package.buildSystem or (p: [ p.setuptools ])) ps;
       };
 in
 builder (
   {
-    pname = package.attr;
     inherit version;
     doCheck = false;
+    pname = package.attr;
   }
   // srcAttrs
   // lib.optionalAttrs (deps != [ ]) { dependencies = deps; }

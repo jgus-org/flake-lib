@@ -18,6 +18,14 @@ flake-lib.lib.mkLeafFlake {
 }
 # => packages.<system> = { <attr>; update-version; update-branches; default; }
 
+# The org-standard formatter, so a repo carries no treefmt config, no treefmt-nix input,
+# and no formatter config files of its own.
+flake-lib.lib.mkFormatting {
+  inherit self system;
+  excludes = [ "secrets/**" ];  # repo-specific paths, merged with treefmt's own defaults
+}
+# => { formatter; check; }
+
 # Per-system outputs, over the systems this fleet builds for.
 flake-lib.lib.eachDefaultSystem      (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux, aarch64-darwin
 flake-lib.lib.eachDefaultLinuxSystem (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux
@@ -49,7 +57,7 @@ flake-lib.lib.warnIfNewerMajor { pkgs; name; lib ? pkgs.lib; }
 ```
 
 `source.type` is `pypi`, `github`, `github-release-asset`, `huggingface`, `gitlab`, `mutable-url`, or `oci`. `github`
-hashes the source *tree* at a release tag (`{ version, sourceRev, sourceHash }`);
+hashes the source _tree_ at a release tag (`{ version, sourceRev, sourceHash }`);
 GitHub sources whose release tags have an additional prefix set `tagPrefix`, such as `source = { type = "github"; owner = "openai"; repo = "codex"; tagPrefix = "rust-v"; };`. Pins and version branches use the version without that prefix.
 A `github` source names its versions in exactly one of two places, and `track` says which: `release` (the default) reads the GitHub Releases API, and `tag` reads the repository's git tags. An upstream that ships tags without opening GitHub Releases for them has an empty releases list, so a producer for one tracks `tag` — otherwise its versions are invisible to both the updater and the orchestrator.
 A `gitlab` source names its versions as the project's git tags, which is also where its updater resolves a release from, so there is no endpoint for `track` to choose between; `mkUpdateBranches` enumerates those tags and refuses a gitlab source that asks for `tag`.
@@ -317,7 +325,6 @@ the `ATTIC_TOKEN` secret resolves -- one organization secret covers every reposi
 -- and falls back to the repository's Actions cache when it does not, so repositories
 and fork pull requests without a token behave as before.
 
-
 ### Publication builds the tracked package
 
 `packages.default` is the tracked package, by standard rather than by convention: it is
@@ -365,7 +372,17 @@ update-branches publish --base-sha SHA --versions-json JSON [--for-version CANON
 `list` writes exactly one compact JSON object to stdout; progress goes to stderr:
 
 ```json
-{"baseSha":"<full commit SHA>","versions":[{"version":"1.2.3","upstreamVersion":"1.2.3","stable":true}],"newestStable":{"version":"1.2.3","upstreamVersion":"1.2.3","stable":true}}
+{
+  "baseSha": "<full commit SHA>",
+  "versions": [
+    { "version": "1.2.3", "upstreamVersion": "1.2.3", "stable": true }
+  ],
+  "newestStable": {
+    "version": "1.2.3",
+    "upstreamVersion": "1.2.3",
+    "stable": true
+  }
+}
 ```
 
 `versions` is ordered newest first and `newestStable` is either the first stable
@@ -414,7 +431,7 @@ nix run github:jgus-org/flake-lib/v1#update-workflows
 Producers invoke flake-lib's own instance rather than republishing one through their
 own `packages`. Nothing about the calling flake is baked into the tool -- it reads the
 lock and the installed workflows -- so a re-export is boilerplate, and a re-export is
-also self-defeating: `nix run .#update-workflows` evaluates the *program* at the
+also self-defeating: `nix run .#update-workflows` evaluates the _program_ at the
 revision the flake currently locks, which leaves the tool doing the adopting one
 revision behind the templates it installs.
 
@@ -422,8 +439,8 @@ The tool reads the `flake-lib` input out of `flake.lock`, advances it, and
 overwrites each workflow in `.github/workflows` whose name a template of that
 revision ships. It does not add or rename a workflow: which workflows a repo has
 is the author's decision, and one flake-lib has no template for is left alone.
-What is compared is the installed file against the template at the revision *now
-locked*, not the revision the run started from — the pin path advances
+What is compared is the installed file against the template at the revision _now
+locked_, not the revision the run started from — the pin path advances
 `flake-lib` as it commits pins, so a lock can reach a revision without that
 revision's templates having been installed, and a refresh that asked only whether
 the input had moved would leave a repository running old workflow files against
@@ -507,6 +524,57 @@ cancel GitHub Actions workflows" is Write. The templates pass one organization s
 `ORG_UPDATE_TOKEN`, so every producer is covered at once and none of them declares
 anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
 nothing and proceeds, in the same shape as the Attic cache action's fallback.
+
+### Org-standard formatting (`mkFormatting`)
+
+Every repo in the org formats with the same program set and the same config files, so a
+repo opts in instead of configuring:
+
+```nix
+outputs = { self, flake-lib, nixpkgs, ... }:
+  flake-lib.lib.eachDefaultSystem (system:
+    let
+      formatting = flake-lib.lib.mkFormatting { inherit self system; };
+    in
+    {
+      formatter = formatting.formatter;
+      checks.formatting = formatting.check;
+    });
+```
+
+`self` is the tree to format, so a flake-parts module and a plain flake both pass what they
+already have in scope. `excludes` adds the paths only the repo knows about — generated files,
+vendored trees, secrets — on top of the excludes treefmt applies by default.
+
+The program set is a union across the org, and a repo that does not write a language
+simply has no files the matching formatter picks up:
+
+| Formatter      | Files                             | Settings                                                                                                              |
+| -------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `nixfmt`       | `*.nix`                           | the command is `pedantix` (attrs grouped and sorted over nixfmt's RFC style), configured by `formatter/pedantix.toml` |
+| `clang-format` | C, C++, GLSL                      | `formatter/.clang-format` (Google base, 120 columns, no bin packing)                                                  |
+| `ruff-format`  | `*.py`, `*.pyi`                   | `--line-length 79`                                                                                                    |
+| `shfmt`        | `*.sh`, `*.bash`, `.envrc`        | indent 2, no `-s` simplification                                                                                      |
+| `prettier`     | js, ts, json, md, yaml, css, html | prettier's own defaults                                                                                               |
+| `gofmt`        | `*.go`                            | not `gofumpt`: two formatters cannot both claim `*.go`                                                                |
+
+Two formatters must not match the same file, because treefmt lets the higher-priority one
+win in silence: `nixfmt` rather than `deadnix`/`statix`/`alejandra`/`nixpkgs-fmt` for Nix,
+`ruff-format` rather than `black`/`yapf`/`isort` for Python, `shfmt` rather than `beautysh`,
+`prettier` rather than `yamlfmt`/`taplo`/`biome`/`dprint`/`oxfmt`.
+
+Tools resolve from **this flake's own** pinned nixpkgs and from nothing else: the function
+takes no `pkgs`, so a repo cannot resolve the tools elsewhere. Every repo formats identically
+and a repo upgrades its formatter by bumping its flake-lib pin. The same
+drift returns through a `follows` edge on `flake-lib.inputs.nixpkgs`, which is why a consumer
+leaves that edge off: every other flake-lib function takes the caller's `pkgs` as an argument,
+so a consumer that drops the edge changes nothing but its formatter. The two config files reach
+their tools by absolute store path, which means a repo that still carries its own
+`.clang-format` or `pedantix.toml` would keep two copies of one standard: those files are
+removed in consuming repos, not overridden.
+
+A dev shell that wants the formatters on its `PATH` adds `formatter`, and the tools a specific
+editor drives, from its own `pkgs`; flake-lib does not build a shell for a repo.
 
 ## Versioning
 

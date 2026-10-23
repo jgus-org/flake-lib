@@ -4,11 +4,11 @@
 #                    "generated" — upstream ships none; regenerate it from package.json and vendor it into FLAKE_ROOT (the flake's build copies ./package-lock.json). npm only.
 #   fetcherVersion : npm only; must match the flake's npmDepsFetcherVersion — it changes the hash
 {
-  pkgs,
-  manager,
-  source ? "shipped",
-  field ? null,
   fetcherVersion ? null,
+  field ? null,
+  manager,
+  pkgs,
+  source ? "shipped",
 }:
 let
   inherit (pkgs) lib;

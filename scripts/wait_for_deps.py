@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -335,10 +335,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     def wait(repo: str) -> Outcome:
         return wait_for_dependency(client, repo, config, warn)
 
+    # The wait's own log is the only place a consumer's operator can see what it is blocked
+    # on, and one dependency can hold it for the whole budget, so the set being waited for is
+    # stated before the first read and each dependency is reported as it settles. stdout is
+    # buffered when it is a pipe, so these lines flush.
+    print(
+        f"waiting for {len(dependencies)} dependency updates, each for up to "
+        f"{config.timeout:g}s: {', '.join(dependencies)}",
+        flush=True,
+    )
+    outcomes: list[Outcome] = []
     with ThreadPoolExecutor(max_workers=min(len(dependencies), MAX_CONCURRENCY)) as pool:
-        outcomes = list(pool.map(wait, dependencies))
-    for outcome in outcomes:
-        print(f"dep {outcome}")
+        waiting = [pool.submit(wait, repo) for repo in dependencies]
+        for finished in as_completed(waiting):
+            outcome = finished.result()
+            outcomes.append(outcome)
+            print(f"dep {outcome} [{len(outcomes)}/{len(dependencies)}]", flush=True)
 
     refused = [outcome for outcome in outcomes if outcome.status in REFUSED]
     if not refused:

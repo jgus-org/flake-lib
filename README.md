@@ -484,6 +484,11 @@ waited for. Dependencies are waited for concurrently, so the wait is the slowest
 dependency rather than their sum, and a chain of them resolves in real dependency depth
 rather than in fixed slots.
 
+The wait reports as it goes rather than only at the end: it names the dependencies it
+intends to order and the budget each one has before it reads anything, and it reports each
+dependency the moment it settles with how many are still outstanding, because a consumer's
+run is read in a log where a silent wait is indistinguishable from a hung one.
+
 Every failure to establish ordering other than a refused credential ends in continuing
 without waiting, and the exit status is success: a dependency that cannot be observed, that
 fails, or that never finishes must not stop the fleet. The report says which of those

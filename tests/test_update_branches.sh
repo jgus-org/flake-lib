@@ -913,3 +913,15 @@ assert_ref_version v1.2.0 1.2.0
 assert_same_ref main v1.2.0
 grep -Fq -- 'build verification skipped' <<<"${LOG}"
 unset TEST_NIX_BUILD_FAILURES BUILD_VERIFICATION_SKIP
+
+# The refresh formats what it changed before it commits, so a machine commit never leaves a repository failing its own formatting check. When formatting fails, nothing is committed and the version stays undiscovered for the next run.
+initialize_repository
+export TEST_NIX_FMT_FAILURES='1.2.0'
+run_failed_update '1.2.0'
+assert_missing_ref v1.2.0
+assert_missing_ref v1.2
+assert_missing_ref v1
+assert_ref_version main 1.0.0
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
+grep -Fq -- 'nix fmt failed for v1.2.0' "${CASE_ROOT}/update.log"
+unset TEST_NIX_FMT_FAILURES

@@ -632,6 +632,16 @@
               printf '%s\n' /nix/store/00000000000000000000000000000000-fixture-default
               exit 0
             fi
+            if [[ "''${1}" == "fmt" ]]; then
+              # A fixture is written formatted, so formatting succeeds unless a version names a failure.
+              for FAILED_VERSION in ''${TEST_NIX_FMT_FAILURES:-}; do
+                if grep -Fq "version = \"''${FAILED_VERSION}\";" pin.nix; then
+                  printf 'error: fixture: formatting failed at %s\n' "''${FAILED_VERSION}" >&2
+                  exit 1
+                fi
+              done
+              exit 0
+            fi
             [[ "''${1}" == "run" ]]
             if [[ "''${PIN_SCHEMA:-}" == "oci" ]]; then
               grep -Fq 'imageDigest = "sha256:' "''${FLAKE_ROOT}/pin.nix"

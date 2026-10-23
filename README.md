@@ -319,6 +319,10 @@ installed by running `nix run github:jgus-org/flake-lib/v1#update-workflows` --
 flake-lib's own instance of the tool, rather than a copy each producer republishes;
 see below.
 
+Both models commit what they changed, so both format it first: `nix fmt` runs as a
+workflow step in `update-version.yml` and inside the branch's tree in the refresh,
+where the commit is made by the tool and no step could have reached that tree.
+
 Both templates cache through `.github/actions/fleet-nix-cache`, a composite action
 that points Nix at the fleet Attic cache and pushes what a job builds to it whenever
 the `ATTIC_TOKEN` secret resolves -- one organization secret covers every repository

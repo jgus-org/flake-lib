@@ -101,6 +101,16 @@ write_empty_pin
 run_update release '["rust-v"]' '' '' 1.2.3 1.2.3
 assert_pin
 
+# A pin is machine-written into a repository that formats itself, so the writer's field order has to be the formatter's sorted order. Written any other way, the updater's own commit fails the repository's formatting check until a human reformats it.
+write_empty_pin
+run_update release '["v","V",""]' v1.2.3 ''
+diff -u <(printf '%s\n' \
+  '{' \
+  '  sourceHash = "sha256-source";' \
+  '  sourceRev = "source-revision";' \
+  '  version = "1.2.3";' \
+  '}') <(grep -v '^#' "${TEST_ROOT}/pin.nix")
+
 cat >"${TEST_ROOT}/pin.nix" <<'EOF'
 {
   version = "1.2.3";

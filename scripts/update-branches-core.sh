@@ -659,6 +659,16 @@ refresh_version() {
     remove_worktree "${wt}"
     return 1
   fi
+  # A machine commit that is not formatted leaves the branch failing its own formatting
+  # check until a human formats the tree.
+  if ! nix fmt; then
+    LAST_FAILURE_REASON="formatting ${branch} failed"
+    echo "::warning title=Branch ${branch} not published::nix fmt failed; nothing was committed on ${branch}."
+    echo "  ERROR: nix fmt failed for ${branch}; ${branch} not published." >&2
+    popd >/dev/null
+    remove_worktree "${wt}"
+    return 1
+  fi
   if [[ ${BUILD_VERIFICATION_SKIP} == "true" ]]; then
     echo "  build verification skipped"
   elif ! run_with_transient_retry "build for ${branch}" nix build --no-link --print-out-paths .#default; then

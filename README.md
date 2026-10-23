@@ -525,6 +525,49 @@ cancel GitHub Actions workflows" is Write. The templates pass one organization s
 anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
 nothing and proceeds, in the same shape as the Attic cache action's fallback.
 
+### Build every published package (`build-packages`)
+
+A flake's packages are the surface its consumers build, and nothing in a producer's CI built
+them: `nix flake check` builds `checks` and only looks at the shape of `packages`, and the
+updater's own build runs after the change is already merged. This tool builds them, reading the
+tree it is run in rather than anything baked into a caller:
+
+```console
+nix run github:jgus-org/flake-lib/v1#build-packages
+```
+
+It builds every package the flake publishes for the system it runs on, so a package added later
+is built by the next run without anything being updated. `--dry-run` prints the installables it
+would build, which is how a repository is audited before it is wired up; `--system` selects
+another system's family and `--flake` reads another tree.
+
+A package a hosted runner cannot build excuses itself, with the reason in the comment beside
+the marker:
+
+```nix
+packages.${system}.vm-test =
+  (pkgs.callPackage ./test/vm.nix { }).overrideAttrs (_final: previous: {
+    # This package is the VM run derivation: building it boots two VMs, and a hosted runner
+    # has no nested virtualization.
+    passthru = (previous.passthru or { }) // { ciBuildSkip = true; };
+  });
+```
+
+A VM suite usually does not need the marker. `nixosTest` publishes its driver beside its run
+derivation, and building the driver type-checks the test script and builds every guest system
+while booting nothing, so the package that earns a build is the driver and the part that needs
+`kvm` stays unpublished.
+
+The run names every package it excused, so an exemption cannot go unnoticed, and a marker
+that is not a boolean fails the run. It is the per-package sibling of the publication path's
+`buildVerificationSkip`; the two gate different builds.
+
+One system per run, which is a scope decision rather than a limit: hosted arm64 runners
+exist and a second caller could build `aarch64-linux`. Apps and devShells are not built -- an
+app names a program to run, and a `mkShell` derivation has no build phase to fail. A flake
+that publishes nothing buildable for the system it runs on reports that and passes, so a flake
+with no buildables is still worth pointing a build at.
+
 ### Org-standard formatting (`mkFormatting`)
 
 Every repo in the org formats with the same program set and the same config files, so a

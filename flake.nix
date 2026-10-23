@@ -59,6 +59,15 @@
           runtimeEnv.GIT_PUSH_LIB = pkgs.copyPathToStore ./scripts/git-push.sh;
           text = ''exec ${./scripts/update-workflows.sh} "$@"'';
         };
+        # A flake's published packages are what its consumers build and `nix flake check`
+        # only evaluates them, so the build is a tool of its own: what to build is read from
+        # the tree it runs in, exactly as the refresher reads the tree it rewrites.
+        build-packages = pkgs.writeShellApplication {
+          name = "build-packages";
+          runtimeEnv.BUILD_PACKAGES_SELECT = pkgs.copyPathToStore ./scripts/build-packages-select.nix;
+          runtimeInputs = [ pkgs.jq ];
+          text = ''exec ${./scripts/build-packages.sh} "$@"'';
+        };
         # Ordering is observed from the consumer side, so like the refresher this takes nothing
         # from the caller: its edges are the caller's own flake inputs, read from its lock.
         wait-for-deps = pkgs.writeShellApplication {
@@ -908,11 +917,87 @@
               python3 ${./tests/test_wait_for_deps.py}
               touch $out
             '';
-        workflow-templates =
-          pkgs.runCommand "workflow-templates-check" { nativeBuildInputs = [ pkgs.yq-go ]; }
+        build-packages-tests =
+          pkgs.runCommand "build-packages-tests"
+            {
+              BUILD_PACKAGES = ./scripts/build-packages.sh;
+              BUILD_PACKAGES_SELECT = ./scripts/build-packages-select.nix;
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.gnugrep
+                pkgs.jq
+              ];
+            }
             ''
-              for f in ${./templates/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
-                yq eval 'true' "$f" > /dev/null
+              bash ${./tests/test_build_packages.sh}
+              touch $out
+            '';
+        # The selection is pure Nix handed to `nix eval --apply`, so it is tested as pure
+        # Nix: the assertions run when the flake is evaluated, not inside a builder that
+        # would have to nest nix inside itself.
+        build-packages-select-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/build-packages-select.nix { select = import ./scripts/build-packages-select.nix; }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "build-packages selection tests failed" (
+            pkgs.runCommand "build-packages-select-tests" { } "touch $out"
+          );
+        publishedTools = {
+          inherit
+            build-packages
+            revalidate-hash
+            update-branches
+            update-branches-github-pnpm
+            update-branches-oci-github
+            update-branches-pypi-cargo
+            update-version
+            update-version-github
+            update-version-github-commit
+            update-version-github-pnpm
+            update-version-github-pnpm-go
+            update-version-huggingface
+            update-version-mutable-url
+            update-version-oci
+            update-version-oci-github
+            update-version-pypi-cargo
+            update-workflows
+            wait-for-deps
+            ;
+        };
+        workflow-templates =
+          pkgs.runCommand "workflow-templates-check"
+            {
+              PUBLISHED_TOOLS = pkgs.writeText "published-tools" (
+                pkgs.lib.concatStringsSep "\n" (builtins.attrNames publishedTools)
+              );
+              nativeBuildInputs = [
+                pkgs.actionlint
+                pkgs.coreutils
+                pkgs.gnugrep
+                pkgs.shellcheck
+                pkgs.yq-go
+              ];
+            }
+            ''
+              for TEMPLATE in ${./templates/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
+                yq eval 'true' "$TEMPLATE" > /dev/null
+              done
+              # A workflow file GitHub refuses to parse fails every repository that installs
+              # it at once, and that run has no job and no log to read -- an expression
+              # written where its position has no such context is the mistake, and it is
+              # caught here rather than on somebody's pull request. actionlint lints the
+              # shell inside a step only when it finds shellcheck on its PATH.
+              for TEMPLATE in ${./templates/workflows}/*.yml; do
+                actionlint "$TEMPLATE"
+              done
+              # A template naming a tool this flake does not publish breaks every
+              # repository that installs it at once, so the names are read from what is
+              # published rather than from a second list that could disagree.
+              for TOOL in $(grep -rhoE 'github:jgus-org/flake-lib/v1#[a-z0-9-]+' ${./templates/workflows} | sed 's|.*#||' | sort -u); do
+                grep -Fxq "$TOOL" "$PUBLISHED_TOOLS"
               done
               touch $out
             '';
@@ -935,6 +1020,7 @@
         checks = {
           inherit formatting-tests;
           inherit
+            build-packages
             revalidate-hash
             update-branches
             update-branches-github-pnpm
@@ -972,7 +1058,13 @@
             wheelhouse-tags-tests
             ;
           inherit update-version-tests;
-          inherit update-workflows-tests wait-for-deps-tests workflow-templates;
+          inherit
+            build-packages-select-tests
+            build-packages-tests
+            update-workflows-tests
+            wait-for-deps-tests
+            workflow-templates
+            ;
           inherit oci-image-tests;
           composed-hook = hookCheck "composed-hook" composed-hook;
           formatting = orgFormatting.check;
@@ -982,27 +1074,7 @@
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
         };
         formatter = orgFormatting.formatter;
-        packages = {
-          inherit
-            revalidate-hash
-            update-branches
-            update-branches-github-pnpm
-            update-branches-oci-github
-            update-branches-pypi-cargo
-            update-version
-            update-version-github
-            update-version-github-commit
-            update-version-github-pnpm
-            update-version-github-pnpm-go
-            update-version-huggingface
-            update-version-mutable-url
-            update-version-oci
-            update-version-oci-github
-            update-version-pypi-cargo
-            update-workflows
-            wait-for-deps
-            ;
-        };
+        packages = publishedTools;
       }
     );
 }

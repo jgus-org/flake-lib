@@ -650,3 +650,5 @@ editor drives, from its own `pkgs`; flake-lib does not build a shell for a repo.
 Hand-versioned via git tags (`vX.Y.Z`) with a moving `v1` aggregate branch. Breaking
 changes bump to `v2`; consumers migrate deliberately, so one push can't break every
 repo at once.
+
+See [LICENSE.md](LICENSE.md) for licensing and copyright.

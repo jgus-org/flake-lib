@@ -329,6 +329,10 @@ let
           }}
           runHook postInstall
         '';
+        meta = {
+          sourceProvenance = [ pkgs.lib.sourceTypes.binaryNativeCode ];
+        }
+        // (inherited.meta or { });
         nativeBuildInputs = [
           pkgs.uv
           pkgs.autoPatchelfHook

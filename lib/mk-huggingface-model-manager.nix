@@ -1,5 +1,8 @@
 {
   manifest,
+  meta ? {
+    license = pkgs.lib.licenses.mit;
+  },
   model,
   name,
   pkgs,
@@ -20,6 +23,7 @@ in
   '';
 }).overrideAttrs
   (oldAttrs: {
+    meta = (oldAttrs.meta or { }) // meta;
     passthru = (oldAttrs.passthru or { }) // {
       inherit model stampName;
     };

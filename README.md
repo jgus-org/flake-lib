@@ -39,7 +39,7 @@ flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
 flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
-flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; stampName ? ".${name}-verified.json"; }
+flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; meta ? { license = mit; }; stampName ? ".${name}-verified.json"; }
 flake-lib.lib.mkOciImage       { pkgs; source; pin; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
@@ -144,7 +144,7 @@ source = {
 };
 ```
 
-`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing. `download` authenticates against Hugging Face only when the caller's environment exports `HF_TOKEN`; the local HF token store is never picked up implicitly.
+`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. `meta` defaults to the MIT license, because the downloader is flake-lib's own script, and a caller passing `meta` replaces it. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing. `download` authenticates against Hugging Face only when the caller's environment exports `HF_TOKEN`; the local HF token store is never picked up implicitly.
 
 ```nix
 modelManager = flake-lib.lib.mkHuggingFaceModelManager {
@@ -279,7 +279,8 @@ the wheelhouse into `$out/$sitePackages`, and takes the same attributes as
 `stdenv.mkDerivation` plus `checkImports` — module names imported in an interpreter
 started with no environment at all, so a site tree that loads only under an ambient
 `LD_LIBRARY_PATH` fails its build instead of its first import in production. `buildInputs`
-extends the libraries the rewrite may resolve against.
+extends the libraries the rewrite may resolve against. `meta.sourceProvenance` defaults to
+`binaryNativeCode`, since wheels arrive compiled; a caller's own `meta` overrides it.
 
 ```nix
 python = pkgs.python3;

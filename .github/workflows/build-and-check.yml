@@ -1,7 +1,7 @@
 # The gate a pull request has to pass: build every package this flake publishes for the
 # runner's system, then `nix flake check`. The check alone is not the gate -- it looks at
 # the shape of `packages` without building them -- and the updater's build is not either,
-# running on the publication path after the merge. A package a hosted runner cannot build
+# running on the publication path after the merge. A package the runner cannot build
 # sets `passthru.ciBuildSkip = true` with the reason beside it, and the run names every
 # package it skipped.
 #
@@ -13,6 +13,15 @@
 # and a repository or fork pull request with no token runs on the public cache alone. Nix
 # fetches a github input anonymously, so a flake that locks a private repository needs
 # BUILD_TOKEN, and a repository without it runs on the public inputs it can fetch.
+#
+# A gate runs on a hosted runner unless the repository sets the `CI_RUNNER` variable to a
+# label one of its own runners carries. A published family wider than a hosted runner holds
+# is what earns one: the family is realized into one store, so the size that matters is the
+# family's, not any one package's, and a runner with room keeps every package gated where a
+# marker would have to excuse some. Such a runner brings its own nix and its own cache
+# configuration, so the two steps that provide those on a hosted runner stand down where nix
+# is already there -- reconfiguring the nix of a machine the repository owns is not a job's
+# work.
 
 name: Build and Check
 
@@ -29,11 +38,24 @@ concurrency:
 
 jobs:
   build-and-check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: cachix/install-nix-action@v31
+      # A step cannot test a command in its own condition, so the test is its own step and
+      # the two steps that follow read its output.
+      - name: Ask this runner whether it provides nix
+        id: nix
+        run: |
+          if command -v nix >/dev/null 2>&1; then
+            printf 'provided=%s\n' true >> "$GITHUB_OUTPUT"
+          else
+            printf 'provided=%s\n' false >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install nix
+        if: steps.nix.outputs.provided == 'false'
+        uses: cachix/install-nix-action@v31
 
       # An input in a private repository is invisible until a token says otherwise, and the
       # setting is client-side: the process that resolves the lock reads it, so the daemon
@@ -47,7 +69,9 @@ jobs:
             printf 'access-tokens = github.com=%s\n' "$BUILD_TOKEN" >> ~/.config/nix/nix.conf
           fi
 
-      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      - name: Use the fleet binary cache
+        if: steps.nix.outputs.provided == 'false'
+        uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 

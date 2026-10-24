@@ -19,6 +19,15 @@
 #
 # Everything the run changed is committed together. Scratch output the updater leaves
 # behind must be in .gitignore, since staging is unrestricted.
+#
+# An update runs on a hosted runner unless the repository sets the `UPDATE_RUNNER`
+# variable to a label one of its own runners carries. The workflow moves whole: a
+# repository with no hosted minutes cannot spend them on the cheap jobs either. Such a
+# runner brings its own nix and its own cache configuration, so the two steps that
+# provide those on a hosted runner stand down where nix is already there -- and with
+# them the cache push path, since a runner on fleet hardware holds no cache-write
+# credential. What such a run builds reaches the fleet cache when a fleet machine
+# builds it.
 
 name: Update version
 
@@ -36,7 +45,7 @@ concurrency:
 
 jobs:
   workflows:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.UPDATE_RUNNER || 'ubuntu-latest' }}
     outputs:
       sha: ${{ steps.update.outputs.sha }}
     steps:
@@ -44,9 +53,24 @@ jobs:
         with:
           token: ${{ secrets.ORG_UPDATE_TOKEN || github.token }}
 
-      - uses: cachix/install-nix-action@v31
+      # A step cannot test a command in its own condition, so the test is its own step and
+      # the two steps that follow read its output.
+      - name: Ask this runner whether it provides nix
+        id: nix
+        run: |
+          if command -v nix >/dev/null 2>&1; then
+            printf 'provided=%s\n' true >> "$GITHUB_OUTPUT"
+          else
+            printf 'provided=%s\n' false >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      - name: Install nix
+        if: steps.nix.outputs.provided == 'false'
+        uses: cachix/install-nix-action@v31
+
+      - name: Use the fleet binary cache
+        if: steps.nix.outputs.provided == 'false'
+        uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 
@@ -62,16 +86,31 @@ jobs:
   deps:
     needs: workflows
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.UPDATE_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: cachix/install-nix-action@v31
+      # A step cannot test a command in its own condition, so the test is its own step and
+      # the two steps that follow read its output.
+      - name: Ask this runner whether it provides nix
+        id: nix
+        run: |
+          if command -v nix >/dev/null 2>&1; then
+            printf 'provided=%s\n' true >> "$GITHUB_OUTPUT"
+          else
+            printf 'provided=%s\n' false >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      - name: Install nix
+        if: steps.nix.outputs.provided == 'false'
+        uses: cachix/install-nix-action@v31
+
+      - name: Use the fleet binary cache
+        if: steps.nix.outputs.provided == 'false'
+        uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 
@@ -86,16 +125,31 @@ jobs:
   update:
     needs: [workflows, deps]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.UPDATE_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: cachix/install-nix-action@v31
+      # A step cannot test a command in its own condition, so the test is its own step and
+      # the two steps that follow read its output.
+      - name: Ask this runner whether it provides nix
+        id: nix
+        run: |
+          if command -v nix >/dev/null 2>&1; then
+            printf 'provided=%s\n' true >> "$GITHUB_OUTPUT"
+          else
+            printf 'provided=%s\n' false >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      - name: Install nix
+        if: steps.nix.outputs.provided == 'false'
+        uses: cachix/install-nix-action@v31
+
+      - name: Use the fleet binary cache
+        if: steps.nix.outputs.provided == 'false'
+        uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 

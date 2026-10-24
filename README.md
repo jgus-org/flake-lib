@@ -420,6 +420,20 @@ accepted, an unchanged ref is retried, and a different concurrent update is
 never overwritten. Branch update commands receive one additional attempt only
 when their output identifies a transient network failure.
 
+### Where an update runs
+
+Both update templates run on `ubuntu-latest` unless the repository sets its `UPDATE_RUNNER`
+variable to a label one of its own runners carries, and the workflow moves whole: a repository
+with no hosted minutes cannot spend them on the cheap jobs alone. A runner answering that label
+provides nix, so the two steps that provide nix and the fleet cache on a hosted runner stand down
+where nix is already there, exactly as in the gate. Standing down drops the cache push path too,
+because a runner on fleet hardware holds no cache-write credential: what such a run builds
+reaches the fleet cache when a fleet machine builds it, and a repository that wants its update
+run to populate a shared cache keeps that run on a hosted runner. The update path and the gate
+are routed by separate variables, so a repository can move the gate first and the update path
+later; set either variable only once a runner answers its label, because GitHub queues a job
+whose labels nothing answers until the job times out.
+
 ### Refresh installed workflows (`update-workflows`)
 
 Workflow files are copies of flake-lib's templates, so on their own they cannot

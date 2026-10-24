@@ -422,17 +422,17 @@ when their output identifies a transient network failure.
 
 ### Where an update runs
 
-Both update templates run on `ubuntu-latest` unless the repository sets its `UPDATE_RUNNER`
-variable to a label one of its own runners carries, and the workflow moves whole: a repository
-with no hosted minutes cannot spend them on the cheap jobs alone. A runner answering that label
-provides nix, so the two steps that provide nix and the fleet cache on a hosted runner stand down
-where nix is already there, exactly as in the gate. Standing down drops the cache push path too,
-because a runner on fleet hardware holds no cache-write credential: what such a run builds
-reaches the fleet cache when a fleet machine builds it, and a repository that wants its update
-run to populate a shared cache keeps that run on a hosted runner. The update path and the gate
-are routed by separate variables, so a repository can move the gate first and the update path
-later; set either variable only once a runner answers its label, because GitHub queues a job
-whose labels nothing answers until the job times out.
+Both update templates run on `ubuntu-latest` unless the repository owns a runner of its own. The
+`CI_RUNNER` variable that routes the gate routes the update path with it -- a repository with no
+hosted minutes cannot spend them on the cheap jobs alone -- so one variable moves both workflows,
+and `UPDATE_RUNNER` exists only to split them: an update that should land on a different runner
+than a gate, or stay hosted while a gate is not, names its own label there. A runner answering
+either label provides nix, so the two steps that provide nix and the fleet cache on a hosted
+runner stand down where nix is already there, exactly as in the gate. What a run on such a runner
+publishes to a shared cache is that runner's own configuration rather than anything this workflow
+sets: the two setup steps it stands down rewrite a machine's nix configuration, which only the
+hosted machine it does not own was ever fair game for. Set a label only once a runner answers it,
+because GitHub queues a job whose labels nothing answers until the job times out.
 
 ### Refresh installed workflows (`update-workflows`)
 

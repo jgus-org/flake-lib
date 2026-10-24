@@ -20,14 +20,15 @@
 # Everything the run changed is committed together. Scratch output the updater leaves
 # behind must be in .gitignore, since staging is unrestricted.
 #
-# An update runs on a hosted runner unless the repository sets the `UPDATE_RUNNER`
-# variable to a label one of its own runners carries. The workflow moves whole: a
-# repository with no hosted minutes cannot spend them on the cheap jobs either. Such a
-# runner brings its own nix and its own cache configuration, so the two steps that
-# provide those on a hosted runner stand down where nix is already there -- and with
-# them the cache push path, since a runner on fleet hardware holds no cache-write
-# credential. What such a run builds reaches the fleet cache when a fleet machine
-# builds it.
+# An update runs on a hosted runner unless the repository owns a runner of its own. The
+# `CI_RUNNER` variable that routes the gate routes the update path with it, since a
+# repository with no hosted minutes cannot spend them on the cheap jobs either;
+# `UPDATE_RUNNER` overrides it only where an update should land on a different runner
+# than a gate, or stay hosted while a gate is not. Such a runner brings its own nix and
+# its own cache configuration, so the two steps that provide those on a hosted runner
+# stand down where nix is already there -- rewriting the nix configuration of a machine
+# the repository owns is not a job's work. What a run publishes to a shared cache is the
+# runner's configuration, not this workflow's.
 
 name: Update version
 
@@ -45,7 +46,7 @@ concurrency:
 
 jobs:
   workflows:
-    runs-on: ${{ vars.UPDATE_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.UPDATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       sha: ${{ steps.update.outputs.sha }}
     steps:
@@ -86,7 +87,7 @@ jobs:
   deps:
     needs: workflows
     if: always()
-    runs-on: ${{ vars.UPDATE_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.UPDATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -125,7 +126,7 @@ jobs:
   update:
     needs: [workflows, deps]
     if: always()
-    runs-on: ${{ vars.UPDATE_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.UPDATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:

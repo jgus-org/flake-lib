@@ -553,6 +553,18 @@ then refreshes with the rest:
 nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt build-and-check.yml
 ```
 
+The gate runs on `ubuntu-latest` unless the repository sets its `CI_RUNNER` variable to a label
+one of its own runners carries. What earns a runner of a repository's own is the width of the
+published family: the gate realizes every package into one store, so the size that matters is
+the family's rather than any one package's, and a flake whose family a hosted store cannot hold
+needs a wider machine where its markers would otherwise have to excuse packages out of the
+gate. A runner answering that label provides nix, and where nix is already there the gate
+installs none and configures no cache, taking both as the machine has them: the two steps that
+provide them on a hosted runner rewrite that machine's nix configuration, which is not
+something a job is granted on a runner a repository owns. Set the variable only once a runner
+answers the label, because GitHub queues a job whose labels nothing answers until the job times
+out.
+
 A flake that locks a private repository needs one secret, because nix fetches a github input
 anonymously: `BUILD_TOKEN`, a credential that can read the contents of every private repository
 the flake locks. It is inert where the secret does not resolve, so a repository of public inputs
@@ -562,7 +574,7 @@ repository is readable by the pull requests of every public one, which is a wide
 contents credential justifies. GitHub gives a fork pull request no secrets at all, so a flake
 with a private input is gated by pull requests from inside the organization.
 
-A package a hosted runner cannot build excuses itself, with the reason in the comment beside
+A package the runner cannot build excuses itself, with the reason in the comment beside
 the marker:
 
 ```nix

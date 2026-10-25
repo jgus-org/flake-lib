@@ -1,4 +1,5 @@
 {
+  meta ? { },
   pin,
   pkgs,
   source,
@@ -9,6 +10,10 @@ let
   image =
     pkgs.runCommand "oci-image-${pkgs.lib.removePrefix "sha256:" pin.imageDigest}"
       {
+        meta = {
+          sourceProvenance = [ pkgs.lib.sourceTypes.binaryNativeCode ];
+        }
+        // meta;
         nativeBuildInputs = [ contract.skopeo ];
         outputHash = pin.imageHash;
         outputHashAlgo = "sha256";

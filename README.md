@@ -33,14 +33,14 @@ flake-lib.lib.defaultSystems       # [ "aarch64-darwin" "aarch64-linux" "x86_64-
 flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 
 # Low-level: bespoke flakes supply their own package derivation.
-flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; }
-flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
+flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
+flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
-flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; }
+flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; meta ? { license = mit; }; stampName ? ".${name}-verified.json"; }
-flake-lib.lib.mkOciImage       { pkgs; source; pin; }
+flake-lib.lib.mkOciImage       { pkgs; source; pin; meta ? {}; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
 flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + systems + targets
@@ -118,6 +118,8 @@ update-branches = flake-lib.lib.mkUpdateBranches { inherit pkgs source; pinSchem
 A versioned producer pins no `tag`: it publishes its image under its version, so the registry reference is the release version with any GitHub version prefix removed, which is also the version recorded in the pin. Invoking its `update-version` with no arguments resolves the newest upstream release through GitHub's `releases/latest` endpoint, which excludes drafts and prereleases; publish the whole tree with `update-branches`, whose `pinSchema = "oci"` seeds a new exact branch from the base pin's `imageDigest` and `imageHash` alone. A seed claims no version, because `mkOciImage` asserts the digest's shape at evaluation and the branch must not name a release before its image has been resolved. The updater then writes that branch's own version, and reuses the already-pinned content when the resolved image is the one the branch was seeded with. Several releases sharing one image digest is a correct pairing rather than a stale pin, and a version branch counts as unchanged only once its pin names the version it is being resolved for.
 
 `versions` therefore requires the registry to publish the bare release version as a tag. `versionOverrides` and `versionCanon` rename the canonical version — the branch and the pin's `version` — but the updater pulls the tag named by the upstream release version, so neither redirects the image reference. An upstream whose registry tag is spelled differently has no mechanism here and remains a single-branch producer until a version source that reads registry tags exists. The loaded image's local name and tag follow `finalImageName`/`finalImageTag` as usual; with neither set, a versioned pin tags the image with its own version, and a branch seeded before its image resolved falls back to the digest.
+
+`meta.sourceProvenance` on the image defaults to `binaryNativeCode`: the layers arrive as upstream's binaries and nothing in the build reads them. A caller's own `meta` overrides it. No license is defaulted, because the content is upstream's and neither `pin` nor `source` names its terms — writing one into the image's config would also change the config digest the pin pins, so image metadata belongs on the derivation.
 
 `huggingface` tracks a model repository revision and writes a `{ version,
 sourceRev }` pin. An optional `files` list adds a `hashes` attribute containing

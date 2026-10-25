@@ -21,6 +21,9 @@
   buildVerificationSkip ? false,
   extraBranchOwnedFiles ? [ ],
   extraHashes ? [ ],
+  meta ? {
+    license = pkgs.lib.licenses.mit;
+  },
   minVersionComponents ? 3,
   minimumTrackingVersion ? "0.0.0",
   pinSchema,
@@ -52,6 +55,7 @@ assert versionSource.type != "github-release-asset" || versionSourceTrack == "re
 # its git tags, which is also where its updater resolves a release from.
 assert versionSourceTrack != "tag" || versionSource.type == "github";
 pkgs.writeShellApplication {
+  inherit meta;
   # VERSION_OVERRIDES is a JSON string (quotes/braces) consumed via jq at runtime; the generated export trips SC2089/SC2090 (false positive).
   excludeShellChecks = [
     "SC2089"

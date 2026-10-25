@@ -320,9 +320,10 @@ refreshes whichever it has installed by running
 `nix run github:jgus-org/flake-lib/v1#update-workflows` -- flake-lib's own instance
 of the tool, rather than a copy each producer republishes; see below.
 
-Every template caches through `.github/actions/fleet-nix-cache`, a composite action
-that points Nix at the fleet Attic cache and pushes what a job builds to it whenever
-the `ATTIC_TOKEN` secret resolves -- one organization secret covers every repository
+Every template provides nix through `.github/actions/nix`, which installs nix where the runner has
+none and leaves a runner that has nix alone, and caches through `.github/actions/fleet-nix-cache`,
+a composite action that points Nix at the fleet Attic cache and pushes what a job builds to it
+whenever the `ATTIC_TOKEN` secret resolves -- one organization secret covers every repository
 -- and falls back to the repository's Actions cache when it does not, so repositories
 and fork pull requests without a token behave as before.
 
@@ -422,17 +423,10 @@ when their output identifies a transient network failure.
 
 ### Where an update runs
 
-Both update templates run on `ubuntu-latest` unless the repository owns a runner of its own. The
-`RUNNER` variable that routes the gate routes the update path with it, so one variable moves all
-of a repository's workflows onto the machine it owns: a repository with no hosted minutes cannot
-spend them on the cheap jobs alone, and a repository whose published family is too wide for a
-hosted store is bound by the same width on an update as on a gate. A runner answering that label
-provides nix, so the two steps that provide nix and the fleet cache on a hosted runner stand down
-where nix is already there, exactly as in the gate. What a run on such a runner publishes to a
-shared cache is that runner's own configuration rather than anything this workflow sets: the two
-setup steps it stands down rewrite a machine's nix configuration, which only the hosted machine it
-does not own was ever fair game for. Set a label only once a runner answers it, because GitHub
-queues a job whose labels nothing answers until the job times out.
+Both update templates run on `ubuntu-latest` unless the repository sets its `RUNNER` variable to a
+label one of its own runners carries; the gate routes by the same variable. Set it only once a
+runner answers the label, because GitHub queues a job whose labels nothing answers until the job
+times out.
 
 ### Refresh installed workflows (`update-workflows`)
 
@@ -566,18 +560,6 @@ then refreshes with the rest:
 ```console
 nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt build-and-check.yml
 ```
-
-The gate runs on `ubuntu-latest` unless the repository sets its `RUNNER` variable to a label
-one of its own runners carries. What earns a runner of a repository's own is the width of the
-published family: the gate realizes every package into one store, so the size that matters is
-the family's rather than any one package's, and a flake whose family a hosted store cannot hold
-needs a wider machine where its markers would otherwise have to excuse packages out of the
-gate. A runner answering that label provides nix, and where nix is already there the gate
-installs none and configures no cache, taking both as the machine has them: the two steps that
-provide them on a hosted runner rewrite that machine's nix configuration, which is not
-something a job is granted on a runner a repository owns. Set the variable only once a runner
-answers the label, because GitHub queues a job whose labels nothing answers until the job times
-out.
 
 A flake that locks a private repository needs one secret, because nix fetches a github input
 anonymously: `BUILD_TOKEN`, a credential that can read the contents of every private repository

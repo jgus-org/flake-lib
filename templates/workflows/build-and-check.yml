@@ -14,7 +14,7 @@
 # fetches a github input anonymously, so a flake that locks a private repository needs
 # BUILD_TOKEN, and a repository without it runs on the public inputs it can fetch.
 #
-# A gate runs on a hosted runner unless the repository sets the `CI_RUNNER` variable to a
+# A gate runs on a hosted runner unless the repository sets the `RUNNER` variable to a
 # label one of its own runners carries. A published family wider than a hosted runner holds
 # is what earns one: the family is realized into one store, so the size that matters is the
 # family's, not any one package's, and a runner with room keeps every package gated where a
@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   build-and-check:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 

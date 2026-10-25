@@ -423,16 +423,16 @@ when their output identifies a transient network failure.
 ### Where an update runs
 
 Both update templates run on `ubuntu-latest` unless the repository owns a runner of its own. The
-`CI_RUNNER` variable that routes the gate routes the update path with it -- a repository with no
-hosted minutes cannot spend them on the cheap jobs alone -- so one variable moves both workflows,
-and `UPDATE_RUNNER` exists only to split them: an update that should land on a different runner
-than a gate, or stay hosted while a gate is not, names its own label there. A runner answering
-either label provides nix, so the two steps that provide nix and the fleet cache on a hosted
-runner stand down where nix is already there, exactly as in the gate. What a run on such a runner
-publishes to a shared cache is that runner's own configuration rather than anything this workflow
-sets: the two setup steps it stands down rewrite a machine's nix configuration, which only the
-hosted machine it does not own was ever fair game for. Set a label only once a runner answers it,
-because GitHub queues a job whose labels nothing answers until the job times out.
+`RUNNER` variable that routes the gate routes the update path with it, so one variable moves all
+of a repository's workflows onto the machine it owns: a repository with no hosted minutes cannot
+spend them on the cheap jobs alone, and a repository whose published family is too wide for a
+hosted store is bound by the same width on an update as on a gate. A runner answering that label
+provides nix, so the two steps that provide nix and the fleet cache on a hosted runner stand down
+where nix is already there, exactly as in the gate. What a run on such a runner publishes to a
+shared cache is that runner's own configuration rather than anything this workflow sets: the two
+setup steps it stands down rewrite a machine's nix configuration, which only the hosted machine it
+does not own was ever fair game for. Set a label only once a runner answers it, because GitHub
+queues a job whose labels nothing answers until the job times out.
 
 ### Refresh installed workflows (`update-workflows`)
 
@@ -567,7 +567,7 @@ then refreshes with the rest:
 nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt build-and-check.yml
 ```
 
-The gate runs on `ubuntu-latest` unless the repository sets its `CI_RUNNER` variable to a label
+The gate runs on `ubuntu-latest` unless the repository sets its `RUNNER` variable to a label
 one of its own runners carries. What earns a runner of a repository's own is the width of the
 published family: the gate realizes every package into one store, so the size that matters is
 the family's rather than any one package's, and a flake whose family a hosted store cannot hold

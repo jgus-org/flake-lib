@@ -982,7 +982,9 @@
               ];
             }
             ''
-              for TEMPLATE in ${./templates/workflows}/*.yml ${./.github/actions/fleet-nix-cache/action.yml}; do
+              # A composite action is not a workflow, and actionlint parses a file it is
+              # handed as a workflow, so the action files are parsed here and linted nowhere.
+              for TEMPLATE in ${./templates/workflows}/*.yml ${./.github/actions}/*/action.yml; do
                 yq eval 'true' "$TEMPLATE" > /dev/null
               done
               # A workflow file GitHub refuses to parse fails every repository that installs

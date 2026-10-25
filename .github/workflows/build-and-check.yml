@@ -15,13 +15,7 @@
 # BUILD_TOKEN, and a repository without it runs on the public inputs it can fetch.
 #
 # A gate runs on a hosted runner unless the repository sets the `RUNNER` variable to a
-# label one of its own runners carries. A published family wider than a hosted runner holds
-# is what earns one: the family is realized into one store, so the size that matters is the
-# family's, not any one package's, and a runner with room keeps every package gated where a
-# marker would have to excuse some. Such a runner brings its own nix and its own cache
-# configuration, so the two steps that provide those on a hosted runner stand down where nix
-# is already there -- reconfiguring the nix of a machine the repository owns is not a job's
-# work.
+# label one of its own runners carries.
 
 name: Build and Check
 
@@ -42,20 +36,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # A step cannot test a command in its own condition, so the test is its own step and
-      # the two steps that follow read its output.
-      - name: Ask this runner whether it provides nix
-        id: nix
-        run: |
-          if command -v nix >/dev/null 2>&1; then
-            printf 'provided=%s\n' true >> "$GITHUB_OUTPUT"
-          else
-            printf 'provided=%s\n' false >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install nix
-        if: steps.nix.outputs.provided == 'false'
-        uses: cachix/install-nix-action@v31
+      - uses: jgus-org/flake-lib/.github/actions/nix@v1
+        with:
+          token: ${{ secrets.ATTIC_TOKEN }}
 
       # An input in a private repository is invisible until a token says otherwise, and the
       # setting is client-side: the process that resolves the lock reads it, so the daemon
@@ -68,12 +51,6 @@ jobs:
             mkdir -p ~/.config/nix
             printf 'access-tokens = github.com=%s\n' "$BUILD_TOKEN" >> ~/.config/nix/nix.conf
           fi
-
-      - name: Use the fleet binary cache
-        if: steps.nix.outputs.provided == 'false'
-        uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
-        with:
-          token: ${{ secrets.ATTIC_TOKEN }}
 
       - name: Build every package this flake publishes for this runner
         run: nix run github:jgus-org/flake-lib/v1#build-packages

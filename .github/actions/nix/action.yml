@@ -1,0 +1,35 @@
+name: Provide nix
+description: >-
+  Give the job nix and the fleet binary cache, and leave both alone on a runner that
+  already configures its own nix.
+
+inputs:
+  token:
+    description: >-
+      Attic token scoped to pull and push the fleet cache, passed to the cache step.
+      Without a usable token the run substitutes from the public cache and pushes
+      nothing.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # A step cannot test a command in its own condition, so the test is its own step and
+    # the two steps that follow read its output.
+    - id: nix
+      shell: bash
+      run: |
+        if command -v nix >/dev/null 2>&1; then
+          printf 'provided=%s\n' true >>"$GITHUB_OUTPUT"
+        else
+          printf 'provided=%s\n' false >>"$GITHUB_OUTPUT"
+        fi
+    # A runner the repository owns brings its own nix and its own cache configuration, and
+    # rewriting the nix configuration of a machine the job does not own is not a job's work.
+    - if: steps.nix.outputs.provided == 'false'
+      uses: cachix/install-nix-action@v31
+    - if: steps.nix.outputs.provided == 'false'
+      uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      with:
+        token: ${{ inputs.token }}

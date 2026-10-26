@@ -323,9 +323,10 @@ refreshes whichever it has installed by running
 `nix run github:jgus-org/flake-lib/v1#update-workflows` -- flake-lib's own instance
 of the tool, rather than a copy each producer republishes; see below.
 
-Every template caches through `.github/actions/fleet-nix-cache`, a composite action
-that points Nix at the fleet Attic cache and pushes what a job builds to it whenever
-the `ATTIC_TOKEN` secret resolves -- one organization secret covers every repository
+Every template provides nix through `.github/actions/nix`, which installs nix where the runner has
+none and leaves a runner that has nix alone, and caches through `.github/actions/fleet-nix-cache`,
+a composite action that points Nix at the fleet Attic cache and pushes what a job builds to it
+whenever the `ATTIC_TOKEN` secret resolves -- one organization secret covers every repository
 -- and falls back to the repository's Actions cache when it does not, so repositories
 and fork pull requests without a token behave as before.
 
@@ -422,6 +423,13 @@ re-reads the remote after every failed push: an already-applied desired SHA is
 accepted, an unchanged ref is retried, and a different concurrent update is
 never overwritten. Branch update commands receive one additional attempt only
 when their output identifies a transient network failure.
+
+### Where an update runs
+
+Both update templates run on `ubuntu-latest` unless the repository sets its `RUNNER` variable to a
+label one of its own runners carries; the gate routes by the same variable. Set it only once a
+runner answers the label, because GitHub queues a job whose labels nothing answers until the job
+times out.
 
 ### Refresh installed workflows (`update-workflows`)
 
@@ -565,7 +573,7 @@ repository is readable by the pull requests of every public one, which is a wide
 contents credential justifies. GitHub gives a fork pull request no secrets at all, so a flake
 with a private input is gated by pull requests from inside the organization.
 
-A package a hosted runner cannot build excuses itself, with the reason in the comment beside
+A package the runner cannot build excuses itself, with the reason in the comment beside
 the marker:
 
 ```nix

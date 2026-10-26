@@ -19,6 +19,9 @@
 #
 # Everything the run changed is committed together. Scratch output the updater leaves
 # behind must be in .gitignore, since staging is unrestricted.
+#
+# An update runs on a hosted runner unless the repository sets the `RUNNER` variable to a
+# label one of its own runners carries.
 
 name: Update version
 
@@ -36,7 +39,7 @@ concurrency:
 
 jobs:
   workflows:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     outputs:
       sha: ${{ steps.update.outputs.sha }}
     steps:
@@ -44,9 +47,7 @@ jobs:
         with:
           token: ${{ secrets.ORG_UPDATE_TOKEN || github.token }}
 
-      - uses: cachix/install-nix-action@v31
-
-      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      - uses: jgus-org/flake-lib/.github/actions/nix@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 
@@ -62,16 +63,14 @@ jobs:
   deps:
     needs: workflows
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: cachix/install-nix-action@v31
-
-      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      - uses: jgus-org/flake-lib/.github/actions/nix@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 
@@ -86,16 +85,14 @@ jobs:
   update:
     needs: [workflows, deps]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.workflows.outputs.sha || github.sha }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: cachix/install-nix-action@v31
-
-      - uses: jgus-org/flake-lib/.github/actions/fleet-nix-cache@v1
+      - uses: jgus-org/flake-lib/.github/actions/nix@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 

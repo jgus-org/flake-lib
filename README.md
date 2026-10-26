@@ -511,9 +511,13 @@ for.
 For each dependency, in this order: a completed update run within the freshness window
 means it is done; a recent run that ended badly is reported and skipped; a queued or
 running update is waited for; anything else is started with `workflow_dispatch` and then
-waited for. Dependencies are waited for concurrently, so the wait is the slowest
-dependency rather than their sum, and a chain of them resolves in real dependency depth
-rather than in fixed slots.
+waited for. A repository shipping none of the update workflow names is reported and skipped,
+and so is one whose update workflow is still on its default branch but no longer runs —
+GitHub disables a workflow that has not run in sixty days, which leaves a producer tracking
+a quiet upstream holding a workflow that never runs again, and left its consumer waiting its
+whole budget on a dispatch that is refused every time. Dependencies are waited for
+concurrently, so the wait is the slowest dependency rather than their sum, and a chain of
+them resolves in real dependency depth rather than in fixed slots.
 
 The wait reports as it goes rather than only at the end: it names the dependencies it
 intends to order and the budget each one has before it reads anything, and it reports each
@@ -522,9 +526,12 @@ run is read in a log where a silent wait is indistinguishable from a hung one.
 
 Every failure to establish ordering other than a refused credential ends in continuing
 without waiting, and the exit status is success: a dependency that cannot be observed, that
-fails, or that never finishes must not stop the fleet. The report says which of those
-happened, and says so when the dependency's update was started by this run, since that run is
-not otherwise attributable to the consumer that began it.
+fails, or that never finishes must not stop the fleet. A dispatch the API rejects for a
+reason no retry clears — a workflow that is disabled, a ref that does not exist — ends that
+dependency's wait at once instead of at the budget, while a dispatch that fails for a reason
+that might clear is followed by waiting anyway. The report says which of those happened, and
+says so when the dependency's update was started by this run, since that run is not
+otherwise attributable to the consumer that began it.
 
 A credential the API refuses is the exception, because it is the one failure that says the
 wait was never going to observe anything: through it no run can be read and none can be

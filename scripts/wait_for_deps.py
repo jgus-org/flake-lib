@@ -42,6 +42,11 @@ WORKFLOW_CANDIDATES = (
     "update-version.yml",
     "update.yml",
 )
+# The only Actions state a workflow can still run in. `inactive` means no file is behind the
+# path at all; `disabled_manually` and `disabled_inactivity` leave the file on the default
+# branch but run no more, the latter once GitHub has seen sixty days without a run. A
+# dispatch on either disabled workflow is refused, and its schedule will not fire again.
+ACTIVE_STATE = "active"
 # The library every producer takes as an input, and the one dependency that is not a
 # dependency: its own revision is advanced by the refresh job that runs before this one.
 LIBRARY_REPO = "flake-lib"
@@ -80,6 +85,16 @@ class Run:
 
 
 @dataclass(frozen=True)
+class UpdateWorkflow:
+    name: str
+    state: str
+
+    @property
+    def enabled(self) -> bool:
+        return self.state == ACTIVE_STATE
+
+
+@dataclass(frozen=True)
 class Config:
     api: str
     workflows: tuple[str, ...]
@@ -110,10 +125,6 @@ class GitHubError(RuntimeError):
     def transient(self) -> bool:
         # status 0 is a transport failure, which is as retryable as a server-side one.
         return self.status == 0 or self.status >= 500 or self.status == 429
-
-    @property
-    def refused(self) -> bool:
-        return self.status in REFUSED
 
 
 class GitHub:
@@ -155,16 +166,18 @@ class GitHub:
 
     def update_workflow(
         self, repo: str, candidates: Sequence[str]
-    ) -> str | None:
+    ) -> UpdateWorkflow | None:
         page = self._call(
             "GET", f"/repos/{repo}/actions/workflows?per_page=100"
         )
-        active = {
-            Path(workflow["path"]).name
+        shipped = {
+            Path(workflow["path"]).name: workflow.get("state") or ""
             for workflow in page.get("workflows", [])
-            if workflow.get("state") != "inactive"
         }
-        return next((name for name in candidates if name in active), None)
+        for name in candidates:
+            if name in shipped:
+                return UpdateWorkflow(name, shipped[name])
+        return None
 
     def runs(self, repo: str, workflow: str) -> list[Run]:
         path = f"/repos/{repo}/actions/workflows/{quote(workflow, safe='')}/runs?per_page=20"
@@ -227,8 +240,12 @@ def wait_for_dependency(
     client: GitHub, repo: str, config: Config, warn: Callable[[str], None]
 ) -> Outcome:
     try:
-        workflow = client.update_workflow(repo, config.workflows)
-        ref = client.default_branch(repo) if workflow else ""
+        shipped = client.update_workflow(repo, config.workflows)
+        ref = (
+            client.default_branch(repo)
+            if shipped is not None and shipped.enabled
+            else ""
+        )
     except GitHubError as error:
         return Outcome(
             repo,
@@ -236,11 +253,17 @@ def wait_for_dependency(
             f"its workflows cannot be read: {error}",
             error.status,
         )
-    if workflow is None:
+    if shipped is None:
         return Outcome(
             repo,
             "no-update-workflow",
             f"ships no {', '.join(config.workflows)}",
+        )
+    if not shipped.enabled:
+        return Outcome(
+            repo,
+            "update-workflow-disabled",
+            f"its {shipped.name} is {shipped.state}, so it runs no more",
         )
 
     deadline = time.monotonic() + config.timeout
@@ -259,7 +282,7 @@ def wait_for_dependency(
 
     while True:
         try:
-            runs = client.runs(repo, workflow)
+            runs = client.runs(repo, shipped.name)
         except GitHubError as error:
             if error.status in UNOBSERVABLE:
                 return outcome(
@@ -289,13 +312,13 @@ def wait_for_dependency(
         elif dispatches < config.max_dispatches:
             dispatches += 1
             try:
-                client.dispatch(repo, workflow, ref)
+                client.dispatch(repo, shipped.name, ref)
                 started = True
                 reason = "its update did not finish in time"
             except GitHubError as error:
-                if error.refused:
-                    # The dispatch is the only way this branch changes, and the credential
-                    # may not make one, so nothing remains to wait for.
+                if not error.transient:
+                    # The dispatch is the only way this branch changes, and this reason
+                    # will not clear, so the rest of the budget would prove nothing.
                     return outcome(
                         "cannot-start",
                         f"its update cannot be started: {error}",

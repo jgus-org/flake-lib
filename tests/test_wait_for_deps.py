@@ -40,6 +40,7 @@ MODULE_SPEC.loader.exec_module(GATE)
 OWNER = "jgus-org"
 SELF = "nix"
 WORKFLOW = "update-branches.yml"
+WORKFLOW_STATE = "active"
 FRESH_WINDOW = 60.0
 POLL_INTERVAL = 0.02
 TIMEOUT = 0.5
@@ -85,6 +86,7 @@ class Dependency:
     # runs for a page. The last entry repeats, so a dependency can hold a state forever.
     reads: list[Any] = field(default_factory=lambda: [[]])
     workflow: str | None = WORKFLOW
+    workflow_state: str = WORKFLOW_STATE
     dispatch_status: int = 204
     delay: float = 0.0
     reads_taken: int = 0
@@ -167,7 +169,7 @@ class Api:
                     {
                         "path": f".github/workflows/{dependency.workflow}",
                         "name": "Update branches",
-                        "state": "active",
+                        "state": dependency.workflow_state,
                     }
                 ]
             )
@@ -416,6 +418,62 @@ class WaitForDepsTests(unittest.TestCase):
             "refused the credential for 1 of 2 dependency updates",
             report.stderr,
         )
+
+    def test_dispatch_the_api_will_never_accept_is_not_waited_for(
+        self,
+    ) -> None:
+        # A workflow that is disabled answers the dispatch with 422 for as long as it stays
+        # disabled, which is a condition no poll can change. It is not a credential problem
+        # either, so it must not be counted as one.
+        dependencies = {
+            "systemctl-mqtt": Dependency(
+                reads=[succeeded(STALE)], dispatch_status=422
+            ),
+            "click-flake": Dependency(reads=[succeeded()]),
+        }
+        report = self.run_gate(dependencies)
+        self.assertEqual(report.status, 0)
+        self.assertEqual(
+            report.states,
+            {
+                f"{OWNER}/systemctl-mqtt": "cannot-start",
+                f"{OWNER}/click-flake": "updated",
+            },
+        )
+        self.assertEqual(dependencies["systemctl-mqtt"].dispatches, 1)
+        self.assertEqual(dependencies["systemctl-mqtt"].reads_taken, 1)
+        self.assertIn(
+            "its update cannot be started",
+            report.line_for("systemctl-mqtt"),
+        )
+        self.assertNotIn("refused the credential", report.stderr)
+
+    def test_dispatch_failure_that_might_clear_is_waited_for(self) -> None:
+        dependency = Dependency(reads=[succeeded(STALE)], dispatch_status=500)
+        report = self.run_gate({"click-flake": dependency})
+        self.assertEqual(report.status, 0)
+        self.assertEqual(report.states, {f"{OWNER}/click-flake": "timed-out"})
+        self.assertEqual(dependency.dispatches, 1)
+        self.assertGreater(dependency.reads_taken, 1)
+        self.assertIn("could not be started", report.line_for("click-flake"))
+
+    def test_dependency_whose_update_workflow_is_disabled_is_not_waited_for(
+        self,
+    ) -> None:
+        for state in ("disabled_inactivity", "disabled_manually"):
+            with self.subTest(state=state):
+                dependency = Dependency(
+                    reads=[succeeded()], workflow_state=state
+                )
+                report = self.run_gate({"systemctl-mqtt": dependency})
+                self.assertEqual(report.status, 0)
+                self.assertEqual(
+                    report.states,
+                    {f"{OWNER}/systemctl-mqtt": "update-workflow-disabled"},
+                )
+                self.assertEqual(dependency.reads_taken, 0)
+                self.assertEqual(dependency.dispatches, 0)
+                self.assertIn(f"is {state}", report.line_for("systemctl-mqtt"))
 
     def test_dependency_without_an_update_workflow_is_reported(self) -> None:
         dependency = Dependency(reads=[succeeded()], workflow=None)

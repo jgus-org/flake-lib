@@ -33,14 +33,14 @@ flake-lib.lib.defaultSystems       # [ "aarch64-darwin" "aarch64-linux" "x86_64-
 flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 
 # Low-level: bespoke flakes supply their own package derivation.
-flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; }
-flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; }
+flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
+flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
-flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; }
+flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
-flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; stampName ? ".${name}-verified.json"; }
-flake-lib.lib.mkOciImage       { pkgs; source; pin; }
+flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; meta ? { license = mit; }; stampName ? ".${name}-verified.json"; }
+flake-lib.lib.mkOciImage       { pkgs; source; pin; meta ? {}; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
 flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + systems + targets
@@ -119,6 +119,8 @@ A versioned producer pins no `tag`: it publishes its image under its version, so
 
 `versions` therefore requires the registry to publish the bare release version as a tag. `versionOverrides` and `versionCanon` rename the canonical version — the branch and the pin's `version` — but the updater pulls the tag named by the upstream release version, so neither redirects the image reference. An upstream whose registry tag is spelled differently has no mechanism here and remains a single-branch producer until a version source that reads registry tags exists. The loaded image's local name and tag follow `finalImageName`/`finalImageTag` as usual; with neither set, a versioned pin tags the image with its own version, and a branch seeded before its image resolved falls back to the digest.
 
+`meta.sourceProvenance` on the image defaults to `binaryNativeCode`: the layers arrive as upstream's binaries and nothing in the build reads them. A caller's own `meta` overrides it. No license is defaulted, because the content is upstream's and neither `pin` nor `source` names its terms — writing one into the image's config would also change the config digest the pin pins, so image metadata belongs on the derivation.
+
 `huggingface` tracks a model repository revision and writes a `{ version,
 sourceRev }` pin. An optional `files` list adds a `hashes` attribute containing
 the Nix content hash of each selected repository file:
@@ -144,7 +146,7 @@ source = {
 };
 ```
 
-`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing. `download` authenticates against Hugging Face only when the caller's environment exports `HF_TOKEN`; the local HF token store is never picked up implicitly.
+`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. `meta` defaults to the MIT license, because the downloader is flake-lib's own script, and a caller passing `meta` replaces it. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing. `download` authenticates against Hugging Face only when the caller's environment exports `HF_TOKEN`; the local HF token store is never picked up implicitly.
 
 ```nix
 modelManager = flake-lib.lib.mkHuggingFaceModelManager {
@@ -279,7 +281,8 @@ the wheelhouse into `$out/$sitePackages`, and takes the same attributes as
 `stdenv.mkDerivation` plus `checkImports` — module names imported in an interpreter
 started with no environment at all, so a site tree that loads only under an ambient
 `LD_LIBRARY_PATH` fails its build instead of its first import in production. `buildInputs`
-extends the libraries the rewrite may resolve against.
+extends the libraries the rewrite may resolve against. `meta.sourceProvenance` defaults to
+`binaryNativeCode`, since wheels arrive compiled; a caller's own `meta` overrides it.
 
 ```nix
 python = pkgs.python3;

@@ -36,7 +36,8 @@ from urllib.parse import quote
 DEFAULT_API = "https://api.github.com"
 # The workflow files flake-lib's templates install, then the name producers wrote by hand
 # before flake-lib shipped templates. A dependency whose repository has none of these has no
-# update run to wait for.
+# update run to wait for. update-workflows.yml is not among them: it publishes workflow files
+# rather than a version, so waiting for it would order a consumer after nothing.
 WORKFLOW_CANDIDATES = (
     "update-branches.yml",
     "update-version.yml",
@@ -48,7 +49,8 @@ WORKFLOW_CANDIDATES = (
 # dispatch on either disabled workflow is refused, and its schedule will not fire again.
 ACTIVE_STATE = "active"
 # The library every producer takes as an input, and the one dependency that is not a
-# dependency: its own revision is advanced by the refresh job that runs before this one.
+# dependency: its revision is advanced by the workflow that refreshes workflow files, which
+# publishes no version for this run to order itself after.
 LIBRARY_REPO = "flake-lib"
 REQUEST_TIMEOUT_S = 30.0
 # A repository whose state cannot be read at all. Polling it again for the whole budget would

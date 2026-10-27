@@ -2,31 +2,20 @@
 
 # Installs this repository's GitHub Actions workflows from the templates shipped by the
 # newest flake-lib revision its declared input can reach, and advances the lock to that
-# revision in the same commit, so a repository's CI moves with the library it locks instead
-# of drifting from it. Both halves land in one commit: a workflow that tracks flake-lib N
-# would otherwise refresh the scripts it invokes from revision N as well, and the run would
-# be green against a library nobody else uses.
+# revision in the same commit: a workflow that tracks flake-lib N must not run the scripts of
+# revision N+1, or the repository is green against a library nothing else locks.
 #
-# With no arguments, which is what every flake-lib workflow runs as its first job, this
-# keeps the installed workflows current and never adds, removes, or renames one: which
-# workflows a repository has is the author's decision, and a workflow whose name flake-lib
-# has no template for is left exactly as it is.
+# A template replaces its workflow wholesale. Every repository-owned knob is a constructor
+# argument in flake.nix baked into the package the workflow invokes, so the workflow file
+# carries no repository state worth rescuing.
 #
-# `adopt <name>` is how a repository joins that set, and it is the only way one does: the
-# author names the template, so the tool is never guessing which publication model a
-# repository wants. It is for the repository that has no local source to promote from --
-# a producer that lives only on GitHub, or one carrying a workflow under a name flake-lib
-# has never shipped.
+# With no arguments this keeps installed workflows current; it removes, renames, or picks names
+# for none of them, because which workflows a repository has is the author's decision. `adopt
+# <name>` is how a repository joins that set, and it is the only way: the author names the
+# template, so the tool never guesses which publication model a repository wants.
 #
-# A workflow is read when its run starts, so what is written here takes effect for the
-# next run. The commit is reported as `sha` so the run that made it can check that commit
-# out for its remaining jobs, which is what lets a workflow update itself: a push made
-# with GITHUB_TOKEN triggers no run, so nothing else would pick the new file up in time.
-#
-# A template replaces its workflow wholesale. Anything a repository owns lives in its
-# flake.nix -- the per-producer knobs are constructor arguments to mkUpdateVersion and
-# mkUpdateBranches, baked into the packages the workflow invokes -- so the workflow file
-# carries no repository state and is safe to overwrite in full.
+# A workflow follows the templates only because this runs for it on a schedule, so every run
+# keeps update-workflows.yml -- the workflow that runs this -- installed and current too.
 
 set -euo pipefail
 
@@ -35,6 +24,7 @@ cd "${FLAKE_ROOT}"
 
 TEMPLATE_DIR="templates/workflows"
 WORKFLOW_DIR=".github/workflows"
+REFRESHER_WORKFLOW="${WORKFLOW_DIR}/update-workflows.yml"
 
 die() {
   printf 'error: %s\n' "${1}" >&2
@@ -103,6 +93,10 @@ install_from_template() {
   cp "${template}" "${destination}"
 }
 
+carries_schedule() {
+  grep -qE '^[[:space:]]*schedule:' "${1}"
+}
+
 declare -a installed=()
 if [[ ${MODE} == adopt ]]; then
   template="${flake_lib_src}/${TEMPLATE_DIR}/${ADOPT_TARGET}"
@@ -114,13 +108,23 @@ if [[ ${MODE} == adopt ]]; then
   mkdir -p "${WORKFLOW_DIR}"
   install_from_template "${template}" "${destination}"
   installed+=("${destination}")
-  # Two workflows that commit to one branch fight over it, and the one flake-lib has no
-  # template for is invisible to every later refresh, so what is still in the way is
-  # reported rather than removed: retiring that file is the author's decision.
+  # Adopting a flake-lib workflow adopts the schedule that rewrites flake-lib workflows with it,
+  # so the adopted template is current the day it lands rather than after someone installs the
+  # schedule by hand.
+  if [[ ${destination} != "${REFRESHER_WORKFLOW}" ]]; then
+    install_from_template "${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    installed+=("${REFRESHER_WORKFLOW}")
+  fi
+  # A workflow flake-lib has no template for is invisible to every later refresh, and a
+  # scheduled one keeps publishing beside the adopted template forever. Retiring it is the
+  # author's decision, so it is named rather than removed. Whether a file schedules anything is
+  # the author's intent and lives only in the file, which is the one place it can be read. The
+  # schedule installed above is skipped: it is refreshed by every run, which is what it is for.
   others=()
   for other in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
     [[ -f ${other} && ${other} != "${destination}" ]] || continue
-    if grep -qE '^[[:space:]]*schedule:' "${other}"; then
+    [[ ${other} == "${REFRESHER_WORKFLOW}" ]] && continue
+    if carries_schedule "${other}"; then
       others+=("${other}")
     fi
   done
@@ -136,8 +140,18 @@ else
     install_from_template "${template}" "${destination}"
     installed+=("${destination}")
   done
+  # A repository that runs this tool follows flake-lib's templates, and the workflow that rewrites
+  # them is one of them: an installed copy is refreshed by the loop above, which is also how its
+  # cron keeps up with the template, and a repository with none gets it here. The case that matters
+  # is a repository whose only flake-lib workflow is the pull-request gate, which has nothing else
+  # that would ever update it.
   if ((${#installed[@]} == 0)); then
-    echo "no workflow here was installed from flake-lib's ${TEMPLATE_DIR}; only the input advances."
+    echo "no workflow here matched flake-lib's ${TEMPLATE_DIR}; this run installs the schedule that runs it and advances the input."
+  fi
+  if [[ ! -e ${REFRESHER_WORKFLOW} ]]; then
+    mkdir -p "${WORKFLOW_DIR}"
+    install_from_template "${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    installed+=("${REFRESHER_WORKFLOW}")
   fi
 fi
 
@@ -165,10 +179,6 @@ else
   subject="Advance flake-lib to ${current_url##*/}"
 fi
 git commit -q -m "${subject}"
-sha=$(git rev-parse HEAD)
 
 push_ref HEAD "${branch}" "${base}" lease
 echo "Committed ${#committed[@]} file(s) from flake-lib ${current_url}: ${committed[*]}"
-if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-  printf 'sha=%s\n' "${sha}" >>"${GITHUB_OUTPUT}"
-fi

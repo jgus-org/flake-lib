@@ -312,8 +312,10 @@ environment that runs it.
 `templates/workflows/` holds the workflow files a consuming repo installs under
 `.github/workflows/` under the same names: `update-branches.yml` drives the
 orchestrator for a source with named releases, `update-version.yml` moves one
-current pin for a source tracked by commit, and `build-and-check.yml` is the gate every
-pull request passes -- build what the flake publishes, then check it. A producer
+current pin for a source tracked by commit, `build-and-check.yml` is the gate every
+pull request passes -- build what the flake publishes, then check it -- and
+`update-workflows.yml` keeps every installed copy following the templates, on a schedule of
+its own half an hour ahead of the update workflows. A producer
 refreshes whichever it has installed by running
 `nix run github:jgus-org/flake-lib/v1#update-workflows` -- flake-lib's own instance
 of the tool, rather than a copy each producer republishes; see below.
@@ -421,17 +423,18 @@ when their output identifies a transient network failure.
 
 ### Where an update runs
 
-Both update templates run on `ubuntu-latest` unless the repository sets its `RUNNER` variable to a
-label one of its own runners carries; the gate routes by the same variable. Set it only once a
-runner answers the label, because GitHub queues a job whose labels nothing answers until the job
-times out.
+Every update template -- the publication workflows and the workflow that refreshes the
+installed copies -- runs on `ubuntu-latest` unless the repository sets its `RUNNER` variable
+to a label one of its own runners carries; the gate routes by the same
+variable. Set it only once a runner answers the label, because GitHub queues a job whose
+labels nothing answers until the job times out.
 
 ### Refresh installed workflows (`update-workflows`)
 
 Workflow files are copies of flake-lib's templates, so on their own they cannot
 follow the templates: flake-lib moves and the installed copy does not. The
-`update-workflows` package closes that gap, and is the first job of every workflow
-flake-lib ships:
+`update-workflows` package closes that gap, and `templates/workflows/update-workflows.yml`
+is the workflow that runs it, on a schedule half an hour ahead of the update workflows:
 
 ```console
 nix run github:jgus-org/flake-lib/v1#update-workflows
@@ -446,8 +449,12 @@ revision behind the templates it installs.
 
 The tool reads the `flake-lib` input out of `flake.lock`, advances it, and
 overwrites each workflow in `.github/workflows` whose name a template of that
-revision ships. It does not add or rename a workflow: which workflows a repo has
-is the author's decision, and one flake-lib has no template for is left alone.
+revision ships. It picks no names of its own: which workflows a repo has beyond
+`update-workflows.yml` — the schedule that runs the tool, which every run installs or
+refreshes — is the author's decision, and a workflow flake-lib has no template for is left
+alone. Installing the schedule everywhere is what carries a template to a repository that has
+no updater at all: the pull-request gate is a copy of a template like any other, and without
+this it is frozen the day it is installed.
 What is compared is the installed file against the template at the revision _now
 locked_, not the revision the run started from — the pin path advances
 `flake-lib` as it commits pins, so a lock can reach a revision without that
@@ -460,6 +467,9 @@ refreshed workflows are committed together,
 because a workflow that tracks flake-lib N would otherwise be refreshing the
 scripts it invokes from revision N too.
 
+A refreshed workflow takes effect for the next run of the workflow it rewrote, and the
+schedule half an hour ahead of the update workflows means that is the same day.
+
 A repository with no workflow named like a template joins that set by naming one:
 
 ```console
@@ -470,17 +480,16 @@ This installs exactly the named template — creating it, or replacing a hand-wr
 of the same name — and advances the
 input even when it is already current, since joining does not depend on the revision
 moving. It is the upgrade path for a producer that exists only on GitHub and so has no
-local source to promote from. The tool never picks the publication model, and retiring a
+local source to promote from. `update-workflows.yml` joins by that same command, and is
+installed with any update workflow that needs it.
+The tool never picks the publication model, and retiring a
 workflow flake-lib has no template for stays the author's `git rm`; what is still in the
-way is named in the output, because two workflows committing to one branch fight over it.
+way is named in the output, the refresher's own workflow excepted.
 
-The commit is pushed and reported as the `sha` output, which the run's remaining
-jobs check out. Without that handoff the update would only pay off a day later —
-a workflow is read when its run starts, and a push made with `GITHUB_TOKEN`
-triggers nothing — so the run that moves a workflow builds from the workflow it
-just wrote. When the input did not move and every installed workflow already matches
-the template at the revision locked, nothing is pushed and no `sha` is reported, which
-leaves the run on the revision it started from.
+The commit goes to the branch the run started on. Nothing reports a commit SHA for a later
+job to check out, because the run that writes a workflow file is never the run that executes
+it. When the input did not move and every installed workflow already matches the template at
+the revision locked, nothing is committed and the run says so.
 
 ### Order a producer after its dependencies (`wait-for-deps`)
 

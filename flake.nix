@@ -286,6 +286,7 @@
                   defaultSystems
                   eachDefaultLinuxSystem
                   eachDefaultSystem
+                  eachSystem
                   ;
               }
             );

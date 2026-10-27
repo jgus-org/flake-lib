@@ -5,6 +5,7 @@ let
     defaultSystems
     eachDefaultLinuxSystem
     eachDefaultSystem
+    eachSystem
     ;
   mkPypiPackage = import ./mk-pypi-package.nix;
   mkUpdateVersion = import ./mk-update-version.nix;
@@ -62,6 +63,7 @@ in
     depsCore
     eachDefaultLinuxSystem
     eachDefaultSystem
+    eachSystem
     evalMarkerTree
     mkComposedHook
     mkHuggingFaceModelManager

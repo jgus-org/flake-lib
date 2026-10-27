@@ -33,8 +33,8 @@ flake-lib.lib.defaultSystems       # [ "aarch64-darwin" "aarch64-linux" "x86_64-
 flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 
 # Low-level: bespoke flakes supply their own package derivation.
-flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
-flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
+flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
+flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
 flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
 flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
@@ -177,6 +177,8 @@ Use `pinSchema = "github-pnpm"` for the corresponding `{ version, sourceRev,
 sourceHash, pnpmDepsHash }` branch placeholders.
 
 `buildFailureHashes` declares the set of pin fields the build's hash mismatch may name, for a package whose build fails on whichever of its unprefetchable dependencies is stale first: `{ buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ]; }` covers a `fetchPnpmDeps` tree and a `buildGoModule` vendor tree in one bump. A mismatch is attributed to the declared field already holding the hash the build reported as specified, and while no declared field is resolved yet, to the first declared field. `buildFailureHash` and `buildFailureHashes` combine, and each declared field is resolved at most once, so the build runs at most one more time than there are declared fields. A build that still reports a hash mismatch once every declared field is resolved ends the run, as does a mismatch belonging to a pin field no declaration covers.
+
+A pin field name may carry a dot, which makes it a nested pin attribute: `extraHashes = [ "v8.version" "v8.archive.x86_64-linux" ]` writes `pin.v8.version` and `pin.v8.archive.x86_64-linux`, read back with `nix eval --raw --file pin.nix v8.archive.x86_64-linux`. Use it where a group of fields is one instantiation of something — a prebuilt asset set for the release the pin names, say — so an incomplete group reads as one thing rather than as several unrelated empty strings. Every schema's branch placeholder carries every declared field, so a new version branch has the same pin shape as a resolved one and an empty field is what re-runs the producer's hook. Nesting is the org formatter's rule rather than the writer's, so a producer naming a dotted field passes its own formatter to both updaters (`formatter = self.formatter.${system};`); the pin is written and then formatted by the same formatter its formatting check runs. Passing no formatter leaves the one-field-per-line form the writer emits, which is all a pin of only flat field names needs.
 
 ### Supported systems
 

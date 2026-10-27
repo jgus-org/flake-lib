@@ -111,6 +111,54 @@ diff -u <(printf '%s\n' \
   '  version = "1.2.3";' \
   '}') <(grep -v '^#' "${TEST_ROOT}/pin.nix")
 
+# A dotted field name is a nested attribute, and how deeply it nests is the formatter's rule rather than the writer's,
+# so the updater hands the pin to the repository's own formatter. The property is that nothing is left to reformat; a
+# pin the formatter would change is a pin that fails the formatting check on the updater's own commit.
+NESTED_ROOT="${TEST_ROOT}/nested-pin"
+mkdir -p "${NESTED_ROOT}"
+printf '%s\n' '{}' >"${NESTED_ROOT}/flake.nix"
+printf '%s\n' '{' '  version = "";' '  sourceRev = "";' '  sourceHash = "";' '}' >"${NESTED_ROOT}/pin.nix"
+NESTED_OUTPUT=$(FLAKE_ROOT="${NESTED_ROOT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  TEST_TAGS='' \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='["v8.archive.aarch64-linux","v8.archive.x86_64-linux","v8.version"]' \
+  PIN_HASHES='["v8.archive.aarch64-linux","v8.archive.x86_64-linux","v8.version"]' \
+  FORMATTER="${TEST_FORMATTER}" \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}" 1.2.3)
+grep -Fq 'Updated the pin to 1.2.3.' <<<"${NESTED_OUTPUT}"
+grep -Fq 'v8 = {' "${NESTED_ROOT}/pin.nix"
+cp "${NESTED_ROOT}/pin.nix" "${NESTED_ROOT}/pin.nix.before"
+(cd "${NESTED_ROOT}" && "${TEST_FORMATTER}" --no-cache pin.nix)
+diff -u "${NESTED_ROOT}/pin.nix.before" "${NESTED_ROOT}/pin.nix"
+
+# Without a formatter the flat lines stand, which is what every pin naming only flat fields has always been.
+FLAT_ROOT="${TEST_ROOT}/flat-pin"
+mkdir -p "${FLAT_ROOT}"
+printf '%s\n' '{}' >"${FLAT_ROOT}/flake.nix"
+printf '%s\n' '{' '  version = "";' '  sourceRev = "";' '  sourceHash = "";' '}' >"${FLAT_ROOT}/pin.nix"
+FLAT_OUTPUT=$(FLAKE_ROOT="${FLAT_ROOT}" \
+  SOURCE_TYPE=github \
+  GH_OWNER=openai \
+  GH_REPO=codex \
+  GH_TAG_PREFIXES='["v","V",""]' \
+  GH_TRACK=release \
+  TEST_RELEASE_TAG=v1.2.3 \
+  TEST_TAGS='' \
+  HASH_MODE=prefetch \
+  EXTRA_HASHES='["npmDepsHash"]' \
+  PIN_HASHES='["npmDepsHash"]' \
+  SIBLINGS='[]' \
+  bash "${UPDATE_VERSION}" 1.2.3)
+grep -Fq 'Updated the pin to 1.2.3.' <<<"${FLAT_OUTPUT}"
+grep -Fq 'npmDepsHash = "";' "${FLAT_ROOT}/pin.nix"
+
 cat >"${TEST_ROOT}/pin.nix" <<'EOF'
 {
   version = "1.2.3";

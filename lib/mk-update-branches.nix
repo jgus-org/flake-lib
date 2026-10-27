@@ -3,6 +3,7 @@
 #   pinSchema        : pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
 #   branchOwnedFiles : files update-version mutates (diffed, added, committed per branch). Defaults to the pin plus the python wheelhouse artifact set; unmatched patterns are skipped.
 #   extraBranchOwnedFiles : additional branchOwnedFiles beyond the default, for consumers that vendored extra per-branch artifacts
+#   formatter      : the repository's own formatter package (e.g. self.formatter.${system}). Required when a declared extraHashes name carries a dot: that field is written as a nested attribute, and only the org formatter defines that shape.
 #   versionOverrides : map of raw upstream version -> canonical version, for upstreams whose tag numbering doesn't sort right (e.g. { "0.1.405-beta" = "0.1.40.5-beta"; }). The canonical form drives sorting/branch naming/the pin's version field; the raw form remains what update-version fetches.
 #   versionCanon     : list of `sed -E` expressions applied in order to each raw version to derive its canonical form, for a tag-numbering scheme too general to enumerate in versionOverrides (e.g. every 0.1.XXX-beta hotfix -> 0.1.XX.X-beta). A matching versionOverrides entry takes precedence over these rules.
 #   minVersionComponents : fewest dot-separated numeric components a tag may have and still be tracked (default 3, i.e. X.Y.Z only). Lower it for upstreams with short version tags (e.g. bare datestamps like 20260711162202).
@@ -21,6 +22,7 @@
   buildVerificationSkip ? false,
   extraBranchOwnedFiles ? [ ],
   extraHashes ? [ ],
+  formatter ? null,
   meta ? {
     license = pkgs.lib.licenses.mit;
   },
@@ -40,6 +42,9 @@ assert builtins.elem minVersionComponents [
 ];
 assert builtins.isString minimumTrackingVersion;
 assert builtins.isBool buildVerificationSkip;
+# A dotted pin field is a nested attribute, and the placeholder written flat is only canonical once the org formatter
+# has had it.
+assert formatter != null || !pkgs.lib.any (name: pkgs.lib.hasInfix "." name) extraHashes;
 assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
 let
   ownedFiles = pkgs.lib.unique (branchOwnedFiles ++ extraBranchOwnedFiles);
@@ -68,6 +73,7 @@ pkgs.writeShellApplication {
     CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
     DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
     EXTRA_HASHES = builtins.toJSON extraHashes;
+    FORMATTER = if formatter == null then "" else pkgs.lib.getExe formatter;
     GH_OWNER = versionSource.owner or "";
     GH_REPO = versionSource.repo or "";
     GH_TAG_PREFIXES = builtins.toJSON (
@@ -95,6 +101,9 @@ pkgs.writeShellApplication {
     VERSION_SOURCE_TYPE = versionSource.type;
     VERSION_TRACK = versionSourceTrack;
   };
-  runtimeInputs = [ (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ])) ];
+  runtimeInputs = [
+    (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ]))
+  ]
+  ++ pkgs.lib.optional (formatter != null) formatter;
   text = ''exec ${../scripts/update-branches-core.sh} "$@"'';
 }

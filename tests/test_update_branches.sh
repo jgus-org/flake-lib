@@ -778,6 +778,26 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock removed-by-update.txt never-exis
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:removed-by-update.txt'
 clear_test_failures
 
+# A schema with a placeholder template of its own carries every declared extra hash into the new branch, so the pin has
+# one shape from the branch's first commit and an empty field is what re-runs the producer's hook. This fixture carries
+# no formatter (a real flake root would), so the seeded lines are the flat ones the writer emitted; the formatter seam
+# is the update-version suite's to cover.
+initialize_repository
+export PIN_SCHEMA=github EXTRA_HASHES='["v8.archive.aarch64-linux","v8.archive.x86_64-linux","v8.version"]'
+export TEST_CAPTURED_PIN="${CASE_ROOT}/placeholder-pin"
+run_update '1.2.3-rc1'
+diff -u <(printf '%s\n' \
+  '# Auto-managed by `nix run .#update-version`. Manual edits will be overwritten by the next bump.' \
+  '{' \
+  '  version = "1.2.3-rc1";' \
+  '  sourceRev = "";' \
+  '  sourceHash = "";' \
+  '  v8.archive.aarch64-linux = "";' \
+  '  v8.archive.x86_64-linux = "";' \
+  '  v8.version = "";' \
+  '}') "${CASE_ROOT}/placeholder-pin"
+unset PIN_SCHEMA EXTRA_HASHES TEST_CAPTURED_PIN
+
 # An oci producer enumerates its tree from the release source named in source.versions, so a source type with no enumeration of its own still discovers.
 initialize_repository oci
 export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github

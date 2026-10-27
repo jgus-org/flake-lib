@@ -4,6 +4,7 @@
 #   buildFailureHashes : the pin field names any of which the build's hash mismatch can name
 #   extraHashes  : extra pin field names whose values the artifactHook emits (e.g. [ "npmDepsHash" ])
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
+#   formatter    : the repository's own formatter package (e.g. self.formatter.${system}). Required when a pin field name carries a dot: that field is written as a nested attribute, and only the org formatter defines that shape.
 #   siblings     : sibling-cascade specs
 #   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
 #   packages.default is the only build target, and the publisher builds it: there is no argument
@@ -16,6 +17,7 @@
     if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
   buildFailureHashes ? [ ],
   extraHashes ? [ ],
+  formatter ? null,
   hashMode ? "prefetch",
   markerEnvironment ? { },
   meta ? {
@@ -60,6 +62,11 @@ in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
 assert hfManifestHashField == null || hfManifestHashField != "";
+# A dotted pin field is a nested attribute, and the pin written flat is only canonical once the org formatter
+# has had it.
+assert
+  formatter != null
+  || !pkgs.lib.any (name: pkgs.lib.hasInfix "." name) (effectiveExtraHashes ++ buildFailureFields);
 assert
   oci == null
   || (
@@ -85,6 +92,7 @@ pkgs.writeShellApplication {
     CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
     DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
     EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
+    FORMATTER = if formatter == null then "" else pkgs.lib.getExe formatter;
     GH_ASSET = source.asset or ""; # github-release-asset: filename template, tokens ${version} and ${tag}
     GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
     GH_FETCH_SUBMODULES = if (source.fetchSubmodules or false) then "1" else ""; # hash the tree with submodules (src must set fetchSubmodules = true)
@@ -137,6 +145,7 @@ pkgs.writeShellApplication {
   runtimeInputs = [
     pkgs.git
   ]
-  ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]));
+  ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]))
+  ++ pkgs.lib.optional (formatter != null) formatter;
   text = ''exec ${../scripts/update-version.sh} "$@"'';
 }

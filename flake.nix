@@ -661,7 +661,14 @@
                 fi
               fi
             else
-              grep -Fq 'assets.fixture' "''${FLAKE_ROOT}/pin.nix"
+              # The fixture stands in for the producer's own updater, so it checks it was handed this repository's pin.
+              # Only version-only keeps the base branch's pin on a new branch; every other schema writes its own
+              # template, whose fields are the schema's and not the fixture's.
+              if [[ "''${PIN_SCHEMA:-version-only}" == "version-only" ]]; then
+                grep -Fq 'assets.fixture' "''${FLAKE_ROOT}/pin.nix"
+              else
+                grep -Fq 'version = "' "''${FLAKE_ROOT}/pin.nix"
+              fi
             fi
             while [[ "''${1}" != "--" ]]; do
               shift
@@ -699,6 +706,11 @@
             done
             if [[ -n "''${TEST_DELETE_OWNED:-}" ]]; then
               rm -f "''${FLAKE_ROOT}/''${TEST_DELETE_OWNED}"
+            fi
+            # The placeholder the orchestrator handed this version's update is the pin a new branch starts its life
+            # with, so a case that cares about its shape reads it before the fixture rewrites it.
+            if [[ -n "''${TEST_CAPTURED_PIN:-}" ]]; then
+              cp "''${FLAKE_ROOT}/pin.nix" "''${TEST_CAPTURED_PIN}"
             fi
             if [[ "''${PIN_SCHEMA:-}" == "oci" ]]; then
               UPDATED_DIGEST="sha256:$(printf 'b%.0s' {1..64})"
@@ -837,6 +849,7 @@
             {
               NIX_PATH = "nixpkgs=${pkgs.path}";
               TEST_BASH = pkgs.bash;
+              TEST_FORMATTER = pkgs.lib.getExe orgFormatting.formatter;
               UPDATE_VERSION = ./scripts/update-version.sh;
               nativeBuildInputs = [
                 pkgs.bash
@@ -844,6 +857,7 @@
                 pkgs.git
                 pkgs.gnugrep
                 pkgs.jq
+                orgFormatting.formatter
                 update-version-test-gh
                 update-version-test-curl
                 update-version-test-nix

@@ -47,6 +47,7 @@ EXTRA_HASHES="${EXTRA_HASHES:-[]}" # JSON array of extra pin field names (e.g. [
 PIN_HASHES="${PIN_HASHES:-${EXTRA_HASHES}}"
 BUILD_FAILURE_HASHES="${BUILD_FAILURE_HASHES:-[]}"
 ARTIFACT_HOOK="${ARTIFACT_HOOK:-}" # consumer script: regenerate vendored files, emit name=value extra hashes
+FORMATTER="${FORMATTER:-}"         # the repository's formatter binary, which puts a nested pin field in its canonical shape
 ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_OWNED_FILES:-}"
 SIBLINGS="${SIBLINGS:-[]}"
 SIBLING_REFS_IN_PIN="${SIBLING_REFS_IN_PIN:-}"
@@ -95,6 +96,16 @@ write_pin_fields() {
   while IFS= read -r NAME; do
     printf '%s\n' "${fields[${NAME}]}"
   done < <(printf '%s\n' "${!fields[@]}" | LC_ALL=C sort)
+}
+
+format_pin() {
+  # $1 pin path. The writer emits one flat line per field, and a dotted field name asks for a nested
+  # attribute whose shape only the org formatter defines, so the pin is written and then formatted by
+  # the formatter the repository's own formatting check runs. Without FORMATTER the flat lines stand,
+  # which is all a pin of only flat field names ever needed.
+  [[ -z ${FORMATTER} ]] && return 0
+  # One file per run, and treefmt's evaluation cache lives under a HOME the updater may not have.
+  (cd "$(dirname "${1}")" && "${FORMATTER}" --no-cache "$(basename "${1}")")
 }
 
 pin_sibling_refs_field() {
@@ -979,6 +990,10 @@ gitlab)
   exit 1
   ;;
 esac
+
+if ((pin_changed)); then
+  format_pin "${pin}"
+fi
 
 if ((pin_changed || CASCADE_CHANGED)) || [[ -n ${SIBLING_REFS_IN_PIN} ]]; then
   echo "Updating flake.lock..."

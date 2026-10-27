@@ -28,6 +28,8 @@
 #   GH_OWNER/GH_REPO     [github, github-release-asset, oci with source.versions]
 #   GITLAB_OWNER/GITLAB_REPO  [gitlab] A gitlab source's version names are the project's git tags, which is where its updater resolves a release from too, so tracking mode says nothing about where to look.
 #   PIN_SCHEMA           pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
+#   EXTRA_HASHES         JSON array of pin field names the producer's artifact hook resolves; every schema's placeholder carries them
+#   FORMATTER            the repository's formatter binary, which puts a nested pin field in its canonical shape
 #   BRANCH_OWNED_FILES   space-separated files update-version mutates per branch
 #   VERSION_OVERRIDES    JSON map raw version -> canonical version
 #   VERSION_CANON        newline-separated `sed -E` rules mapping raw version -> canonical version
@@ -42,6 +44,7 @@ VERSION_TRACK="${VERSION_TRACK:-release}"
 TRACK_STABLE_ONLY="${TRACK_STABLE_ONLY:-false}"
 BUILD_VERIFICATION_SKIP="${BUILD_VERIFICATION_SKIP:-false}"
 GH_TAG_PREFIXES="${GH_TAG_PREFIXES:-[\"v\",\"V\",\"\"]}"
+FORMATTER="${FORMATTER:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
 FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
@@ -227,21 +230,37 @@ list_upstream_versions() {
   esac
 }
 
+format_pin() {
+  # $1 pin path, relative to the working tree. The placeholder is written as flat lines, and a dotted
+  # field name asks for a nested attribute whose shape only the org formatter defines.
+  [[ -z ${FORMATTER} ]] && return 0
+  # One file per run, and treefmt's evaluation cache lives under a HOME the updater may not have.
+  (cd "$(dirname "${1}")" && "${FORMATTER}" --no-cache "$(basename "${1}")")
+}
+
+seed_declared_pin_fields() {
+  # A declared extra hash is a pin field the producer's artifact hook resolves, so every schema's placeholder
+  # carries every declared field: a consumer reads one pin shape at each point in a branch's life instead of
+  # testing whether a field is there yet, and an empty field is what re-runs the hook.
+  local FIELD
+  while IFS= read -r FIELD; do
+    [[ -n ${FIELD} ]] || continue
+    # Replacing the closing brace rather than inserting before it: sed's insert text loses its leading whitespace.
+    sed -i "s|^}|  ${FIELD} = \"\";\\n}|" pin.nix
+  done < <(jq -r '.[]' <<<"${EXTRA_HASHES:-[]}")
+  format_pin pin.nix
+}
+
 prepare_new_branch_pin() {
-  local VERSION="${1}" EXTRA_HASH BASE_DIGEST BASE_HASH
+  local VERSION="${1}" BASE_DIGEST BASE_HASH
   case "${PIN_SCHEMA}" in
   pypi)
-    {
-      cat <<EOF
+    cat >pin.nix <<EOF
 {
   version = "${VERSION}";
   hash = "";
+}
 EOF
-      for EXTRA_HASH in $(jq -r '.[]' <<<"${EXTRA_HASHES:-[]}"); do
-        echo "  ${EXTRA_HASH} = \"\";"
-      done
-      echo "}"
-    } >pin.nix
     ;;
   github)
     cat >pin.nix <<EOF
@@ -312,12 +331,15 @@ EOF
 EOF
     ;;
   version-only)
+    # Keeps the base branch's pin as it stands, declared fields and their values already in it.
+    return 0
     ;;
   *)
     echo "error: unknown PIN_SCHEMA=${PIN_SCHEMA}" >&2
     exit 1
     ;;
   esac
+  seed_declared_pin_fields
 }
 
 version_lt() { [[ $1 != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]; }

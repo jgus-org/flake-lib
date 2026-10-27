@@ -147,8 +147,8 @@ else
     echo "no workflow here was installed from flake-lib's ${TEMPLATE_DIR}; only the input advances."
   fi
   # A repository that took the update workflows without the refresher's own workflow has no
-  # schedule left that refreshes them: the update runs advance the input as they pin, and the
-  # templates that revision ships are never installed.
+  # schedule left that refreshes them: the daily update workflow advances the input as it
+  # pins, and the templates that revision ships are never installed.
   if [[ ! -e "${WORKFLOW_DIR}/update-workflows.yml" ]] && ((${#installed[@]} > 0)); then
     for installed_workflow in "${installed[@]}"; do
       if carries_schedule "${installed_workflow}"; then

@@ -14,8 +14,9 @@
 # there is nothing producer-specific in it to re-declare. A repository that does not have
 # this file yet installs it with
 # `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-workflows.yml`.
-# Without it the installed workflows follow no schedule at all: the update workflows advance
-# flake-lib as they pin, and nothing installs the templates that revision ships.
+# Without it the installed workflows follow no schedule at all: pin updates advance
+# flake-lib as they commit -- the daily workflow on the default branch, a version refresh on
+# its own branch -- and nothing installs the templates that revision ships.
 # Edit it in jgus-org/flake-lib's templates/workflows, not here. Binary caching uses the
 # fleet Attic cache whenever the ATTIC_TOKEN secret resolves -- an organization secret
 # covers every repository at once -- and a repository, or a fork pull request, with no token
@@ -24,9 +25,13 @@
 # and this workflow grants its own token only contents, so a repository without
 # ORG_UPDATE_TOKEN advances its input and fails to commit it.
 #
-# A refresh commits to the default branch, so it shares the update workflows' concurrency
-# group; two workflows committing to one branch fight over it, and a push whose lease no
-# longer matches the remote is refused rather than forced.
+# A refresh commits to the branch its run started on, so it shares the update workflows'
+# concurrency group rather than running beside it: a publication run pushes what it built
+# with an ordinary push, so a refresh that committed first would cost that run its commit,
+# while the refresher's own lease only refuses the losing push. The group holds one pending
+# run and a later arrival replaces it whatever cancel-in-progress says, so a refresh that
+# arrives while the group is busy can be dropped before it starts. That costs a day, not the
+# repository's state: the next run installs the templates the run that dropped it did not.
 #
 # A refresh runs on a hosted runner unless the repository sets the `RUNNER` variable to a
 # label one of its own runners carries.

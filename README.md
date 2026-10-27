@@ -476,11 +476,18 @@ wrote it. Nothing carries it sooner, because a push made with `GITHUB_TOKEN` tri
 workflow. Running the refresh half an hour ahead of the update workflows puts the day's
 templates in the default branch before the next update run reads its workflow file, and no
 run executes a workflow file its own job has just produced. The refresher commits to the
-default branch exactly as the two update workflows do, so it shares their `update`
-concurrency group -- two workflows committing to one branch fight over it.
+branch its run started on, exactly as the two update workflows do, so it shares their
+`update` concurrency group rather than running beside them: an update run pushes what it
+built with an ordinary push, so a refresh that committed first would cost that run its
+commit, while the refresher's own lease only refuses the losing push. The group holds one
+pending run and a newer arrival replaces it whatever `cancel-in-progress` says, so a
+refresh that arrives while the group is busy can be dropped before it starts -- which costs
+a day, not the repository's state, because the next run installs the templates the dropped
+run did not.
 
-Committing the input beside the workflows does not mean the input only moves there: the
-update workflows advance `flake-lib` themselves as they pin. A repository that installed
+Committing the input beside the workflows does not mean the input only moves there: pin
+updates advance `flake-lib` as they commit, the daily workflow on the default branch and a
+version refresh on its own version branch. A repository that installed
 the update workflows without `update-workflows.yml` therefore keeps advancing its pin
 while its workflow files stay where they were, which is the drift this tool exists to
 prevent and nothing about it is loud -- so a refresh that rewrites a scheduled workflow
@@ -504,9 +511,9 @@ workflow flake-lib has no template for stays the author's `git rm`; what is stil
 way is named in the output, because two workflows committing to one branch fight over it.
 The refresher's own workflow is never what is in the way: it writes that branch by design.
 
-The commit is pushed to the default branch, and the refresh ends there. No later job of
-any run checks it out and the tool reports no commit SHA for a run to consume, because the
-run that writes a workflow file is never the run that executes it. When the input did not
+The commit is pushed to the branch the run started on, and the refresh ends there. No later
+job of any run checks it out and the tool reports no commit SHA for a run to consume, because
+the run that writes a workflow file is never the run that executes it. When the input did not
 move and every installed workflow already matches the template at the revision locked,
 nothing is committed and the run says so.
 

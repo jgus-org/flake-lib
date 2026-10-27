@@ -198,9 +198,9 @@ assert_committed_report "${RUN_REPORT}" 1 '.github/workflows/update-branches.yml
 assert_no_run_output
 
 # A refresh that installs a scheduled workflow into a repository with no update-workflows.yml
-# leaves that workflow following no schedule: the update runs advance flake-lib as they pin,
-# so the templates the new revision ships are never installed. The note names the gap once,
-# however many scheduled workflows the run just wrote.
+# leaves that workflow following no schedule: the daily update workflow advances flake-lib as
+# it pins, so the templates the new revision ships are never installed. The note names the
+# gap once, however many scheduled workflows the run just wrote.
 initialize_repository
 install_workflow update-version.yml 'jobs:
   update: {}'

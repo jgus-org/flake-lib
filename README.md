@@ -454,10 +454,12 @@ revision behind the templates it installs.
 
 The tool reads the `flake-lib` input out of `flake.lock`, advances it, and
 overwrites each workflow in `.github/workflows` whose name a template of that
-revision ships. It installs nothing of its own choosing: which workflows a repo has
-is the author's decision, and one flake-lib has no template for is left alone. The one
-workflow it installs unasked is `update-workflows.yml`, the schedule that rewrites the rest,
-which a repository holding any flake-lib workflow holds too.
+revision ships. It picks no names of its own: which workflows a repo has beyond
+`update-workflows.yml` — the schedule that runs the tool, which every run installs or
+refreshes — is the author's decision, and a workflow flake-lib has no template for is left
+alone. Installing the schedule everywhere is what carries a template to a repository that has
+no updater at all: the pull-request gate is a copy of a template like any other, and without
+this it is frozen the day it is installed.
 What is compared is the installed file against the template at the revision _now
 locked_, not the revision the run started from — the pin path advances
 `flake-lib` as it commits pins, so a lock can reach a revision without that

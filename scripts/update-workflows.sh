@@ -140,13 +140,16 @@ else
     install_from_template "${template}" "${destination}"
     installed+=("${destination}")
   done
-  # A repository that follows one flake-lib workflow follows the workflow that rewrites them,
-  # so the schedule is part of every refresh: writing the workflows and not the thing that keeps
-  # them written leaves a repository holding files nothing rewrites. An installed schedule was
-  # refreshed by the loop above, which is also how its cron keeps up with the template's.
+  # A repository that runs this tool follows flake-lib's templates, and the workflow that rewrites
+  # them is one of them: an installed copy is refreshed by the loop above, which is also how its
+  # cron keeps up with the template, and a repository with none gets it here. The case that matters
+  # is a repository whose only flake-lib workflow is the pull-request gate, which has nothing else
+  # that would ever update it.
   if ((${#installed[@]} == 0)); then
-    echo "no workflow here was installed from flake-lib's ${TEMPLATE_DIR}; only the input advances."
-  elif [[ ! -e ${REFRESHER_WORKFLOW} ]]; then
+    echo "no workflow here matched flake-lib's ${TEMPLATE_DIR}; this run installs the schedule that runs it and advances the input."
+  fi
+  if [[ ! -e ${REFRESHER_WORKFLOW} ]]; then
+    mkdir -p "${WORKFLOW_DIR}"
     install_from_template "${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
     installed+=("${REFRESHER_WORKFLOW}")
   fi

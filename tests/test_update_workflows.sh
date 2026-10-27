@@ -159,9 +159,8 @@ assert_committed_report "${RUN_REPORT}" 1 'flake.lock'
 assert_no_run_output
 
 # A repository whose workflows are all its own advances the input and leaves them alone,
-# which is a committed input advance reported like any other rather than a silent no-op. It is
-# also the one repository that gets no schedule: with no flake-lib workflow here, there is
-# nothing for one to rewrite.
+# reported like any other advance rather than as a silent no-op. Running the tool is the opt-in,
+# so it gets the schedule too: from here the templates flake-lib ships reach this repository.
 initialize_repository
 install_workflow pages.yml 'on: push'
 write_template update-branches.yml 'jobs: {}'
@@ -169,11 +168,11 @@ ADVANCE_TO_REV=$(rev_of d)
 OUTPUTS="${CASE_ROOT}/outputs"
 RUN_REPORT=$(run_refresher)
 grep -Fq 'on: push' "${CHECKOUT}/.github/workflows/pages.yml"
-[[ ! -e "${CHECKOUT}/.github/workflows/update-workflows.yml" ]]
-assert_committed_subject "Advance flake-lib to ${ADVANCE_TO_REV}"
-assert_committed_report "${RUN_REPORT}" 1 'flake.lock'
+[[ "$(cat "${CHECKOUT}/.github/workflows/update-workflows.yml")" == "${REFRESHER_TEMPLATE}" ]]
+assert_committed_subject "Update workflows from flake-lib ${ADVANCE_TO_REV}"
+assert_committed_report "${RUN_REPORT}" 2 '.github/workflows/update-workflows.yml flake.lock'
 assert_no_run_output
-grep -Fq "no workflow here was installed from flake-lib's templates/workflows; only the input advances." <<<"${RUN_REPORT}"
+grep -Fq "no workflow here matched flake-lib's templates/workflows; this run installs the schedule that runs it and advances the input." <<<"${RUN_REPORT}"
 
 # flake-lib already at its newest revision, with every workflow already matching the template
 # that revision ships, pushes nothing and produces no run output, leaving the repository on

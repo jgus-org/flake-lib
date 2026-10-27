@@ -52,6 +52,7 @@ jobs:
       - uses: jgus-org/flake-lib/.github/actions/nix@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
+          github-token: ${{ secrets.BUILD_TOKEN }}
 
       - name: Wait for dependency updates
         env:
@@ -73,6 +74,7 @@ jobs:
       - uses: jgus-org/flake-lib/.github/actions/nix@v1
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
+          github-token: ${{ secrets.BUILD_TOKEN }}
 
       - name: Bump nixpkgs
         run: nix flake update

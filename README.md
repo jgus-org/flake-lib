@@ -580,7 +580,9 @@ declares nothing, and a run without it fetches the public inputs alone. Set it o
 repositories that need it rather than organization-wide: a secret an organization grants every
 repository is readable by the pull requests of every public one, which is a wider circle than a
 contents credential justifies. GitHub gives a fork pull request no secrets at all, so a flake
-with a private input is gated by pull requests from inside the organization.
+with a private input is gated by pull requests from inside the organization. The credential comes
+with being given nix: every job that uses `jgus-org/flake-lib/.github/actions/nix` passes
+`BUILD_TOKEN`, and an action given nothing hands nothing over.
 
 A package the runner cannot build excuses itself, with the reason in the comment beside
 the marker:

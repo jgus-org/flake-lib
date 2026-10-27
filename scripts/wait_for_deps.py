@@ -51,7 +51,6 @@ ACTIVE_STATE = "active"
 # dependency: its own revision is advanced by the refresh job that runs before this one.
 LIBRARY_REPO = "flake-lib"
 REQUEST_TIMEOUT_S = 30.0
-MAX_CONCURRENCY = 8
 # A repository whose state cannot be read at all. Polling it again for the whole budget would
 # spend the wait and report nothing new.
 UNOBSERVABLE = (401, 403, 404, 451)
@@ -445,9 +444,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         flush=True,
     )
     outcomes: list[Outcome] = []
-    with ThreadPoolExecutor(
-        max_workers=min(len(dependencies), MAX_CONCURRENCY)
-    ) as pool:
+    # One thread per dependency and no ceiling: a dependency's budget begins when its own
+    # wait begins, so a pool smaller than the dependency set spends the start of the gate
+    # queueing, and a queued dependency reads in the log exactly like one waiting out its
+    # budget. Each wait is one request per poll interval, parked in a sleep between them.
+    with ThreadPoolExecutor(max_workers=len(dependencies)) as pool:
         waiting = [pool.submit(wait, repo) for repo in dependencies]
         for finished in as_completed(waiting):
             outcome = finished.result()

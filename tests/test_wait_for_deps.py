@@ -89,6 +89,8 @@ class Dependency:
     workflow_state: str = WORKFLOW_STATE
     dispatch_status: int = 204
     delay: float = 0.0
+    # Held open until every participant's read is in flight together.
+    gate: Any = None
     reads_taken: int = 0
     dispatches: int = 0
 
@@ -187,6 +189,12 @@ class Api:
                 min(dependency.reads_taken, len(dependency.reads) - 1)
             ]
             dependency.reads_taken += 1
+            if dependency.gate is not None:
+                try:
+                    dependency.gate.wait()
+                except threading.BrokenBarrierError:
+                    self._refuse(handler, 503)
+                    return
             if dependency.delay:
                 time.sleep(dependency.delay)
             if isinstance(page, int):
@@ -535,20 +543,21 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(dependency.dispatches, 0)
 
     def test_dependencies_are_waited_for_at_once(self) -> None:
-        # Each dependency holds its read open, so both can only be observed together if the
-        # waits run concurrently rather than one after the other.
+        # Every dependency's read is held until all nine are in flight together, so this only
+        # passes if the gate starts a wait per dependency rather than working through a pool
+        # smaller than the set. A dependency that has not started has not started its budget
+        # either, which is what makes a ceiling read like a slow dependency.
+        arrived = threading.Barrier(9, timeout=20.0)
         dependencies = {
-            "click-flake": Dependency(
-                reads=[in_flight(), succeeded()], delay=0.3
-            ),
-            "hf-xet-flake": Dependency(
-                reads=[in_flight(), succeeded()], delay=0.3
-            ),
+            f"{letter}-flake": Dependency(
+                reads=[in_flight(), succeeded()], gate=arrived
+            )
+            for letter in "abcdefghi"
         }
-        report = self.run_gate(dependencies, ["--timeout", "10"])
+        report = self.run_gate(dependencies, ["--timeout", "30"])
         self.assertEqual(report.status, 0)
         self.assertEqual(set(report.states.values()), {"updated"})
-        self.assertGreater(report.api.peak, 1)
+        self.assertEqual(report.api.peak, len(dependencies))
 
     def test_dependencies_are_reported_as_they_settle(self) -> None:
         # a-flake holds its reads open and z-flake does not, so z-flake can only be reported

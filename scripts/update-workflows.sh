@@ -9,13 +9,13 @@
 # argument in flake.nix baked into the package the workflow invokes, so the workflow file
 # carries no repository state worth rescuing.
 #
-# With no arguments this keeps installed workflows current; it never adds, removes, or renames
-# one, because which workflows a repository has is the author's decision. `adopt <name>` is
-# how a repository joins that set, and it is the only way: the author names the template, so
-# the tool never guesses which publication model a repository wants.
+# With no arguments this keeps installed workflows current; it removes, renames, or picks names
+# for none of them, because which workflows a repository has is the author's decision. `adopt
+# <name>` is how a repository joins that set, and it is the only way: the author names the
+# template, so the tool never guesses which publication model a repository wants.
 #
-# A workflow that follows the templates only does so because this runs for it on a schedule,
-# so writing one writes update-workflows.yml, the workflow that runs this.
+# A workflow follows the templates only because this runs for it on a schedule, so every run
+# keeps update-workflows.yml -- the workflow that runs this -- installed and current too.
 
 set -euo pipefail
 
@@ -108,10 +108,18 @@ if [[ ${MODE} == adopt ]]; then
   mkdir -p "${WORKFLOW_DIR}"
   install_from_template "${template}" "${destination}"
   installed+=("${destination}")
+  # Adopting a flake-lib workflow adopts the schedule that rewrites flake-lib workflows with it,
+  # so the adopted template is current the day it lands rather than after someone installs the
+  # schedule by hand.
+  if [[ ${destination} != "${REFRESHER_WORKFLOW}" ]]; then
+    install_from_template "${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    installed+=("${REFRESHER_WORKFLOW}")
+  fi
   # A workflow flake-lib has no template for is invisible to every later refresh, and a
   # scheduled one keeps publishing beside the adopted template forever. Retiring it is the
   # author's decision, so it is named rather than removed. Whether a file schedules anything is
-  # the author's intent and lives only in the file, which is the one place it can be read.
+  # the author's intent and lives only in the file, which is the one place it can be read. The
+  # schedule installed above is skipped: it is refreshed by every run, which is what it is for.
   others=()
   for other in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
     [[ -f ${other} && ${other} != "${destination}" ]] || continue
@@ -132,28 +140,16 @@ else
     install_from_template "${template}" "${destination}"
     installed+=("${destination}")
   done
+  # A repository that follows one flake-lib workflow follows the workflow that rewrites them,
+  # so the schedule is part of every refresh: writing the workflows and not the thing that keeps
+  # them written leaves a repository holding files nothing rewrites. An installed schedule was
+  # refreshed by the loop above, which is also how its cron keeps up with the template's.
   if ((${#installed[@]} == 0)); then
     echo "no workflow here was installed from flake-lib's ${TEMPLATE_DIR}; only the input advances."
+  elif [[ ! -e ${REFRESHER_WORKFLOW} ]]; then
+    install_from_template "${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    installed+=("${REFRESHER_WORKFLOW}")
   fi
-fi
-
-# The update workflows advance the input as they publish, so a repository holding one without
-# update-workflows.yml moves its pin while its workflow files freeze. Installing the schedule
-# beside the workflow it refreshes is the only fix that does not depend on noticing: the
-# installed update workflow already runs this tool, so a repository rolls onto the schedule
-# from the run that rewrote its update workflow.
-follows_templates=0
-for installed_workflow in "${installed[@]}"; do
-  case ${installed_workflow##*/} in
-  update-version.yml | update-branches.yml) follows_templates=1 ;;
-  esac
-done
-if ((follows_templates)) && [[ ! -e ${REFRESHER_WORKFLOW} ]]; then
-  refresher_template="${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml"
-  [[ -s ${refresher_template} ]] ||
-    die "flake-lib ${current_url##*/} ships no ${TEMPLATE_DIR}/update-workflows.yml, so the workflows written here have no schedule that rewrites them"
-  install_from_template "${refresher_template}" "${REFRESHER_WORKFLOW}"
-  installed+=("${REFRESHER_WORKFLOW}")
 fi
 
 branch=$(git symbolic-ref --quiet --short HEAD) ||

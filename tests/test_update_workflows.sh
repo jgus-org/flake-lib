@@ -57,8 +57,8 @@ initialize_repository() {
   git -C "${CHECKOUT}" add flake.lock
   git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'Track flake-lib'
   git -C "${CHECKOUT}" push -q -u origin main
-  # The revision every fixture advances to ships the refresher's own template, because that
-  # is what the schedule beside an update workflow is installed from.
+  # The revision every fixture advances to ships the refresher's own template, because every run
+  # installs or refreshes that workflow.
   write_template update-workflows.yml "${REFRESHER_TEMPLATE}"
 }
 
@@ -159,7 +159,9 @@ assert_committed_report "${RUN_REPORT}" 1 'flake.lock'
 assert_no_run_output
 
 # A repository whose workflows are all its own advances the input and leaves them alone,
-# which is a committed input advance reported like any other rather than a silent no-op.
+# which is a committed input advance reported like any other rather than a silent no-op. It is
+# also the one repository that gets no schedule: with no flake-lib workflow here, there is
+# nothing for one to rewrite.
 initialize_repository
 install_workflow pages.yml 'on: push'
 write_template update-branches.yml 'jobs: {}'
@@ -167,6 +169,7 @@ ADVANCE_TO_REV=$(rev_of d)
 OUTPUTS="${CASE_ROOT}/outputs"
 RUN_REPORT=$(run_refresher)
 grep -Fq 'on: push' "${CHECKOUT}/.github/workflows/pages.yml"
+[[ ! -e "${CHECKOUT}/.github/workflows/update-workflows.yml" ]]
 assert_committed_subject "Advance flake-lib to ${ADVANCE_TO_REV}"
 assert_committed_report "${RUN_REPORT}" 1 'flake.lock'
 assert_no_run_output
@@ -267,8 +270,9 @@ assert_committed_report "${RUN_REPORT}" 3 \
   '.github/workflows/update-version.yml .github/workflows/update-workflows.yml flake.lock'
 assert_no_run_output
 
-# A repository whose only templated workflow is the pull-request gate installs nothing beside it:
-# the gate runs on a pull request, so no scheduled copy of it needs keeping current.
+# A repository whose only templated workflow is the pull-request gate follows flake-lib
+# templates, so it gets the schedule that rewrites them: the gate is a copy of a template like
+# any other, and nothing else in that repository would keep it one.
 initialize_repository
 install_workflow build-and-check.yml 'jobs:
   check: {}'
@@ -279,8 +283,10 @@ ADVANCE_TO_REV=$(rev_of j)
 OUTPUTS="${CASE_ROOT}/outputs"
 RUN_REPORT=$(run_refresher)
 grep -Fq 'runs-on: ubuntu-latest' "${CHECKOUT}/.github/workflows/build-and-check.yml"
-[[ ! -e "${CHECKOUT}/.github/workflows/update-workflows.yml" ]]
+[[ "$(cat "${CHECKOUT}/.github/workflows/update-workflows.yml")" == "${REFRESHER_TEMPLATE}" ]]
 assert_committed_subject "Update workflows from flake-lib ${ADVANCE_TO_REV}"
+assert_committed_report "${RUN_REPORT}" 3 \
+  '.github/workflows/build-and-check.yml .github/workflows/update-workflows.yml flake.lock'
 assert_no_run_output
 
 # Adopting is how a repository joins the tracked set, which is the upgrade path for a
@@ -311,12 +317,13 @@ grep -Fq 'jobs:' "${CHECKOUT}/.github/workflows/update.yml"
 assert_committed_subject "Adopt flake-lib's update-version.yml at ${ADVANCE_TO_REV}"
 assert_no_run_output
 
-# The refresher's own workflow shares the update workflows' concurrency group and writes the
-# same branch by design, so it is never what is in the way and the adopt note stays quiet.
+# The schedule an adoption brings with it is never what is in the way, and an installed copy is
+# rewritten by the adoption rather than left where it was -- the adopt note names only what the
+# run cannot refresh.
 initialize_repository
 install_workflow update-workflows.yml 'on:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 5 * * *"
 jobs:
   workflows: {}'
 write_template update-version.yml 'on:
@@ -328,6 +335,7 @@ ADVANCE_TO_REV=$(rev_of k)
 OUTPUTS="${CASE_ROOT}/outputs"
 RUN_REPORT=$(run_refresher adopt update-version.yml)
 grep -Fq 'update: {}' "${CHECKOUT}/.github/workflows/update-version.yml"
+[[ "$(cat "${CHECKOUT}/.github/workflows/update-workflows.yml")" == "${REFRESHER_TEMPLATE}" ]]
 ! grep -Fq 'never refreshed' <<<"${RUN_REPORT}"
 assert_committed_subject "Adopt flake-lib's update-version.yml at ${ADVANCE_TO_REV}"
 assert_no_run_output

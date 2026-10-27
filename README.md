@@ -515,9 +515,7 @@ waited for. A repository shipping none of the update workflow names is reported 
 and so is one whose update workflow is still on its default branch but no longer runs —
 GitHub disables a workflow that has not run in sixty days, which leaves a producer tracking
 a quiet upstream holding a workflow that never runs again, and left its consumer waiting its
-whole budget on a dispatch that is refused every time. Dependencies are waited for
-concurrently, so the wait is the slowest dependency rather than their sum, and a chain of
-them resolves in real dependency depth rather than in fixed slots.
+whole budget on a dispatch that is refused every time.
 
 The wait reports as it goes rather than only at the end: it names the dependencies it
 intends to order and the budget each one has before it reads anything, and it reports each

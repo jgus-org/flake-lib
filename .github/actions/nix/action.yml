@@ -1,7 +1,8 @@
 name: Provide nix
 description: >-
-  Give the job nix and the fleet binary cache, and leave both alone on a runner that
-  already configures its own nix.
+  Give the job nix, the fleet binary cache, and the credential for github inputs the
+  runner cannot fetch anonymously, and leave nix itself alone on a runner that already
+  configures it.
 
 inputs:
   token:
@@ -11,10 +12,24 @@ inputs:
       nothing.
     required: false
     default: ""
+  github-token:
+    description: >-
+      Credential for the github inputs a flake locks, handed to later steps through
+      NIX_CONFIG, the setting being client-side. Nothing is handed over when it does not
+      resolve: GitHub refuses a request carrying an empty access token, even for a public
+      repository, so a repository without the secret keeps fetching what it can reach.
+    required: false
+    default: ""
 
 runs:
   using: composite
   steps:
+    - if: inputs.github-token != ''
+      shell: bash
+      env:
+        ACCESS_TOKEN: ${{ inputs.github-token }}
+      run: |
+        printf 'NIX_CONFIG=access-tokens = github.com=%s\n' "$ACCESS_TOKEN" >>"$GITHUB_ENV"
     # A step cannot test a command in its own condition, so the test is its own step and
     # the two steps that follow read its output.
     - id: nix

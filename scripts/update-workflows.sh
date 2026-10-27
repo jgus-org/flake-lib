@@ -7,8 +7,8 @@
 # would otherwise refresh the scripts it invokes from revision N as well, and the run would
 # be green against a library nobody else uses.
 #
-# With no arguments, which is what every flake-lib workflow runs as its first job, this
-# keeps the installed workflows current and never adds, removes, or renames one: which
+# With no arguments, which is what the update-workflows workflow runs on its own schedule,
+# this keeps the installed workflows current and never adds, removes, or renames one: which
 # workflows a repository has is the author's decision, and a workflow whose name flake-lib
 # has no template for is left exactly as it is.
 #
@@ -18,10 +18,10 @@
 # a producer that lives only on GitHub, or one carrying a workflow under a name flake-lib
 # has never shipped.
 #
-# A workflow is read when its run starts, so what is written here takes effect for the
-# next run. The commit is reported as `sha` so the run that made it can check that commit
-# out for its remaining jobs, which is what lets a workflow update itself: a push made
-# with GITHUB_TOKEN triggers no run, so nothing else would pick the new file up in time.
+# A workflow is read when its run starts, so what is written here takes effect for the next
+# run of the workflow it rewrote. Nothing picks it up sooner: a push made with GITHUB_TOKEN
+# triggers no run, which is why this runs on a schedule of its own rather than as a first
+# job of the workflows it refreshes.
 #
 # A template replaces its workflow wholesale. Anything a repository owns lives in its
 # flake.nix -- the per-producer knobs are constructor arguments to mkUpdateVersion and
@@ -103,6 +103,10 @@ install_from_template() {
   cp "${template}" "${destination}"
 }
 
+carries_schedule() {
+  grep -qE '^[[:space:]]*schedule:' "${1}"
+}
+
 declare -a installed=()
 if [[ ${MODE} == adopt ]]; then
   template="${flake_lib_src}/${TEMPLATE_DIR}/${ADOPT_TARGET}"
@@ -116,11 +120,14 @@ if [[ ${MODE} == adopt ]]; then
   installed+=("${destination}")
   # Two workflows that commit to one branch fight over it, and the one flake-lib has no
   # template for is invisible to every later refresh, so what is still in the way is
-  # reported rather than removed: retiring that file is the author's decision.
+  # reported rather than removed: retiring that file is the author's decision. The
+  # refresher's own workflow writes the same branch by design and shares the update
+  # workflows' concurrency group, so it is never what is in the way.
   others=()
   for other in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
     [[ -f ${other} && ${other} != "${destination}" ]] || continue
-    if grep -qE '^[[:space:]]*schedule:' "${other}"; then
+    [[ ${other} == "${WORKFLOW_DIR}/update-workflows.yml" ]] && continue
+    if carries_schedule "${other}"; then
       others+=("${other}")
     fi
   done
@@ -138,6 +145,17 @@ else
   done
   if ((${#installed[@]} == 0)); then
     echo "no workflow here was installed from flake-lib's ${TEMPLATE_DIR}; only the input advances."
+  fi
+  # A repository that took the update workflows without the refresher's own workflow has no
+  # schedule left that refreshes them: the update runs advance the input as they pin, and the
+  # templates that revision ships are never installed.
+  if [[ ! -e "${WORKFLOW_DIR}/update-workflows.yml" ]] && ((${#installed[@]} > 0)); then
+    for installed_workflow in "${installed[@]}"; do
+      if carries_schedule "${installed_workflow}"; then
+        echo 'note: no update-workflows.yml is installed here, so nothing refreshes these workflows on a schedule.'
+        break
+      fi
+    done
   fi
 fi
 
@@ -165,10 +183,6 @@ else
   subject="Advance flake-lib to ${current_url##*/}"
 fi
 git commit -q -m "${subject}"
-sha=$(git rev-parse HEAD)
 
 push_ref HEAD "${branch}" "${base}" lease
 echo "Committed ${#committed[@]} file(s) from flake-lib ${current_url}: ${committed[*]}"
-if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-  printf 'sha=%s\n' "${sha}" >>"${GITHUB_OUTPUT}"
-fi

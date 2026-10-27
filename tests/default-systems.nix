@@ -3,6 +3,7 @@
   defaultSystems,
   eachDefaultLinuxSystem,
   eachDefaultSystem,
+  eachSystem,
 }:
 let
   sample = system: {
@@ -25,6 +26,17 @@ in
       "x86_64-linux"
     ];
     expr = defaultSystems;
+  };
+  testEachSystemIteratesOnlyTheHostsItIsGiven = {
+    expected = {
+      devShells.x86_64-linux.default = [ "x86_64-linux" ];
+      packages.x86_64-linux.default = "x86_64-linux";
+    };
+    expr = eachSystem [ "x86_64-linux" ] sample;
+  };
+  testEachSystemOnNoHostsProducesNoOutputs = {
+    expected = { };
+    expr = eachSystem [ ] sample;
   };
   testEveryOutputIsKeyedByHost = {
     expected = {

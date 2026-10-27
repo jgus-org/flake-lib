@@ -444,10 +444,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         flush=True,
     )
     outcomes: list[Outcome] = []
-    # One thread per dependency and no ceiling: a dependency's budget begins when its own
-    # wait begins, so a pool smaller than the dependency set spends the start of the gate
-    # queueing, and a queued dependency reads in the log exactly like one waiting out its
-    # budget. Each wait is one request per poll interval, parked in a sleep between them.
     with ThreadPoolExecutor(max_workers=len(dependencies)) as pool:
         waiting = [pool.submit(wait, repo) for repo in dependencies]
         for finished in as_completed(waiting):

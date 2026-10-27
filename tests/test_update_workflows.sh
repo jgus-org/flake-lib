@@ -21,6 +21,24 @@ trap 'rm -rf "${TEST_ROOT}"' EXIT
 
 rev_of() { printf '%s%.0s' "${1}" {1..40}; }
 
+install_workflow() {
+  local NAME="${1}" BODY="${2}"
+  mkdir -p "${CHECKOUT}/.github/workflows"
+  printf '%s\n' "${BODY}" >"${CHECKOUT}/.github/workflows/${NAME}"
+  git -C "${CHECKOUT}" add ".github/workflows/${NAME}"
+  git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm "Install ${NAME}"
+  git -C "${CHECKOUT}" push -q origin main
+}
+
+write_template() {
+  local NAME="${1}" BODY="${2}"
+  mkdir -p "${TEMPLATE_SOURCE}/templates/workflows"
+  printf '%s\n' "${BODY}" >"${TEMPLATE_SOURCE}/templates/workflows/${NAME}"
+}
+
+REFRESHER_TEMPLATE='jobs:
+  workflows: {}'
+
 initialize_repository() {
   CASE_ROOT=$(mktemp -d "${TEST_ROOT}/case.XXXXXX")
   REMOTE="${CASE_ROOT}/remote.git"
@@ -39,21 +57,15 @@ initialize_repository() {
   git -C "${CHECKOUT}" add flake.lock
   git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'Track flake-lib'
   git -C "${CHECKOUT}" push -q -u origin main
+  # The revision every fixture advances to ships the refresher's own template, because that
+  # is what the schedule beside an update workflow is installed from.
+  write_template update-workflows.yml "${REFRESHER_TEMPLATE}"
 }
 
-install_workflow() {
-  local NAME="${1}" BODY="${2}"
-  mkdir -p "${CHECKOUT}/.github/workflows"
-  printf '%s\n' "${BODY}" >"${CHECKOUT}/.github/workflows/${NAME}"
-  git -C "${CHECKOUT}" add ".github/workflows/${NAME}"
-  git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm "Install ${NAME}"
-  git -C "${CHECKOUT}" push -q origin main
-}
-
-write_template() {
-  local NAME="${1}" BODY="${2}"
-  mkdir -p "${TEMPLATE_SOURCE}/templates/workflows"
-  printf '%s\n' "${BODY}" >"${TEMPLATE_SOURCE}/templates/workflows/${NAME}"
+# The repository already follows the schedule, installed as the template reads it, so a run
+# with nothing else to change commits nothing else either.
+already_follows_schedule() {
+  install_workflow update-workflows.yml "${REFRESHER_TEMPLATE}"
 }
 
 run_refresher() {
@@ -84,9 +96,6 @@ assert_no_run_output() {
   [[ ! -e ${OUTPUTS} ]]
 }
 
-# A scheduled workflow with no refresher installed to rewrite it follows no schedule at all,
-# so the refresh reports the gap rather than leaving the repository quietly stale.
-REFRESH_NOTE='note: no update-workflows.yml is installed here, so nothing refreshes these workflows on a schedule.'
 # The adopt note lists what is still in the way. The refresher's own workflow is exempt: it
 # writes the same branch by design and shares the update workflows' concurrency group.
 ADOPT_NOTE='note: adopt also carries a schedule, and a workflow flake-lib has no template for is never refreshed:'
@@ -94,9 +103,10 @@ ADOPT_NOTE='note: adopt also carries a schedule, and a workflow flake-lib has no
 # A refresh replaces each templated workflow wholesale with the template's text: values the
 # repository had placed in the workflow are discarded (they belong in flake.nix now, baked
 # into the invoked package), a workflow flake-lib has no template for is left exactly as it
-# is, and nothing the repository did not choose is installed.
+# is, and a template the repository has no workflow for is not installed.
 TEMPLATE_SOURCE=$(mktemp -d "${TEST_ROOT}/flake-lib-src.XXXXXX")
 initialize_repository
+already_follows_schedule
 install_workflow update-branches.yml 'env:
   MINIMUM_TRACKING_VERSION: "3.1.4.1"
   TRACK_STABLE_ONLY: "true"'
@@ -135,6 +145,7 @@ assert_no_run_output
 # a workflow invokes come from that revision, so a scripts-only fix is not discarded
 # because no workflow file changed. The commit says so rather than claiming a refresh.
 initialize_repository
+already_follows_schedule
 install_workflow update-branches.yml 'env:
   MINIMUM_TRACKING_VERSION: "2.0.0"'
 write_template update-branches.yml 'env:
@@ -165,6 +176,7 @@ grep -Fq "no workflow here was installed from flake-lib's templates/workflows; o
 # that revision ships, pushes nothing and produces no run output, leaving the repository on
 # the revision it started from.
 initialize_repository
+already_follows_schedule
 install_workflow update-branches.yml 'env:
   MINIMUM_TRACKING_VERSION: "1.0.0"'
 write_template update-branches.yml 'env:
@@ -183,6 +195,7 @@ grep -Fq 'changed neither the installed workflows nor this flake' <<<"${RUN_REPO
 # is compared is the installed file against the locked revision, not the revision the run
 # started on. Without this the repository runs old workflow files against new scripts forever.
 initialize_repository
+already_follows_schedule
 install_workflow update-branches.yml 'env:
   MINIMUM_TRACKING_VERSION: "1.0.0"'
 write_template update-branches.yml 'env:
@@ -197,10 +210,9 @@ assert_committed_subject "Update workflows from flake-lib ${LOCKED_REV}"
 assert_committed_report "${RUN_REPORT}" 1 '.github/workflows/update-branches.yml'
 assert_no_run_output
 
-# A refresh that installs a scheduled workflow into a repository with no update-workflows.yml
-# leaves that workflow following no schedule: the daily update workflow advances flake-lib as
-# it pins, so the templates the new revision ships are never installed. The note names the
-# gap once, however many scheduled workflows the run just wrote.
+# A repository holding an update workflow with no schedule beside it picks the schedule up from
+# the run that rewrote the workflow: the installed update workflow already runs this tool, so
+# rolling onto the schedule does not wait for an author to notice the gap.
 initialize_repository
 install_workflow update-version.yml 'jobs:
   update: {}'
@@ -219,13 +231,14 @@ jobs:
 ADVANCE_TO_REV=$(rev_of h)
 OUTPUTS="${CASE_ROOT}/outputs"
 RUN_REPORT=$(run_refresher)
-[[ "$(grep -cF -- "${REFRESH_NOTE}" <<<"${RUN_REPORT}")" == 1 ]]
+[[ "$(cat "${CHECKOUT}/.github/workflows/update-workflows.yml")" == "${REFRESHER_TEMPLATE}" ]]
 assert_committed_subject "Update workflows from flake-lib ${ADVANCE_TO_REV}"
+assert_committed_report "${RUN_REPORT}" 4 \
+  '.github/workflows/update-branches.yml .github/workflows/update-version.yml .github/workflows/update-workflows.yml flake.lock'
 assert_no_run_output
 
-# With the refresher's own workflow installed the same repository has a schedule that will
-# rewrite what this run just wrote, so the note would be wrong. The refresher refreshes that
-# file like any other templated workflow, including the schedule it carries.
+# The refresher refreshes its own workflow like any other templated one, including the schedule
+# it carries, so an installed copy is not pinned at the day it was adopted.
 initialize_repository
 install_workflow update-version.yml 'jobs:
   update: {}'
@@ -250,11 +263,12 @@ RUN_REPORT=$(run_refresher)
 grep -Fq 'cron: "0 6 * * *"' "${CHECKOUT}/.github/workflows/update-workflows.yml"
 ! grep -Fq '0 5 * * *' "${CHECKOUT}/.github/workflows/update-workflows.yml"
 assert_committed_subject "Update workflows from flake-lib ${ADVANCE_TO_REV}"
-! grep -Fq -- "${REFRESH_NOTE}" <<<"${RUN_REPORT}"
+assert_committed_report "${RUN_REPORT}" 3 \
+  '.github/workflows/update-version.yml .github/workflows/update-workflows.yml flake.lock'
 assert_no_run_output
 
-# A repository whose only templated workflow is the pull-request gate has nothing installed
-# that runs on a schedule at all, so there is no gap for the note to name.
+# A repository whose only templated workflow is the pull-request gate installs nothing beside it:
+# the gate runs on a pull request, so no scheduled copy of it needs keeping current.
 initialize_repository
 install_workflow build-and-check.yml 'jobs:
   check: {}'
@@ -265,14 +279,15 @@ ADVANCE_TO_REV=$(rev_of j)
 OUTPUTS="${CASE_ROOT}/outputs"
 RUN_REPORT=$(run_refresher)
 grep -Fq 'runs-on: ubuntu-latest' "${CHECKOUT}/.github/workflows/build-and-check.yml"
+[[ ! -e "${CHECKOUT}/.github/workflows/update-workflows.yml" ]]
 assert_committed_subject "Update workflows from flake-lib ${ADVANCE_TO_REV}"
-! grep -Fq -- "${REFRESH_NOTE}" <<<"${RUN_REPORT}"
 assert_no_run_output
 
 # Adopting is how a repository joins the tracked set, which is the upgrade path for a
 # producer that lives only on GitHub and so has no local source to promote from. The
-# author names the template; the tool installs exactly that one and reports the workflow
-# it cannot refresh that is still in the way, rather than removing it.
+# author names the template; the tool installs that one and the schedule that keeps it
+# current, and reports the workflow it cannot refresh that is still in the way rather than
+# removing it.
 initialize_repository
 install_workflow update.yml 'on:
   schedule:
@@ -292,6 +307,7 @@ RUN_REPORT=$(run_refresher adopt update-version.yml)
 grep -Fq 'BUILD_ATTR: "default"' "${CHECKOUT}/.github/workflows/update-version.yml"
 grep -Fxq -- "${ADOPT_NOTE} .github/workflows/update.yml" <<<"${RUN_REPORT}"
 grep -Fq 'jobs:' "${CHECKOUT}/.github/workflows/update.yml"
+[[ "$(cat "${CHECKOUT}/.github/workflows/update-workflows.yml")" == "${REFRESHER_TEMPLATE}" ]]
 assert_committed_subject "Adopt flake-lib's update-version.yml at ${ADVANCE_TO_REV}"
 assert_no_run_output
 
@@ -369,6 +385,23 @@ OUTPUTS="${CASE_ROOT}/outputs"
 run_refresher adopt update-version.yml >/dev/null
 grep -Fq 'nix run .#update-version' "${CHECKOUT}/.github/workflows/update-version.yml"
 ! grep -Fq 'lazylibrarian' "${CHECKOUT}/.github/workflows/update-version.yml"
+assert_no_run_output
+
+# A repository whose updater is its own writes it by hand and adopts nothing, so this is the
+# one command that puts it on the schedule: the refresher's workflow is a template like any
+# other, and the hand-written updater is named as what is still in the way.
+initialize_repository
+install_workflow update.yml 'on:
+  schedule:
+    - cron: "0 7 * * *"
+jobs:
+  update: {}'
+ADVANCE_TO_REV=$(rev_of n)
+OUTPUTS="${CASE_ROOT}/outputs"
+RUN_REPORT=$(run_refresher adopt update-workflows.yml)
+[[ "$(cat "${CHECKOUT}/.github/workflows/update-workflows.yml")" == "${REFRESHER_TEMPLATE}" ]]
+grep -Fxq -- "${ADOPT_NOTE} .github/workflows/update.yml" <<<"${RUN_REPORT}"
+assert_committed_subject "Adopt flake-lib's update-workflows.yml at ${ADVANCE_TO_REV}"
 assert_no_run_output
 
 # A name flake-lib ships no template for is refused without a commit, because the

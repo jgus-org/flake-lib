@@ -1,40 +1,16 @@
-# The one workflow that writes a templated workflow file. It installs this repository's
-# workflows from the templates shipped by the newest flake-lib revision its declared input
-# can reach, and advances that input in the same commit, so a repository's CI moves with the
-# library it locks instead of drifting from it. Both halves land in one commit: a workflow
-# that tracks flake-lib N would otherwise be invoking the scripts it runs from revision M.
+# The only workflow that writes a templated workflow file; edit it in jgus-org/flake-lib's
+# templates/workflows, not here. Its schedule runs ahead of the update workflows' 07:00 so the
+# day's templates are committed before an update run reads its workflow file, and a workflow is
+# read when its run starts, so a refresh lands on the run after the one that wrote it.
 #
-# The refresh runs on a schedule of its own, half an hour ahead of the update workflows, so
-# the day's templates are committed before the next update run reads its workflow file. A
-# workflow is read when its run starts, so a refreshed file takes effect for the run after
-# the one that wrote it; a run never executes a workflow file its own job just produced.
+# The `update` concurrency group is what keeps this commit and an update run's commit apart:
+# that run pushes with an ordinary push, and a refresh committed beside it would cost it its
+# commit. A group holds one pending run, so a refresh that arrives while the group is busy is
+# dropped -- a lost day, not a lost state.
 #
-# Installed and refreshed by `nix run github:jgus-org/flake-lib/v1#update-workflows`: the
-# tool is taken from flake-lib's own flake URL rather than from this repository, because
-# there is nothing producer-specific in it to re-declare. A repository that does not have
-# this file yet installs it with
-# `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-workflows.yml`.
-# Without it the installed workflows follow no schedule at all: pin updates advance
-# flake-lib as they commit -- the daily workflow on the default branch, a version refresh on
-# its own branch -- and nothing installs the templates that revision ships.
-# Edit it in jgus-org/flake-lib's templates/workflows, not here. Binary caching uses the
-# fleet Attic cache whenever the ATTIC_TOKEN secret resolves -- an organization secret
-# covers every repository at once -- and a repository, or a fork pull request, with no token
-# runs on the public cache alone. The checkout credential is not optional in the same way:
-# GitHub refuses a push that writes a workflow file unless the token may write workflows,
-# and this workflow grants its own token only contents, so a repository without
-# ORG_UPDATE_TOKEN advances its input and fails to commit it.
-#
-# A refresh commits to the branch its run started on, so it shares the update workflows'
-# concurrency group rather than running beside it: a publication run pushes what it built
-# with an ordinary push, so a refresh that committed first would cost that run its commit,
-# while the refresher's own lease only refuses the losing push. The group holds one pending
-# run and a later arrival replaces it whatever cancel-in-progress says, so a refresh that
-# arrives while the group is busy can be dropped before it starts. That costs a day, not the
-# repository's state: the next run installs the templates the run that dropped it did not.
-#
-# A refresh runs on a hosted runner unless the repository sets the `RUNNER` variable to a
-# label one of its own runners carries.
+# Pushing a workflow file needs a credential that may write workflows. A run's own token cannot
+# unless the workflow grants `workflows: write`, so without ORG_UPDATE_TOKEN this run advances
+# its input and fails to commit it.
 
 name: Update workflows
 

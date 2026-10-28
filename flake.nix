@@ -1060,25 +1060,6 @@
         checks = {
           inherit formatting-tests;
           inherit
-            build-packages
-            revalidate-hash
-            update-branches
-            update-branches-github-pnpm
-            update-branches-oci-github
-            update-branches-pypi-cargo
-            update-version
-            update-version-github
-            update-version-github-commit
-            update-version-github-pnpm
-            update-version-github-pnpm-go
-            update-version-huggingface
-            update-version-mutable-url
-            update-version-oci
-            update-version-oci-github
-            update-version-pypi-cargo
-            update-workflows
-            ;
-          inherit
             cascade-tests
             default-systems-tests
             deps-core-tests

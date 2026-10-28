@@ -68,6 +68,23 @@
           runtimeInputs = [ pkgs.jq ];
           text = ''exec ${./scripts/build-packages.sh} "$@"'';
         };
+        # The gate one tree has to pass, so that the pull-request template and the publication
+        # path run one definition rather than each naming the attribute it builds. It is run from
+        # the same script text the published tool wraps rather than by nesting one
+        # writeShellApplication in another, so the gate resolves its runtime once.
+        build-and-check = pkgs.writeShellApplication {
+          name = "build-and-check";
+          runtimeEnv = {
+            BUILD_PACKAGES_SCRIPT = pkgs.copyPathToStore ./scripts/build-packages.sh;
+            BUILD_PACKAGES_SELECT = pkgs.copyPathToStore ./scripts/build-packages-select.nix;
+          };
+          runtimeInputs = [
+            pkgs.coreutils
+            pkgs.gnugrep
+            pkgs.jq
+          ];
+          text = ''exec ${./scripts/build-and-check.sh} "$@"'';
+        };
         # Ordering is observed from the consumer side, so like the refresher this takes nothing
         # from the caller: its edges are the caller's own flake inputs, read from its lock.
         wait-for-deps = pkgs.writeShellApplication {
@@ -632,10 +649,24 @@
               done
               exit 0
             fi
+            if [[ "''${1}" == "config" ]]; then
+              printf '%s\n' x86_64-linux
+              exit 0
+            fi
+            if [[ "''${1}" == "eval" ]]; then
+              # The published selection the build gate reads. A case that needs another family
+              # names one; the default carries one buildable package and excuses nothing.
+              if [[ -n "''${TEST_NIX_SELECTION:-}" ]]; then
+                printf '%s\n' "''${TEST_NIX_SELECTION}"
+              else
+                printf '%s\n' '{"build":["fixture"],"skip":[]}'
+              fi
+              exit 0
+            fi
             if [[ "''${1}" == "build" ]]; then
               for FAILED_VERSION in ''${TEST_NIX_BUILD_FAILURES:-}; do
                 if grep -Fq "version = \"''${FAILED_VERSION}\";" pin.nix; then
-                  printf 'error: fixture: packages.default does not build at %s\n' "''${FAILED_VERSION}" >&2
+                  printf 'error: fixture: a published package does not build at %s\n' "''${FAILED_VERSION}" >&2
                   exit 1
                 fi
               done
@@ -768,7 +799,22 @@
           ];
           text = ''
             case "''${1}" in
+              config)
+                printf '%s\n' x86_64-linux
+                ;;
               eval)
+                # The published-family evaluation the updater runs before it writes a pin. The
+                # count is not what the fixture is about, only that the updater asked -- and the
+                # failure injection and the evaluation log keep applying to it, because a run that
+                # cannot evaluate what it publishes has to stop before the pin is written.
+                if [[ "''${*}" == *'#packages.'* && "''${*}" == *'--apply'* ]]; then
+                  [[ "''${TEST_OCI_FAIL:-}" != evaluate ]] || exit 42
+                  if [[ -n "''${TEST_OCI_EVALUATION_LOG:-}" ]]; then
+                    printf '%s\n' evaluated >> "''${TEST_OCI_EVALUATION_LOG}"
+                  fi
+                  printf '1\n'
+                  exit 0
+                fi
                 if [[ "''${*}" == *'--file '* ]]; then
                   FIELD="''${*: -1}"
                   sed -nE "s/^[[:space:]]*''${FIELD}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "''${FLAKE_ROOT}/pin.nix"
@@ -875,6 +921,12 @@
         update-branches-tests =
           pkgs.runCommand "update-branches-tests"
             {
+              # The publication path runs the gate a pull request runs, from the same script texts
+              # the published tools wrap, so the fixture's fake `nix` has to be reached through
+              # those texts rather than a stand-in for them.
+              BUILD_AND_CHECK_SCRIPT = ./scripts/build-and-check.sh;
+              BUILD_PACKAGES_SCRIPT = ./scripts/build-packages.sh;
+              BUILD_PACKAGES_SELECT = ./scripts/build-packages-select.nix;
               CASCADE_PY = ./scripts/cascade.py;
               DEPS_CORE = ./scripts/deps_core.py;
               GIT_PUSH_LIB = ./scripts/git-push.sh;
@@ -948,6 +1000,20 @@
               bash ${./tests/test_build_packages.sh}
               touch $out
             '';
+        build-and-check-tests =
+          pkgs.runCommand "build-and-check-tests"
+            {
+              BUILD_AND_CHECK = ./scripts/build-and-check.sh;
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.gnugrep
+              ];
+            }
+            ''
+              bash ${./tests/test_build_and_check.sh}
+              touch $out
+            '';
         # The selection is pure Nix handed to `nix eval --apply`, so it is tested as pure
         # Nix: the assertions run when the flake is evaluated, not inside a builder that
         # would have to nest nix inside itself.
@@ -962,6 +1028,7 @@
           );
         publishedTools = {
           inherit
+            build-and-check
             build-packages
             revalidate-hash
             update-branches
@@ -1080,6 +1147,7 @@
             ;
           inherit update-version-tests;
           inherit
+            build-and-check-tests
             build-packages-select-tests
             build-packages-tests
             update-workflows-tests

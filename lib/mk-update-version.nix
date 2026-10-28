@@ -7,9 +7,13 @@
 #   formatter    : the repository's own formatter package (e.g. self.formatter.${system}). Required when a pin field name carries a dot: that field is written as a nested attribute, and only the org formatter defines that shape.
 #   siblings     : sibling-cascade specs
 #   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
-#   packages.default is the only build target, and the publisher builds it: there is no argument
-#     naming a target and none choosing whether one is built. Hash discovery is the exception and it
-#     builds `packages.default` too.
+#
+# This tool evaluates what the flake publishes and starts no package build of its own: the
+# publication path runs flake-lib's `build-and-check`, the same command that gates a pull request,
+# so the tree a run commits is the tree a pull request would have gated. There is no argument
+# naming a build target because the target is what that path standardizes on. Hash discovery is the
+# exception: `hashMode = "build-failure"` builds what the flake publishes and mines the mismatch
+# out of that log, which is the one place this tool starts a build of its own.
 {
   artifactFingerprint ? "",
   artifactHook ? null,

@@ -9,7 +9,7 @@
 #   minVersionComponents : fewest dot-separated numeric components a tag may have and still be tracked (default 3, i.e. X.Y.Z only). Lower it for upstreams with short version tags (e.g. bare datestamps like 20260711162202).
 #   minimumTrackingVersion : lowest upstream version to track, baked into the package (default "0.0.0"). This is the flake's source of truth; the workflow ships no env for it, so a wholesale workflow-file refresh cannot reset it.
 #   trackStableOnly    : true excludes prereleases from branches, maintenance, and publication (default false).
-#   buildVerificationSkip : true publishes a refreshed version branch without building `packages.default` (default false). Set it only where that build is prohibitively expensive, and say why in a comment beside it; the reason is the flake's, not the option's.
+#   buildVerificationSkip : true publishes a refreshed version branch without running the gate a pull request would have passed (default false). Set it only where that gate is prohibitively expensive, and say why in a comment beside it; the reason is the flake's, not the option's.
 {
   branchOwnedFiles ? [
     "pin.nix"
@@ -69,6 +69,12 @@ pkgs.writeShellApplication {
   name = "update-branches";
   runtimeEnv = {
     BRANCH_OWNED_FILES = pkgs.lib.concatStringsSep " " ownedFiles;
+    # The publication path runs the pull-request gate's own command, from the same script texts
+    # the published tools wrap: one definition of what a runner verifies, and no second nix shell
+    # resolved to reach the tools the gate needs.
+    BUILD_AND_CHECK_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-and-check.sh}";
+    BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
+    BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";
     BUILD_VERIFICATION_SKIP = pkgs.lib.boolToString buildVerificationSkip;
     CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
     DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
@@ -102,6 +108,9 @@ pkgs.writeShellApplication {
     VERSION_TRACK = versionSourceTrack;
   };
   runtimeInputs = [
+    pkgs.coreutils
+    pkgs.gnugrep
+    pkgs.jq
     (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ]))
   ]
   ++ pkgs.lib.optional (formatter != null) formatter;

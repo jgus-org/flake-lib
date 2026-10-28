@@ -41,7 +41,7 @@ grep -Fq "imageDigest = \"sha256:$(printf 'b%.0s' {1..64})\";" "${TEST_ROOT}/pin
 write_empty_pin
 TEST_OCI_MANIFEST=single bash "${UPDATE_VERSION}" "sha256:$(printf 'a%.0s' {1..64})"
 
-# `build` is absent because the updater builds nothing: packages.default is built by the publisher, so a build failure is not something this path can hit.
+# `build` is absent because the updater builds nothing: the publication path builds what the flake publishes, so a build failure is not something this path can hit.
 for FAILURE in platform digest copy hash store lock evaluate; do
   write_empty_pin
   cp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"

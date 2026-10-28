@@ -654,7 +654,7 @@ checks.${system}.overlay-payload =
   let
     # The gate's throwaway set. This is where the payload's licence is accepted and where CUDA is
     # selected, and neither election reaches a consumer's package set.
-    smoke = import nixpkgs {
+    checkPkgs = import nixpkgs {
       inherit system;
       config = {
         allowUnfreePackages = [ "emulationstation-de" ];
@@ -663,8 +663,8 @@ checks.${system}.overlay-payload =
       overlays = [ self.overlays.default ];
     };
   in
-  smoke.runCommand "overlay-payload" { } ''
-    test -x ${smoke.es-de}/bin/es-de
+  checkPkgs.runCommand "overlay-payload" { } ''
+    test -x ${checkPkgs.es-de}/bin/es-de
     touch $out
   '';
 ```
@@ -672,7 +672,7 @@ checks.${system}.overlay-payload =
 No machinery is involved -- it is an ordinary derivation in the family `nix flake check` builds --
 and the grant is inside the check, so the flake still accepts no licence on a consumer's behalf:
 the same overlay applied to a set that permits nothing unfree is refused as it was before. A check
-reaches a payload nested in another scope (`smoke.cudaPackages.libcufile`, a
+reaches a payload nested in another scope (`checkPkgs.cudaPackages.libcufile`, a
 `pythonPackagesExtensions` member) as easily as a top-level one, because it is Nix and not a name
 lookup.
 

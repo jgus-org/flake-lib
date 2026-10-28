@@ -921,8 +921,18 @@ assert_missing_ref v1.2
 assert_missing_ref v1
 assert_ref_version main 1.0.0
 [[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
-grep -Fq -- 'packages.default does not build at 1.2.0; v1.2.0 not published' "${CASE_ROOT}/update.log"
+grep -Fq -- 'a build or check failed at 1.2.0; v1.2.0 not published' "${CASE_ROOT}/update.log"
 unset TEST_NIX_BUILD_FAILURES
+
+# A producer whose deliverable is an overlay publishes no payload of its own, so the same gate that
+# withheld the pin above has nothing to build here. Nothing to build is a pass, not a failure: an
+# overlay-published producer is not pushed into publishing a package to satisfy the path that
+# pushes it.
+initialize_repository
+export TEST_NIX_SELECTION='{"build":[],"skip":[]}'
+run_command '1.2.0'
+assert_ref_version v1.2.0 1.2.0
+unset TEST_NIX_SELECTION
 
 # The opt-out publishes anyway and says so on every run that honors it, so a pin nobody built stays visible in the log rather than being a silent default.
 initialize_repository
@@ -931,7 +941,7 @@ export BUILD_VERIFICATION_SKIP=true
 LOG=$(run_command '1.2.0')
 assert_ref_version v1.2.0 1.2.0
 assert_same_ref main v1.2.0
-grep -Fq -- 'build verification skipped' <<<"${LOG}"
+grep -Fq -- 'publication verification skipped' <<<"${LOG}"
 unset TEST_NIX_BUILD_FAILURES BUILD_VERIFICATION_SKIP
 
 # The refresh formats what it changed before it commits, so a machine commit never leaves a repository failing its own formatting check. When formatting fails, nothing is committed and the version stays undiscovered for the next run.

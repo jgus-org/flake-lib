@@ -76,14 +76,26 @@ declare -A extra=()
 declare -A HF_HASHES=()
 RESOLVED_SIBLING_REFS='{}'
 
-evaluate_package() {
-  echo "Evaluating packages.default..."
-  nix eval --raw "${FLAKE_ROOT}#default.drvPath" >/dev/null
+# Every derivation this flake publishes has to instantiate, not only the tracked one. A
+# producer whose deliverable is an overlay publishes no payload of its own, and what is left
+# in `packages` is its tooling -- which still has to evaluate before a pin is written.
+evaluate_published_packages() {
+  local SYSTEM
+  SYSTEM=$(nix config show system) || {
+    echo "error: this nix does not report the system it builds for" >&2
+    exit 1
+  }
+  echo "Evaluating the packages this flake publishes for ${SYSTEM}..."
+  nix eval --raw "${FLAKE_ROOT}#packages.${SYSTEM}" --apply '
+    packages: builtins.toString (
+      builtins.length (builtins.filter (package: package ? drvPath) (builtins.attrValues packages))
+    )
+  ' >/dev/null
 }
 
 finish_unchanged() {
   local VERSION="${1}"
-  evaluate_package
+  evaluate_published_packages
   echo "Already up to date (${VERSION})."
   exit 0
 }
@@ -506,28 +518,36 @@ next_unresolved_failure_field() {
 revalidate_build_hashes() {
   local -A BUILD_FAILURE_RESOLVED=()
   local out rc specified new field owner
+  # Every published package is built and its combined log mined, so no producer is asked to name
+  # the attribute that carries the drifted hash: a mismatch states its own hash, and the field that
+  # holds it is looked up from there.
+  local SYSTEM
+  SYSTEM=$(nix config show system) || {
+    echo "error: this nix does not report the system it builds for" >&2
+    exit 1
+  }
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
     set +e
-    out=$(nix build "${FLAKE_ROOT}#default" --no-link 2>&1)
+    out=$(nix build "${FLAKE_ROOT}#packages.${SYSTEM}" --no-link 2>&1)
     rc=$?
     set -e
     ((rc == 0)) && return 0
     specified=$(printf '%s\n' "${out}" | sed -nE 's/.*specified:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
     new=$(printf '%s\n' "${out}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
     if [[ -z ${new} ]]; then
-      echo "error: build of packages.default failed and it wasn't a hash mismatch:" >&2
+      echo "error: building what this flake publishes failed and it wasn't a hash mismatch:" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
     owner=$(pin_field_holding "${specified}") || owner=""
     if [[ -n ${owner} ]] && ! declared_failure_field "${owner}"; then
-      echo "error: build of packages.default names pin field ${owner} as the hash mismatch, and ${owner} is not a declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]})" >&2
+      echo "error: building what this flake publishes names pin field ${owner} as the hash mismatch, and ${owner} is not a declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]})" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
     if [[ -n ${owner} && -n ${BUILD_FAILURE_RESOLVED[${owner}]:-} ]]; then
-      echo "error: build of packages.default still names pin field ${owner} after ${owner} was resolved from its own hash mismatch" >&2
+      echo "error: building what this flake publishes still names pin field ${owner} after ${owner} was resolved from its own hash mismatch" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
@@ -537,7 +557,7 @@ revalidate_build_hashes() {
       field=$(next_unresolved_failure_field) || field=""
     fi
     if [[ -z ${field} ]]; then
-      echo "error: build of packages.default still reports a hash mismatch with every declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]}) resolved once each" >&2
+      echo "error: building what this flake publishes still reports a hash mismatch with every declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]}) resolved once each" >&2
       printf '%s\n' "${out}" >&2
       exit 1
     fi
@@ -1004,7 +1024,7 @@ if ((pin_changed == 0 && CASCADE_CHANGED == 0 && LOCK_CHANGED == 0)); then
   finish_unchanged "${new_version}"
 fi
 
-evaluate_package
+evaluate_published_packages
 
 echo
 if ((pin_changed)); then

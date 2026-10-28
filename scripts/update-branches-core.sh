@@ -35,7 +35,7 @@
 #   VERSION_CANON        newline-separated `sed -E` rules mapping raw version -> canonical version
 #   MIN_VERSION_COMPONENTS  fewest dot-separated numeric components a tag may have and still be tracked (default 3)
 #   TRACK_STABLE_ONLY    true: exclude prereleases from the tracked set entirely, so they get no branch, no maintenance job, and no publication (default false)
-#   BUILD_VERIFICATION_SKIP  true: publish a refreshed branch without building packages.default (default false). Otherwise the tracked package is built before anything is pushed.
+#   BUILD_VERIFICATION_SKIP  true: publish a refreshed branch without running the gate a pull request would have passed (default false). Otherwise the gate runs against the worktree before anything is pushed.
 
 set -euo pipefail
 : "${MINIMUM_TRACKING_VERSION:?required env var}"
@@ -691,12 +691,18 @@ refresh_version() {
     remove_worktree "${wt}"
     return 1
   fi
+  # The pull-request gate, run here against the worktree this branch is about to push: one
+  # definition of what a runner verifies, so a producer publishes exactly what a pull request would
+  # have gated. The gate builds the packages this flake publishes and checks the flake, which
+  # builds the checks that realize what an overlay produces; it is run from the script text the
+  # published tool wraps rather than the wrapper, so no second nix shell is resolved to reach the
+  # same tools.
   if [[ ${BUILD_VERIFICATION_SKIP} == "true" ]]; then
-    echo "  build verification skipped"
-  elif ! run_with_transient_retry "build for ${branch}" nix build --no-link --print-out-paths .#default; then
-    LAST_FAILURE_REASON="packages.default does not build at ${v}"
-    echo "::warning title=Branch ${branch} not published::packages.default does not build at ${v}; no commit was pushed to ${branch}."
-    echo "  ERROR: packages.default does not build at ${v}; ${branch} not published." >&2
+    echo "  publication verification skipped"
+  elif ! run_with_transient_retry "gate for ${branch}" bash "${BUILD_AND_CHECK_SCRIPT:?required env var}"; then
+    LAST_FAILURE_REASON="a build or check failed at ${v}"
+    echo "::warning title=Branch ${branch} not published::a build or check failed at ${v}; no commit was pushed to ${branch}."
+    echo "  ERROR: a build or check failed at ${v}; ${branch} not published." >&2
     popd >/dev/null
     remove_worktree "${wt}"
     return 1
@@ -752,7 +758,7 @@ aggregate_tip_retained_elsewhere() {
 
 publish_aggregates() {
   # Aggregate refs move to a commit an exact branch already published, and that
-  # refresh built packages.default before pushing it; nothing is built here.
+  # refresh built what the branch publishes before pushing it; nothing is built here.
   # A scope restricts the pass to the aggregates one version carries; it never
   # changes which version an aggregate moves to.
   local scope="${1:-}"

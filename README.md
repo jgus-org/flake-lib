@@ -167,7 +167,14 @@ GitHub producers read sibling requirements from `reqFile = "requirements.txt"` b
 
 Set `siblingRefsInPin = true` to write the resolved refs under `pin.nix.dependencies` instead of rewriting `flake.nix`. The updater applies those refs while regenerating `flake.lock`, so each historical branch owns its complete source and dependency selection through `pin.nix` and `flake.lock` while `flake.nix` retains generic input URLs.
 
-The updater evaluates `packages.default` on every run and builds nothing of its own; the publisher builds, see [Publication builds the tracked package](#publication-builds-the-tracked-package). The one build the updater does start is hash discovery: a fixed-output hash that cannot be prefetched is recovered from `packages.default`'s hash-mismatch error, which is what `hashMode = "build-failure"` and `buildFailureHash`/`buildFailureHashes` select.
+The updater evaluates every package the flake publishes on every run; it starts no package build of
+its own, since the publication path runs the pull-request gate's command instead, see
+[Publication builds what the flake publishes](#publication-builds-what-the-flake-publishes). The
+one build the updater does start is hash discovery: a fixed-output hash that cannot be prefetched
+is recovered from a package build's hash-mismatch error, which is what
+`hashMode = "build-failure"` and `buildFailureHash`/`buildFailureHashes` select. That discovery
+builds `packages.default`, so a flake that uses it has to publish one; a flake with no
+`packages.default` says so rather than finishing a pin whose hashes were never resolved.
 
 `buildFailureHash` names one additional pin field whose value is populated from
 the package build's fixed-output hash mismatch. This supports dependency fetchers
@@ -331,25 +338,29 @@ A repository whose builds need a nix setting the runner does not default to publ
 in `.github/nix.conf`, a nix.conf fragment in git, and `.github/actions/nix` hands it to every later
 step through the job's `NIX_CONFIG`.
 
-### Publication builds the tracked package
+### Publication builds what the flake publishes
 
-`packages.default` is the tracked package, by standard rather than by convention: it is
-the only attr flake-lib's publication machinery builds, evaluates, or repairs hashes
-against, and a producer's own package attr name is an alias with no publication meaning.
-The pull-request gate deliberately covers more than the tracked attr, because everything a
-producer publishes is what its consumers build. On the publication path the publisher is
-the only thing that builds, because it is the thing that cannot be trusted to have
-checked -- and the publisher differs by model, so there are two call sites and one
-definition. The version model publishes from its workflow, and `update-version.yml`
-builds `.#default` between the updater and its commit. A refresh publishes from the
-tool, because one run resolves and pushes many version branches: `refresh_version`
-builds `packages.default` in the branch's own tree before it pushes anything, and no
-workflow step could have reached that tree. A failed build leaves the branch, its
-aggregate, and the pin unpushed, and the next run retries the same version, so the
-failure is visible and the published state stays consistent.
+The publication path runs the pull-request gate's own command, `nix run
+github:jgus-org/flake-lib/v1#build-and-check`, so the tree a producer pushes is the tree a pull
+request would have gated and no publication site names the attribute it builds. What that builds is
+every package in the published `packages.<system>` family for the runner's system, flake-lib's own
+tooling entries included. A producer whose deliverable is an overlay publishes no materialized
+payload of its own; what is left in `packages` is its tooling, and that is what gets built.
+
+Two call sites, one definition. The version model publishes from its workflow:
+`update-version.yml` runs the gate between the updater and its commit. A refresh publishes from the
+tool, because one run resolves and pushes many version branches: `refresh_version` runs the same
+build in the branch's own tree before it pushes anything, and no workflow step could have reached
+that tree. A failed build leaves the branch, its aggregate, and the pin unpushed, and the next run
+retries the same version, so the failure is visible and the published state stays consistent.
 
 Aggregate publication builds nothing: it moves a ref to a commit an exact branch
 already published, and that refresh built it.
+
+Hash discovery is the one place flake-lib still names `packages.default`. A build-failure hash can
+only be recovered from a build of one named package, so `hashMode = "build-failure"` requires a
+producer to publish one; a producer with no `packages.default` is told so instead of finishing a
+pin whose hashes were never resolved.
 
 `buildVerificationSkip` is the way out, and the reason belongs in a comment beside it:
 
@@ -357,14 +368,14 @@ already published, and that refresh built it.
 flake-lib.lib.mkUpdateBranches {
   inherit pkgs source;
   pinSchema = "pypi";
-  # packages.default builds a 20-minute CUDA wheelhouse; the pin's own hash check is the gate here.
+  # The published package builds a 20-minute CUDA wheelhouse; the pin's own hash check is the gate here.
   buildVerificationSkip = true;
 }
 ```
 
-false (the default) builds. true publishes without building and logs that verification
-was skipped on every run, so the exception stays visible in the log. Use it only where
-the build is genuinely prohibitive; it does not make the pin correct.
+false (the default) runs the gate. true publishes without running it and logs that verification
+was skipped on every run, so the exception stays visible in the log. Use it only where the gate is
+genuinely prohibitive; it does not make the pin correct.
 
 ### Split update-branches jobs
 
@@ -552,23 +563,29 @@ cancel GitHub Actions workflows" is Write. The templates pass one organization s
 anything, in the same shape as `ATTIC_TOKEN`. With no such secret the gate observes
 nothing and proceeds, in the same shape as the Attic cache action's fallback.
 
-### Gate a pull request (`build-packages`)
+### Gate a pull request (`build-and-check`)
 
-A flake's packages are the surface its consumers build, and nothing in a producer's CI built
-them: `nix flake check` builds `checks` and only looks at the shape of `packages`, and the
-updater's own build runs after the change is already merged.
-`templates/workflows/build-and-check.yml` is the gate that builds them, running flake-lib's
-own instance of the tool:
+A flake's packages are the surface its consumers build, and neither of the older commands covers
+them on its own: `nix flake check` builds `checks` and only looks at the shape of `packages`, and
+the updater's own build runs after the change is already merged.
+`templates/workflows/build-and-check.yml` is the gate that does, running flake-lib's own instance
+of the tool:
 
 ```console
-nix run github:jgus-org/flake-lib/v1#build-packages
+nix run github:jgus-org/flake-lib/v1#build-and-check
 ```
 
-It builds every package the flake publishes for the system the runner is on, reading the
-calling tree rather than anything baked into the workflow, so a package a producer adds
-later is gated by the next pull request without a workflow change. `--dry-run` prints the
-installables it would build, which is how a repository is audited before adopting;
-`--system` selects another system's family and `--flake` reads another tree.
+It builds every package the flake publishes for the system the runner is on, then runs
+`nix flake check`. Both halves run even when the first fails, so one run names every problem in
+a tree rather than the first one nix reached. The publication path runs the same command, so the
+tree an updater pushes is the tree a pull request would have gated. The build half reads the
+calling tree rather than anything baked into the workflow, so a package a producer adds later is
+gated by the next pull request without a workflow change.
+
+`build-packages` is the build half on its own -- `nix run
+github:jgus-org/flake-lib/v1#build-packages` -- and takes the arguments the gate passes through:
+`--dry-run` prints the installables it would build, which is how a repository is audited before
+adopting; `--system` selects another system's family and `--flake` reads another tree.
 
 Adopting it names the template the way every other flake-lib workflow is adopted, and it
 then refreshes with the rest:
@@ -607,7 +624,7 @@ while booting nothing, so the package that earns a gate is the driver and the pa
 
 The run names every package it excused, so an exemption cannot go unnoticed, and a marker
 that is not a boolean fails the run. It is the per-package sibling of the publication path's
-`buildVerificationSkip`; the two gate different builds.
+`buildVerificationSkip`, which skips the whole gate rather than one package in its build half.
 
 One system per run, which is a scope decision rather than a limit: hosted arm64 runners
 exist and a second job could gate `aarch64-linux`. Apps and devShells are not built -- an
@@ -619,6 +636,51 @@ The gate triggers on a pull request and a dispatch, not a push: an updater's com
 pushed with the run's `GITHUB_TOKEN`, which starts no workflow, and it is built by the
 publication path that made it. A push trigger would build the whole family to verify a
 workflows refresh, which is what most of a producer's machine-made commits are.
+
+### Build what an overlay produces
+
+A producer whose deliverable is an overlay publishes no payload of its own: what the consumer gets
+is built in the consumer's tree, from an overlay that has to be applied first. Neither gate half
+touches it -- the published family holds the flake's build surface, and `nix flake check` never
+instantiates an unfree payload, which is the point of unfree packaging -- so patches that stopped
+applying, or an upstream that moved an assumption the overlay depends on, would reach the fleet
+through the overlay untested.
+
+The build belongs in the flake's own `checks`, which is the family the gate's second half builds,
+and a check instantiates the package set it needs:
+
+```nix
+checks.${system}.overlay-payload =
+  let
+    # The gate's throwaway set. This is where the payload's licence is accepted and where CUDA is
+    # selected, and neither election reaches a consumer's package set.
+    smoke = import nixpkgs {
+      inherit system;
+      config = {
+        allowUnfreePackages = [ "emulationstation-de" ];
+        cudaSupport = true;
+      };
+      overlays = [ self.overlays.default ];
+    };
+  in
+  smoke.runCommand "overlay-payload" { } ''
+    test -x ${smoke.es-de}/bin/es-de
+    touch $out
+  '';
+```
+
+No machinery is involved -- it is an ordinary derivation in the family `nix flake check` builds --
+and the grant is inside the check, so the flake still accepts no licence on a consumer's behalf:
+the same overlay applied to a set that permits nothing unfree is refused as it was before. A check
+reaches a payload nested in another scope (`smoke.cudaPackages.libcufile`, a
+`pythonPackagesExtensions` member) as easily as a top-level one, because it is Nix and not a name
+lookup.
+
+What it costs is that a check is a published output: a consumer who runs `nix flake check` on the
+flake builds the payload too, and the store paths land wherever the gate ran.
+
+Choose a target that can build. A payload nixpkgs itself blocks -- a package removed for known
+vulnerabilities -- cannot be proved this way, and naming it leaves the gate permanently red.
 
 ### Org-standard formatting (`mkFormatting`)
 

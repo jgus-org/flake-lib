@@ -93,10 +93,11 @@ jobs:
 
       # The updater exits early when the upstream commit has not moved, so this runs
       # unconditionally: nixpkgs can have moved underneath a pin that did not, and a
-      # run that only pins files without building them says nothing about the result.
-      # A producer's tracked package is exposed as packages.default, which is what builds.
-      - name: Build the package
-        run: nix build --no-link -L ".#default"
+      # run that only pins files without building them says nothing about the result. This is
+      # the pull-request gate's own command, so the tree a run commits is the tree a pull
+      # request would have gated, and this workflow names no attribute of its own.
+      - name: Build what this flake publishes, then check it
+        run: nix run github:jgus-org/flake-lib/v1#build-and-check
 
       - name: Commit and push whatever the run changed
         run: |

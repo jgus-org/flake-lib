@@ -327,6 +327,10 @@ whenever the `ATTIC_TOKEN` secret resolves -- one organization secret covers eve
 -- and falls back to the repository's Actions cache when it does not, so repositories
 and fork pull requests without a token behave as before.
 
+A repository whose builds need a nix setting the runner does not default to publishes that setting
+in `.github/nix.conf`, a nix.conf fragment in git, and `.github/actions/nix` hands it to every later
+step through the job's `NIX_CONFIG`.
+
 ### Publication builds the tracked package
 
 `packages.default` is the tracked package, by standard rather than by convention: it is

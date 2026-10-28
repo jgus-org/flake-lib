@@ -1,8 +1,8 @@
 name: Provide nix
 description: >-
-  Give the job nix, the fleet binary cache, and the credential for github inputs the
-  runner cannot fetch anonymously, and leave nix itself alone on a runner that already
-  configures it.
+  Give the job nix, the fleet binary cache, the credential for github inputs the runner
+  cannot fetch anonymously, and the nix settings the repository declares in
+  `.github/nix.conf`, leaving nix itself alone on a runner that already configures it.
 
 inputs:
   token:
@@ -24,12 +24,29 @@ inputs:
 runs:
   using: composite
   steps:
-    - if: inputs.github-token != ''
-      shell: bash
+    - shell: bash
       env:
         ACCESS_TOKEN: ${{ inputs.github-token }}
       run: |
-        printf 'NIX_CONFIG=access-tokens = github.com=%s\n' "$ACCESS_TOKEN" >>"$GITHUB_ENV"
+        set -euo pipefail
+        settings=.github/nix.conf
+        fragment=''
+        if [[ -s ${settings} ]]; then
+          fragment="$(cat "${settings}")"
+        fi
+        if [[ -z ${ACCESS_TOKEN} && -z ${fragment} ]]; then
+          exit 0
+        fi
+        {
+          printf 'NIX_CONFIG<<%s\n' REPO_NIX_CONF_EOF
+          if [[ -n ${ACCESS_TOKEN} ]]; then
+            printf 'access-tokens = github.com=%s\n' "${ACCESS_TOKEN}"
+          fi
+          if [[ -n ${fragment} ]]; then
+            printf '%s\n' "${fragment}"
+          fi
+          printf '%s\n' REPO_NIX_CONF_EOF
+        } >>"${GITHUB_ENV}"
     # A step cannot test a command in its own condition, so the test is its own step and
     # the two steps that follow read its output.
     - id: nix

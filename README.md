@@ -566,6 +566,11 @@ later is gated by the next pull request without a workflow change. `--dry-run` p
 installables it would build, which is how a repository is audited before adopting;
 `--system` selects another system's family and `--flake` reads another tree.
 
+A derivation belongs to one family or the other. A published package that is also a check is
+built twice per run, once by the gate and once by `nix flake check`, so flake-lib's own tools are
+published as packages and not repeated in `checks`, and a producer that publishes a tool in
+`packages` has already gated it. What exists only to be verified is not a package.
+
 Adopting it names the template the way every other flake-lib workflow is adopted, and it
 then refreshes with the rest:
 

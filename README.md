@@ -647,10 +647,11 @@ applying, or an upstream that moved an assumption the overlay depends on, would 
 through the overlay untested.
 
 The build belongs in the flake's own `checks`, which is the family the gate's second half builds,
-and a check instantiates the package set it needs:
+and a check instantiates the package set it needs. The check is the overlaid package itself, named
+as the consumer names it:
 
 ```nix
-checks.${system}.overlay-payload =
+checks.${system} =
   let
     # The gate's throwaway set. This is where the payload's licence is accepted and where CUDA is
     # selected, and neither election reaches a consumer's package set.
@@ -663,16 +664,16 @@ checks.${system}.overlay-payload =
       overlays = [ self.overlays.default ];
     };
   in
-  checkPkgs.runCommand "overlay-payload" { } ''
-    test -x ${checkPkgs.es-de}/bin/es-de
-    touch $out
-  '';
+  {
+    formatting = orgFormatting.check;
+    inherit (checkPkgs) es-de;
+  };
 ```
 
-No machinery is involved -- it is an ordinary derivation in the family `nix flake check` builds --
-and the grant is inside the check, so the flake still accepts no licence on a consumer's behalf:
-the same overlay applied to a set that permits nothing unfree is refused as it was before. A check
-reaches a payload nested in another scope (`checkPkgs.cudaPackages.libcufile`, a
+No machinery is involved -- the check is an ordinary package in the family `nix flake check`
+builds -- and the grant is inside the check, so the flake still accepts no licence on a consumer's
+behalf: the same overlay applied to a set that permits nothing unfree is refused as it was before.
+A check reaches a payload nested in another scope (`checkPkgs.cudaPackages.libcufile`, a
 `pythonPackagesExtensions` member) as easily as a top-level one, because it is Nix and not a name
 lookup.
 

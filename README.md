@@ -665,8 +665,8 @@ checks.${system} =
     };
   in
   {
-    formatting = orgFormatting.check;
     inherit (checkPkgs) es-de;
+    formatting = orgFormatting.check;
   };
 ```
 

@@ -47,10 +47,6 @@ runs:
           fi
           printf '%s\n' REPO_NIX_CONF_EOF
         } >>"${GITHUB_ENV}"
-        if [[ -n ${fragment} ]]; then
-          printf 'this repository asks nix for:\n'
-          printf '%s\n' "${fragment}" | sed 's/^/  /'
-        fi
     # A step cannot test a command in its own condition, so the test is its own step and
     # the two steps that follow read its output.
     - id: nix

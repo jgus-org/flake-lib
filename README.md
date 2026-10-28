@@ -329,19 +329,7 @@ and fork pull requests without a token behave as before.
 
 A repository whose builds need a nix setting the runner does not default to publishes that setting
 in `.github/nix.conf`, a nix.conf fragment in git, and `.github/actions/nix` hands it to every later
-step through the job's `NIX_CONFIG`. That variable holds one value, so the step writing the fragment
-writes the `access-tokens` credential with it: two writers of one variable would leave a repository
-choosing between a settings file and a credential for its private inputs. It is a repository's
-declaration rather than a package's because what a build needs is rarely one package's to say, and it
-is a file rather than the flake's own `nixConfig` because nix reads that attribute only from the flake
-that roots a command: the gate's build step runs
-`nix run github:jgus-org/flake-lib/v1#build-packages`, so the flake at the root of that command is
-flake-lib's, and a setting published in the repository's flake never reaches the one command that
-builds the repository's packages. The fragment reaches every nix call in the job and changes no
-machine. A setting nix calls restricted -- `filter-syscalls` among them -- is honored only from a
-user nix trusts; where the runner's user is not one, nix warns that it is ignoring the request and
-keeps its own defaults. A setting that is not a derivation input moves no store path, so a repository
-that asks for one still shares a cache with one that asks for nothing.
+step through the job's `NIX_CONFIG`.
 
 ### Publication builds the tracked package
 

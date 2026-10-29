@@ -275,7 +275,7 @@ let
       target,
       wheelhouse,
     }:
-    ''uv pip install --python ${python}/bin/python --target ${target} --no-index --no-deps "${wheelhouse}"/*.whl'';
+    ''UV_SYSTEM_CERTS=0 uv pip install --python ${python}/bin/python --target ${target} --no-index --no-deps "${wheelhouse}"/*.whl'';
 
   # Manylinux wheels name a loader and shared libraries that exist on the machine that built
   # them and nowhere in the store, so an installed wheelhouse is only a valid store artifact

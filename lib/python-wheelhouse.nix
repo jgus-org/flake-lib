@@ -269,13 +269,17 @@ let
       "mkWheelhouse: noEmit names [${lib.concatStringsSep ", " unmatched}] match no wheel in the manifest; the exclusion had no effect."
       { inherit files wheelhouse; };
 
+  # nixpkgs wraps uv with `--set-default UV_SYSTEM_CERTS 1`, which has uv build its HTTP client
+  # from the system trust store even for an install of nothing but local wheels. A builder
+  # sandbox has no trust store (`SSL_CERT_FILE=/no-cert-file.crt`) and uv constructs the client
+  # before it reads the glob, so the install is left on uv's own compiled-in roots.
   installWheelhouse =
     {
       python,
       target,
       wheelhouse,
     }:
-    ''uv pip install --python ${python}/bin/python --target ${target} --no-index --no-deps "${wheelhouse}"/*.whl'';
+    ''UV_SYSTEM_CERTS=0 uv pip install --python ${python}/bin/python --target ${target} --no-index --no-deps "${wheelhouse}"/*.whl'';
 
   # Manylinux wheels name a loader and shared libraries that exist on the machine that built
   # them and nowhere in the store, so an installed wheelhouse is only a valid store artifact

@@ -146,7 +146,7 @@
         revalidate-hash = lib.mkRevalidateHash {
           inherit pkgs;
         };
-        # track="commit": default-branch HEAD becomes version 0-unstable-DATE.
+        # track="commit": default-branch HEAD becomes version 0.devDATE+gREV.
         update-version-github-commit = lib.mkUpdateVersion {
           inherit pkgs;
           source = {

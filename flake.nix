@@ -311,36 +311,36 @@
           pkgs.lib.throwIf (failures != [ ]) "defaultSystems tests failed" (
             pkgs.runCommand "default-systems-tests" { } "touch $out"
           );
-        source-package-tests =
+        python-package-tests =
           let
             failures = pkgs.lib.runTests (
-              import ./tests/source-package.nix {
+              import ./tests/python-package.nix {
                 inherit pkgs;
                 inherit (lib)
                   mkPypiPackage
-                  mkSourcePackage
+                  mkPythonPackage
                   ;
               }
             );
           in
-          pkgs.lib.throwIf (failures != [ ]) "mkSourcePackage tests failed" (
-            pkgs.runCommand "source-package-tests" { } "touch $out"
+          pkgs.lib.throwIf (failures != [ ]) "mkPythonPackage tests failed" (
+            pkgs.runCommand "python-package-tests" { } "touch $out"
           );
-        leaf-flake-tests =
+        python-flake-tests =
           let
             failures = pkgs.lib.runTests (
-              import ./tests/leaf-flake.nix {
+              import ./tests/python-flake.nix {
                 inherit
                   nixpkgs
                   pkgs
                   self
                   ;
-                inherit (lib) mkLeafFlake;
+                inherit (lib) mkPythonFlake;
               }
             );
           in
-          pkgs.lib.throwIf (failures != [ ]) "mkLeafFlake tests failed" (
-            pkgs.runCommand "leaf-flake-tests" { } "touch $out"
+          pkgs.lib.throwIf (failures != [ ]) "mkPythonFlake tests failed" (
+            pkgs.runCommand "python-flake-tests" { } "touch $out"
           );
         wheelhouse-tags-tests =
           let
@@ -1163,13 +1163,13 @@
             deps-core-tests
             eval-marker-tree-tests
             huggingface-model-manager-tests
-            leaf-flake-tests
+            python-flake-tests
+            python-package-tests
             python-wheelhouse-integration
             python-wheelhouse-no-emit-integration
             python-wheelhouse-site-tree-integration
             python-wheelhouse-site-tree-unpatched-import
             python-wheelhouse-tests
-            source-package-tests
             update-branches-tests
             version-matches-comparison-tests
             wheelhouse-consumer-selection-tests

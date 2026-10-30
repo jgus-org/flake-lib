@@ -1,8 +1,8 @@
-# Assembles a leaf flake's per-system outputs (package, update machinery, formatter) from a source/package/pin spec.
+# Assembles a python producer flake's per-system outputs (package, update machinery, formatter) from a source/package/pin spec.
 {
   eachDefaultSystem,
   mkFormatting,
-  mkSourcePackage,
+  mkPythonPackage,
   mkUpdateBranches,
   mkUpdateVersion,
 }:
@@ -29,7 +29,7 @@ eachDefaultSystem (
     pkgs = import nixpkgs {
       inherit overlays system;
     };
-    pkg = mkSourcePackage {
+    pkg = mkPythonPackage {
       inherit
         package
         pin

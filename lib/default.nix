@@ -7,10 +7,10 @@ let
     eachDefaultSystem
     eachSystem
     ;
-  mkSourcePackage = import ./mk-source-package.nix;
+  mkPythonPackage = import ./mk-python-package.nix;
   # The name this builder shipped under before it fetched GitHub trees too; the v1
   # family may not move an interface out from under a consumer.
-  mkPypiPackage = mkSourcePackage;
+  mkPypiPackage = mkPythonPackage;
   mkUpdateVersion = import ./mk-update-version.nix;
   mkUpdateBranches = import ./mk-update-branches.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
@@ -24,10 +24,10 @@ let
   formatting = import ./mk-formatting.nix {
     inherit nixpkgs treefmt-nix;
   };
-  mkLeafFlake = import ./mk-leaf-flake.nix {
+  mkPythonFlake = import ./mk-python-flake.nix {
     inherit
       eachDefaultSystem
-      mkSourcePackage
+      mkPythonPackage
       mkUpdateBranches
       mkUpdateVersion
       ;
@@ -72,11 +72,11 @@ in
     mkComposedHook
     mkHuggingFaceModelManager
     mkJsDepsHook
-    mkLeafFlake
     mkOciImage
     mkPypiPackage
+    mkPythonFlake
+    mkPythonPackage
     mkRevalidateHash
-    mkSourcePackage
     mkUpdateBranches
     mkUpdateVersion
     versionMatchesComparison

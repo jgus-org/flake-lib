@@ -10,7 +10,7 @@ branch. There is no copy-and-merge of scripts between repos.
 
 ```nix
 # High-level: one call is a whole producer flake.
-flake-lib.lib.mkLeafFlake {
+flake-lib.lib.mkPythonFlake {
   inherit self nixpkgs;  # `self` builds the org formatter, so it is required
   source  = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };  # pname = PyPI dist (underscore form)
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
@@ -19,13 +19,13 @@ flake-lib.lib.mkLeafFlake {
 # => packages.<system> = { <attr>; default; update-version; update-branches; }
 #    checks.<system>.formatting, formatter.<system>
 
-# A leaf written before the leaf published a formatter takes no `self` and composes
-# treefmt itself: add `inherit self`, delete that block, and the leaf is the flake.
+# A python producer written before this call published a formatter takes no `self` and
+# composes treefmt itself: add `inherit self`, delete that block, and one call is the flake.
 
-# A leaf built from the upstream source tree rather than a published distribution,
+# A python producer built from the upstream source tree rather than a published distribution,
 # resolving its dependencies through a sibling producer's overlay, and publishing its
 # payload as a check so the gate builds it:
-flake-lib.lib.mkLeafFlake {
+flake-lib.lib.mkPythonFlake {
   inherit self nixpkgs;
   overlays = [ fastmcp.overlays.default ];
   source = { type = "github"; owner = "utensils"; repo = "mcp-nixos"; };
@@ -41,7 +41,7 @@ flake-lib.lib.mkLeafFlake {
   extraChecks = { package, ... }: { inherit package; };
   updateBranches = { minimumTrackingVersion = "3.1.0"; };  # anything mkUpdateBranches takes
 }
-# `updateVersion` is the same pass-through for mkUpdateVersion. The leaf always publishes
+# `updateVersion` is the same pass-through for mkUpdateVersion. The call always publishes
 # the org formatter, so a repo carries no treefmt config and no treefmt-nix input.
 
 # The org-standard formatter, so a repo carries no treefmt config, no treefmt-nix input,
@@ -62,9 +62,9 @@ flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
-flake-lib.lib.mkSourcePackage  { pkgs; source; package; pin; }   # a python package or application from PyPI or a GitHub source tree
+flake-lib.lib.mkPythonPackage  { pkgs; source; package; pin; }   # a python package or application from PyPI or a GitHub source tree
 # mkPypiPackage is this builder under the name it shipped with before it fetched GitHub
-# trees; new consumers call mkSourcePackage. The alias leaves with the next API family.
+# trees; new consumers call mkPythonPackage. The alias leaves with the next API family.
 flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }

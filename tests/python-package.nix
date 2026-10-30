@@ -1,6 +1,6 @@
 {
   mkPypiPackage,
-  mkSourcePackage,
+  mkPythonPackage,
   pkgs,
 }:
 let
@@ -19,7 +19,7 @@ let
     repo = "six";
     type = "github";
   };
-  build = spec: mkSourcePackage (spec // { inherit pkgs; });
+  build = spec: mkPythonPackage (spec // { inherit pkgs; });
   fromPypi =
     format:
     (build {

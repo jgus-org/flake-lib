@@ -1,6 +1,6 @@
 {
   self,
-  mkLeafFlake,
+  mkPythonFlake,
   nixpkgs,
   pkgs,
 }:
@@ -15,9 +15,9 @@ let
     pname = "six";
     type = "pypi";
   };
-  leaf =
+  producer =
     extra:
-    mkLeafFlake (
+    mkPythonFlake (
       {
         inherit
           nixpkgs
@@ -48,7 +48,7 @@ in
     expected = true;
     expr =
       builtins.any (d: versionOf d == "999.0")
-        (leaf { overlays = [ overlaidSix ]; }).packages.${system}.six.propagatedBuildInputs;
+        (producer { overlays = [ overlaidSix ]; }).packages.${system}.six.propagatedBuildInputs;
   };
   testBranchesFalseLeavesTheBranchUpdaterOut = {
     expected = [
@@ -56,18 +56,18 @@ in
       "six"
       "update-version"
     ];
-    expr = builtins.attrNames (leaf { branches = false; }).packages.${system};
+    expr = builtins.attrNames (producer { branches = false; }).packages.${system};
   };
   testComputingTheOutputsNeverForcesSelf =
     let
-      poisoned = leaf {
-        self.outPath = throw "the leaf forced self while computing the outputs it defines";
+      poisoned = producer {
+        self.outPath = throw "this flake forced self while computing the outputs it defines";
       };
     in
     {
       expected = true;
       expr =
-        poisoned.packages.${system}.six.drvPath == (leaf { }).packages.${system}.six.drvPath
+        poisoned.packages.${system}.six.drvPath == (producer { }).packages.${system}.six.drvPath
         && (poisoned.checks.${system} ? formatting)
         && (poisoned ? formatter);
     };
@@ -77,7 +77,7 @@ in
       "payload"
     ];
     expr = builtins.attrNames (
-      (leaf {
+      (producer {
         inherit self;
         extraChecks = { package, ... }: { payload = package; };
       }).checks.${system}
@@ -86,35 +86,36 @@ in
   testTheBranchUpdaterTakesItsOptionsThrough = {
     expected = false;
     expr =
-      (leaf { updateBranches.minimumTrackingVersion = "9.9.9"; })
-      .packages.${system}.update-branches.drvPath == (leaf { })
+      (producer { updateBranches.minimumTrackingVersion = "9.9.9"; })
+      .packages.${system}.update-branches.drvPath == (producer { })
       .packages.${system}.update-branches.drvPath;
   };
-  testTheLeafPublishesTheFormatter = {
+  testTheProducerPublishesTheFormatter = {
     expected = true;
-    expr = (leaf { }).formatter.${system} != null;
+    expr = (producer { }).formatter.${system} != null;
   };
-  testTheLeafPublishesThePackageUnderItsAttrAndAsDefault = {
+  testTheProducerPublishesThePackageUnderItsAttrAndAsDefault = {
     expected = true;
     expr =
       let
-        packages = (leaf { }).packages.${system};
+        packages = (producer { }).packages.${system};
       in
       packages.default.drvPath == packages.six.drvPath;
   };
-  testTheLeafPublishesTheUpdaters = {
+  testTheProducerPublishesTheUpdaters = {
     expected = [
       "default"
       "six"
       "update-branches"
       "update-version"
     ];
-    expr = builtins.attrNames (leaf { }).packages.${system};
+    expr = builtins.attrNames (producer { }).packages.${system};
   };
   testTheVersionUpdaterTakesItsOptionsThrough = {
     expected = false;
     expr =
-      (leaf { updateVersion.extraHashes = [ "otherHash" ]; }).packages.${system}.update-version.drvPath
-      == (leaf { }).packages.${system}.update-version.drvPath;
+      (producer { updateVersion.extraHashes = [ "otherHash" ]; })
+      .packages.${system}.update-version.drvPath == (producer { })
+      .packages.${system}.update-version.drvPath;
   };
 }

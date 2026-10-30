@@ -1,31 +1,34 @@
-# Assembles a leaf flake's per-system outputs (package, update-version, optional update-branches) from a source/package/pin spec.
+# Assembles a leaf flake's per-system outputs (package, update machinery, formatter) from a source/package/pin spec.
 {
   eachDefaultSystem,
+  mkFormatting,
   mkSourcePackage,
   mkUpdateBranches,
   mkUpdateVersion,
 }:
 {
-  branchOwnedFiles ? [
-    "pin.nix"
-    "flake.lock"
-    "requirements.in"
-    "requirements-*.lock"
-    "wheels-*.json"
-    "python-readiness.json"
-  ],
+  self ? null,
+  branchOwnedFiles ? null,
   branches ? true,
+  excludes ? [ ],
+  extraChecks ? _: { },
   nixpkgs,
+  overlays ? [ ],
   package,
   pin,
   siblingRefsInPin ? false,
   siblings ? [ ],
   source,
+  updateBranches ? { },
+  updateVersion ? { },
 }:
 eachDefaultSystem (
   system:
   let
-    pkgs = import nixpkgs { inherit system; };
+    inherit (nixpkgs.lib) optionalAttrs;
+    pkgs = import nixpkgs {
+      inherit overlays system;
+    };
     pkg = mkSourcePackage {
       inherit
         package
@@ -34,30 +37,51 @@ eachDefaultSystem (
         source
         ;
     };
-    pinSchema = if source.type == "pypi" then "pypi" else "github";
-    update-version = mkUpdateVersion {
+    pinSchema = if (source.type or "pypi") == "pypi" then "pypi" else "github";
+    update-version = mkUpdateVersion (
+      {
+        inherit
+          pkgs
+          siblingRefsInPin
+          siblings
+          source
+          ;
+      }
+      // updateVersion
+    );
+    update-branches = mkUpdateBranches (
+      {
+        inherit
+          pinSchema
+          pkgs
+          source
+          ;
+      }
+      // optionalAttrs (branchOwnedFiles != null) { inherit branchOwnedFiles; }
+      // updateBranches
+    );
+    formatting = mkFormatting {
       inherit
-        pkgs
-        siblingRefsInPin
-        siblings
-        source
+        excludes
+        self
+        system
         ;
     };
-    update-branches = mkUpdateBranches {
-      inherit
-        branchOwnedFiles
-        pinSchema
-        pkgs
-        source
-        ;
-    };
+    hasFormatting = self != null;
   in
   {
+    checks =
+      (extraChecks {
+        inherit pkgs system;
+        package = pkg;
+      })
+      // optionalAttrs hasFormatting { formatting = formatting.check; };
     packages = {
       inherit update-version;
       ${package.attr} = pkg;
       default = pkg;
     }
-    // pkgs.lib.optionalAttrs branches { inherit update-branches; };
+    // optionalAttrs branches { inherit update-branches; };
   }
+  // optionalAttrs hasFormatting { formatter = formatting.formatter; }
 )

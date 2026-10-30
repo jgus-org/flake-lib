@@ -20,6 +20,10 @@ let
   mkOciImage = import ./mk-oci-image.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
+  pythonWheelhouse = import ./python-wheelhouse.nix;
+  formatting = import ./mk-formatting.nix {
+    inherit nixpkgs treefmt-nix;
+  };
   mkLeafFlake = import ./mk-leaf-flake.nix {
     inherit
       eachDefaultSystem
@@ -27,10 +31,7 @@ let
       mkUpdateBranches
       mkUpdateVersion
       ;
-  };
-  pythonWheelhouse = import ./python-wheelhouse.nix;
-  formatting = import ./mk-formatting.nix {
-    inherit nixpkgs treefmt-nix;
+    inherit (formatting) mkFormatting;
   };
   depsCore = ../scripts/deps_core.py;
 

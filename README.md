@@ -9,22 +9,36 @@ branch. There is no copy-and-merge of scripts between repos.
 ## API (`flake-lib.lib`)
 
 ```nix
-# High-level: a simple PyPI leaf collapses to one call.
+# High-level: one call is a whole producer flake.
 flake-lib.lib.mkLeafFlake {
-  inherit nixpkgs;
+  inherit self nixpkgs;  # `self` installs the org formatter: formatter + checks.formatting
   source  = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };  # pname = PyPI dist (underscore form)
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
   pin     = import ./pin.nix;
 }
-# => packages.<system> = { <attr>; update-version; update-branches; default; }
+# => packages.<system> = { <attr>; default; update-version; update-branches; }
+#    checks.<system>.formatting, formatter.<system>
 
-# A leaf built from the upstream source tree instead of a published distribution.
+# A leaf built from the upstream source tree rather than a published distribution,
+# resolving its dependencies through a sibling producer's overlay, and publishing its
+# payload as a check so the gate builds it:
 flake-lib.lib.mkLeafFlake {
-  inherit nixpkgs;
-  source  = { type = "github"; owner = "utensils"; repo = "mcp-nixos"; };
-  package = { attr = "mcp-nixos"; kind = "pythonApplication"; buildSystem = p: [ p.hatchling ]; description = "..."; };
-  pin     = import ./pin.nix;   # { version; sourceRev; sourceHash; }
+  inherit self nixpkgs;
+  overlays = [ fastmcp.overlays.default ];
+  source = { type = "github"; owner = "utensils"; repo = "mcp-nixos"; };
+  package = {
+    attr = "mcp-nixos";
+    kind = "pythonApplication";
+    buildSystem = p: [ p.hatchling ];
+    dependencies = p: [ p.beautifulsoup4 p.fastmcp p.requests ];
+    extra = { doCheck = true; };  # upstream's suite is the gate
+  };
+  pin = import ./pin.nix;  # { version; sourceRev; sourceHash; }
+  extraChecks = { package, ... }: { inherit package; };
+  updateBranches = { minimumTrackingVersion = "3.1.0"; };  # anything mkUpdateBranches takes
 }
+# `updateVersion` is the same pass-through for mkUpdateVersion. Without `self` the leaf
+# publishes no formatter, so a repo that formats another way keeps its own wiring.
 
 # The org-standard formatter, so a repo carries no treefmt config, no treefmt-nix input,
 # and no formatter config files of its own.
@@ -45,7 +59,8 @@ flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
 flake-lib.lib.mkSourcePackage  { pkgs; source; package; pin; }   # a python package or application from PyPI or a GitHub source tree
-flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }   # the same builder under its original name
+# mkPypiPackage is this builder under the name it shipped with before it fetched GitHub
+# trees; new consumers call mkSourcePackage. The alias leaves with the next API family.
 flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
@@ -234,7 +249,7 @@ The client declares only its requirements source:
 wheelhouse = flake-lib.lib.mkPythonWheelhouse {
   inherit pkgs;
   sources = [
-    { kind = "source-pyproject"; groups = [ "studio" ]; buildSystem = false; }
+    { kind = "source-pyproject"; groups = [ "studio" ]; buildSystemRequires = false; }
     { kind = "source-file"; path = "backend/requirements/studio.txt"; }
     { kind = "repo-file"; path = "requirements.in"; }
   ];
@@ -243,7 +258,7 @@ wheelhouse = flake-lib.lib.mkPythonWheelhouse {
 ```
 
 `source-pyproject` and `source-file` read the pinned upstream source (cloned at
-`NEW_REV`; `buildSystem` appends the pyproject's build-system requires);
+`NEW_REV`; `buildSystemRequires` appends the pyproject's build-system requires);
 `repo-file` reads the consumer's own repository. Requirements are merged in
 order, deduplicated, resolved per environment with `uv pip compile
 --generate-hashes`, fetched with `pip download --require-hashes --only-binary

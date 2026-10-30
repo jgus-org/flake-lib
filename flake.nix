@@ -326,6 +326,22 @@
           pkgs.lib.throwIf (failures != [ ]) "mkSourcePackage tests failed" (
             pkgs.runCommand "source-package-tests" { } "touch $out"
           );
+        leaf-flake-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/leaf-flake.nix {
+                inherit
+                  nixpkgs
+                  pkgs
+                  self
+                  ;
+                inherit (lib) mkLeafFlake;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "mkLeafFlake tests failed" (
+            pkgs.runCommand "leaf-flake-tests" { } "touch $out"
+          );
         wheelhouse-tags-tests =
           let
             failures = pkgs.lib.runTests (import ./tests/wheelhouse-tags.nix { inherit (lib) platformTags; });
@@ -1147,6 +1163,7 @@
             deps-core-tests
             eval-marker-tree-tests
             huggingface-model-manager-tests
+            leaf-flake-tests
             python-wheelhouse-integration
             python-wheelhouse-no-emit-integration
             python-wheelhouse-site-tree-integration

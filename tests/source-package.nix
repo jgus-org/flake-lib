@@ -53,6 +53,20 @@ let
   };
 in
 {
+  testExtraAsAFunctionResolvesInThePythonSet = {
+    expected = true;
+    expr =
+      let
+        pkg = githubPackage {
+          package = {
+            attr = "six";
+            dependencies = p: [ p.requests ];
+            extra = p: { buildInputs = [ p.requests ]; };
+          };
+        };
+      in
+      builtins.elem (builtins.head pkg.propagatedBuildInputs) pkg.buildInputs;
+  };
   testExtraOverridesTheGeneratedAttributes = {
     expected = [ "six" ];
     expr =

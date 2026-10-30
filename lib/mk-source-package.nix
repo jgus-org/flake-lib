@@ -18,6 +18,8 @@ let
 
   deps = (package.dependencies or (_: [ ])) ps;
   meta = (lib.optionalAttrs (description != "") { inherit description; }) // (package.meta or { });
+  extra =
+    if builtins.isFunction (package.extra or { }) then (package.extra ps) else (package.extra or { });
 
   # `mkUpdateVersion` writes the artifact hash as `hash` for a PyPI release and as
   # `sourceHash` beside `sourceRev` for a GitHub tree, because only the latter has a
@@ -67,5 +69,5 @@ builder (
   // srcAttrs
   // lib.optionalAttrs (deps != [ ]) { dependencies = deps; }
   // lib.optionalAttrs (meta != { }) { inherit meta; }
-  // (package.extra or { })
+  // extra
 )

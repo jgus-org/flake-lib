@@ -7,7 +7,7 @@
   mkUpdateVersion,
 }:
 {
-  self ? null,
+  self,
   branchOwnedFiles ? null,
   branches ? true,
   excludes ? [ ],
@@ -67,7 +67,6 @@ eachDefaultSystem (
         system
         ;
     };
-    hasFormatting = self != null;
   in
   {
     checks =
@@ -75,7 +74,10 @@ eachDefaultSystem (
         inherit pkgs system;
         package = pkg;
       })
-      // optionalAttrs hasFormatting { formatting = formatting.check; };
+      // {
+        formatting = formatting.check;
+      };
+    formatter = formatting.formatter;
     packages = {
       inherit update-version;
       ${package.attr} = pkg;
@@ -83,5 +85,4 @@ eachDefaultSystem (
     }
     // optionalAttrs branches { inherit update-branches; };
   }
-  // optionalAttrs hasFormatting { formatter = formatting.formatter; }
 )

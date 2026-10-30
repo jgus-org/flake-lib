@@ -31,14 +31,14 @@ flake-lib.lib.mkLeafFlake {
     kind = "pythonApplication";
     buildSystem = p: [ p.hatchling ];
     dependencies = p: [ p.beautifulsoup4 p.fastmcp p.requests ];
-    extra = { doCheck = true; };  # upstream's suite is the gate
+    extra = p: { doCheck = true; nativeCheckInputs = [ p.pytestCheckHook ]; };  # attrs, or p -> attrs over the python set
   };
   pin = import ./pin.nix;  # { version; sourceRev; sourceHash; }
   extraChecks = { package, ... }: { inherit package; };
   updateBranches = { minimumTrackingVersion = "3.1.0"; };  # anything mkUpdateBranches takes
 }
-# `updateVersion` is the same pass-through for mkUpdateVersion. Without `self` the leaf
-# publishes no formatter, so a repo that formats another way keeps its own wiring.
+# `updateVersion` is the same pass-through for mkUpdateVersion. The leaf always publishes
+# the org formatter, so a repo carries no treefmt config and no treefmt-nix input.
 
 # The org-standard formatter, so a repo carries no treefmt config, no treefmt-nix input,
 # and no formatter config files of its own.

@@ -19,7 +19,12 @@ let
     extra:
     mkLeafFlake (
       {
-        inherit nixpkgs pin source;
+        inherit
+          nixpkgs
+          pin
+          self
+          source
+          ;
         package = {
           attr = "six";
           dependencies = p: [ p.six ];
@@ -53,6 +58,19 @@ in
     ];
     expr = builtins.attrNames (leaf { branches = false; }).packages.${system};
   };
+  testComputingTheOutputsNeverForcesSelf =
+    let
+      poisoned = leaf {
+        self.outPath = throw "the leaf forced self while computing the outputs it defines";
+      };
+    in
+    {
+      expected = true;
+      expr =
+        poisoned.packages.${system}.six.drvPath == (leaf { }).packages.${system}.six.drvPath
+        && (poisoned.checks.${system} ? formatting)
+        && (poisoned ? formatter);
+    };
   testExtraChecksMergeWithTheFormatterCheck = {
     expected = [
       "formatting"
@@ -72,19 +90,9 @@ in
       .packages.${system}.update-branches.drvPath == (leaf { })
       .packages.${system}.update-branches.drvPath;
   };
-  testTheFormatterArrivesWithSelfAndGoesWithoutIt = {
-    expected = {
-      withFormatter = [ "formatting" ];
-      without = [ ];
-    };
-    expr = {
-      withFormatter = builtins.attrNames (leaf { inherit self; }).checks.${system};
-      without = builtins.attrNames (leaf { }).checks.${system};
-    };
-  };
-  testTheLeafPublishesTheFormatterItself = {
+  testTheLeafPublishesTheFormatter = {
     expected = true;
-    expr = (leaf { inherit self; }).formatter.${system} != null;
+    expr = (leaf { }).formatter.${system} != null;
   };
   testTheLeafPublishesThePackageUnderItsAttrAndAsDefault = {
     expected = true;

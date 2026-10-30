@@ -11,13 +11,16 @@ branch. There is no copy-and-merge of scripts between repos.
 ```nix
 # High-level: one call is a whole producer flake.
 flake-lib.lib.mkLeafFlake {
-  inherit self nixpkgs;  # `self` installs the org formatter: formatter + checks.formatting
+  inherit self nixpkgs;  # `self` builds the org formatter, so it is required
   source  = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };  # pname = PyPI dist (underscore form)
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
   pin     = import ./pin.nix;
 }
 # => packages.<system> = { <attr>; default; update-version; update-branches; }
 #    checks.<system>.formatting, formatter.<system>
+
+# A leaf written before the leaf published a formatter takes no `self` and composes
+# treefmt itself: add `inherit self`, delete that block, and the leaf is the flake.
 
 # A leaf built from the upstream source tree rather than a published distribution,
 # resolving its dependencies through a sibling producer's overlay, and publishing its

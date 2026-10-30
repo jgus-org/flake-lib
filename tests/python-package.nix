@@ -135,4 +135,24 @@ in
     expected = (build sdistSpec).drvPath;
     expr = (mkPypiPackage (sdistSpec // { inherit pkgs; })).drvPath;
   };
+  testWheelSourceRefusesABuildSystem = {
+    expected = {
+      success = false;
+      value = false;
+    };
+    expr = builtins.tryEval (
+      (build {
+        package = {
+          attr = "six";
+          buildSystem = p: [ p.setuptools ];
+        };
+        pin = pypiPin;
+        source = {
+          format = "wheel";
+          pname = "six";
+          type = "pypi";
+        };
+      }).drvPath
+    );
+  };
 }

@@ -51,18 +51,23 @@ let
         }
       )
     else if format == "wheel" then
-      {
-        format = "wheel";
-        # Universal wheel. fetchPypi's `dist` (URL path segment) and `python` (filename tag) both default to py2.py3; a py3-none-any wheel needs both set to py3, else the path 404s. Platform-specific wheels aren't covered here.
-        src = ps.fetchPypi {
-          inherit version;
-          dist = "py3";
-          format = "wheel";
-          hash = pin.hash;
-          pname = source.pname;
-          python = "py3";
-        };
-      }
+      (
+        if package ? buildSystem then
+          throw "mkPythonPackage: recipe '${package.attr}' names buildSystem for a wheel source, and a wheel is installed rather than built — no build-system reaches the derivation"
+        else
+          {
+            format = "wheel";
+            # Universal wheel. fetchPypi's `dist` (URL path segment) and `python` (filename tag) both default to py2.py3; a py3-none-any wheel needs both set to py3, else the path 404s. Platform-specific wheels aren't covered here.
+            src = ps.fetchPypi {
+              inherit version;
+              dist = "py3";
+              format = "wheel";
+              hash = pin.hash;
+              pname = source.pname;
+              python = "py3";
+            };
+          }
+      )
     else
       builtFromSource (
         ps.fetchPypi {

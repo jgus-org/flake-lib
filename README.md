@@ -31,7 +31,8 @@ flake-lib.lib.mkLeafFlake {
     kind = "pythonApplication";
     buildSystem = p: [ p.hatchling ];
     dependencies = p: [ p.beautifulsoup4 p.fastmcp p.requests ];
-    extra = p: { doCheck = true; nativeCheckInputs = [ p.pytestCheckHook ]; };  # attrs, or p -> attrs over the python set
+    # attrs, or p -> attrs over the python set, or p -> pkgs -> attrs when a check input is not a python package
+    extra = p: { doCheck = true; nativeCheckInputs = [ p.pytestCheckHook ]; };
   };
   pin = import ./pin.nix;  # { version; sourceRev; sourceHash; }
   extraChecks = { package, ... }: { inherit package; };

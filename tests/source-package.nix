@@ -67,6 +67,21 @@ in
       in
       builtins.elem (builtins.head pkg.propagatedBuildInputs) pkg.buildInputs;
   };
+  testExtraAsTwoArgumentsNamesTheFlakesOwnSet = {
+    expected = true;
+    expr =
+      let
+        pkg = githubPackage {
+          package = {
+            attr = "six";
+            extra = p: outer: {
+              buildInputs = [ outer.iana-etc ];
+            };
+          };
+        };
+      in
+      builtins.elem "iana-etc" (names pkg.buildInputs);
+  };
   testExtraOverridesTheGeneratedAttributes = {
     expected = [ "six" ];
     expr =

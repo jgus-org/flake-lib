@@ -18,6 +18,14 @@ flake-lib.lib.mkLeafFlake {
 }
 # => packages.<system> = { <attr>; update-version; update-branches; default; }
 
+# A leaf built from the upstream source tree instead of a published distribution.
+flake-lib.lib.mkLeafFlake {
+  inherit nixpkgs;
+  source  = { type = "github"; owner = "utensils"; repo = "mcp-nixos"; };
+  package = { attr = "mcp-nixos"; kind = "pythonApplication"; buildSystem = p: [ p.hatchling ]; description = "..."; };
+  pin     = import ./pin.nix;   # { version; sourceRev; sourceHash; }
+}
+
 # The org-standard formatter, so a repo carries no treefmt config, no treefmt-nix input,
 # and no formatter config files of its own.
 flake-lib.lib.mkFormatting {
@@ -36,7 +44,8 @@ flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
-flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
+flake-lib.lib.mkSourcePackage  { pkgs; source; package; pin; }   # a python package or application from PyPI or a GitHub source tree
+flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }   # the same builder under its original name
 flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }

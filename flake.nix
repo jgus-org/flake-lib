@@ -311,6 +311,21 @@
           pkgs.lib.throwIf (failures != [ ]) "defaultSystems tests failed" (
             pkgs.runCommand "default-systems-tests" { } "touch $out"
           );
+        source-package-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/source-package.nix {
+                inherit pkgs;
+                inherit (lib)
+                  mkPypiPackage
+                  mkSourcePackage
+                  ;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "mkSourcePackage tests failed" (
+            pkgs.runCommand "source-package-tests" { } "touch $out"
+          );
         wheelhouse-tags-tests =
           let
             failures = pkgs.lib.runTests (import ./tests/wheelhouse-tags.nix { inherit (lib) platformTags; });
@@ -1137,6 +1152,7 @@
             python-wheelhouse-site-tree-integration
             python-wheelhouse-site-tree-unpatched-import
             python-wheelhouse-tests
+            source-package-tests
             update-branches-tests
             version-matches-comparison-tests
             wheelhouse-consumer-selection-tests

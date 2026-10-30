@@ -7,7 +7,10 @@ let
     eachDefaultSystem
     eachSystem
     ;
-  mkPypiPackage = import ./mk-pypi-package.nix;
+  mkSourcePackage = import ./mk-source-package.nix;
+  # The name this builder shipped under before it fetched GitHub trees too; the v1
+  # family may not move an interface out from under a consumer.
+  mkPypiPackage = mkSourcePackage;
   mkUpdateVersion = import ./mk-update-version.nix;
   mkUpdateBranches = import ./mk-update-branches.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
@@ -20,7 +23,7 @@ let
   mkLeafFlake = import ./mk-leaf-flake.nix {
     inherit
       eachDefaultSystem
-      mkPypiPackage
+      mkSourcePackage
       mkUpdateBranches
       mkUpdateVersion
       ;
@@ -72,6 +75,7 @@ in
     mkOciImage
     mkPypiPackage
     mkRevalidateHash
+    mkSourcePackage
     mkUpdateBranches
     mkUpdateVersion
     versionMatchesComparison

@@ -1,7 +1,7 @@
 # Assembles a leaf flake's per-system outputs (package, update-version, optional update-branches) from a source/package/pin spec.
 {
   eachDefaultSystem,
-  mkPypiPackage,
+  mkSourcePackage,
   mkUpdateBranches,
   mkUpdateVersion,
 }:
@@ -26,7 +26,7 @@ eachDefaultSystem (
   system:
   let
     pkgs = import nixpkgs { inherit system; };
-    pkg = mkPypiPackage {
+    pkg = mkSourcePackage {
       inherit
         package
         pin

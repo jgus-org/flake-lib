@@ -18,6 +18,7 @@ let
   mkComposedHook = import ./mk-composed-hook.nix;
   mkHuggingFaceModelManager = import ./mk-huggingface-model-manager.nix;
   mkOciImage = import ./mk-oci-image.nix;
+  mkWheelPackages = import ./mk-wheel-packages.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   pythonWheelhouse = import ./python-wheelhouse.nix;
@@ -79,6 +80,7 @@ in
     mkRevalidateHash
     mkUpdateBranches
     mkUpdateVersion
+    mkWheelPackages
     versionMatchesComparison
     warnIfNewerMajor
     ;

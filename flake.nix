@@ -342,6 +342,18 @@
           pkgs.lib.throwIf (failures != [ ]) "mkPythonFlake tests failed" (
             pkgs.runCommand "python-flake-tests" { } "touch $out"
           );
+        wheel-packages-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/wheel-packages.nix {
+                inherit pkgs;
+                inherit (lib) mkWheelPackages;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "mkWheelPackages tests failed" (
+            pkgs.runCommand "wheel-packages-tests" { } "touch $out"
+          );
         wheelhouse-tags-tests =
           let
             failures = pkgs.lib.runTests (import ./tests/wheelhouse-tags.nix { inherit (lib) platformTags; });
@@ -1172,6 +1184,7 @@
             python-wheelhouse-tests
             update-branches-tests
             version-matches-comparison-tests
+            wheel-packages-tests
             wheelhouse-consumer-selection-tests
             wheelhouse-environment-tests
             wheelhouse-fingerprint-tests

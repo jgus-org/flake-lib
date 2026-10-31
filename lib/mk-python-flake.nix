@@ -25,7 +25,6 @@
 eachDefaultSystem (
   system:
   let
-    inherit (nixpkgs.lib) optionalAttrs;
     pkgs = import nixpkgs {
       inherit overlays system;
     };
@@ -57,7 +56,9 @@ eachDefaultSystem (
           source
           ;
       }
-      // optionalAttrs (branchOwnedFiles != null) { inherit branchOwnedFiles; }
+      // nixpkgs.lib.optionalAttrs (branchOwnedFiles != null) {
+        inherit branchOwnedFiles;
+      }
       // updateBranches
     );
     formatting = mkFormatting {
@@ -83,6 +84,6 @@ eachDefaultSystem (
       ${package.attr} = pkg;
       default = pkg;
     }
-    // optionalAttrs branches { inherit update-branches; };
+    // nixpkgs.lib.optionalAttrs branches { inherit update-branches; };
   }
 )

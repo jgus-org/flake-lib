@@ -6,9 +6,7 @@
   source,
 }:
 let
-  inherit (pkgs) lib;
   ps = pkgs.python3Packages;
-  inherit (pin) version;
 
   kind = package.kind or "pythonPackage";
   builder = if kind == "pythonApplication" then ps.buildPythonApplication else ps.buildPythonPackage;
@@ -29,7 +27,8 @@ let
       value;
 
   deps = inSets (package.dependencies or [ ]);
-  meta = (lib.optionalAttrs (description != "") { inherit description; }) // (package.meta or { });
+  meta =
+    (pkgs.lib.optionalAttrs (description != "") { inherit description; }) // (package.meta or { });
   extra = inSets (package.extra or { });
   buildSystem = inSets (package.buildSystem or (p: [ p.setuptools ]));
 
@@ -59,32 +58,32 @@ let
             format = "wheel";
             # Universal wheel. fetchPypi's `dist` (URL path segment) and `python` (filename tag) both default to py2.py3; a py3-none-any wheel needs both set to py3, else the path 404s. Platform-specific wheels aren't covered here.
             src = ps.fetchPypi {
-              inherit version;
               dist = "py3";
               format = "wheel";
               hash = pin.hash;
               pname = source.pname;
               python = "py3";
+              version = pin.version;
             };
           }
       )
     else
       builtFromSource (
         ps.fetchPypi {
-          inherit version;
           hash = pin.hash;
           pname = source.pname;
+          version = pin.version;
         }
       );
 in
 builder (
   {
-    inherit version;
     doCheck = false;
     pname = package.attr;
+    version = pin.version;
   }
   // srcAttrs
-  // lib.optionalAttrs (deps != [ ]) { dependencies = deps; }
-  // lib.optionalAttrs (meta != { }) { inherit meta; }
+  // pkgs.lib.optionalAttrs (deps != [ ]) { dependencies = deps; }
+  // pkgs.lib.optionalAttrs (meta != { }) { inherit meta; }
   // extra
 )

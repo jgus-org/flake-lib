@@ -146,7 +146,7 @@
         revalidate-hash = lib.mkRevalidateHash {
           inherit pkgs;
         };
-        # track="commit": default-branch HEAD becomes version 0-unstable-DATE.
+        # track="commit": default-branch HEAD becomes version 0.devDATE+gREV.
         update-version-github-commit = lib.mkUpdateVersion {
           inherit pkgs;
           source = {
@@ -310,6 +310,49 @@
           in
           pkgs.lib.throwIf (failures != [ ]) "defaultSystems tests failed" (
             pkgs.runCommand "default-systems-tests" { } "touch $out"
+          );
+        python-package-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/python-package.nix {
+                inherit pkgs;
+                inherit (lib)
+                  mkPypiPackage
+                  mkPythonPackage
+                  ;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "mkPythonPackage tests failed" (
+            pkgs.runCommand "python-package-tests" { } "touch $out"
+          );
+        python-flake-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/python-flake.nix {
+                inherit
+                  nixpkgs
+                  pkgs
+                  self
+                  ;
+                inherit (lib) mkPythonFlake;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "mkPythonFlake tests failed" (
+            pkgs.runCommand "python-flake-tests" { } "touch $out"
+          );
+        wheel-packages-tests =
+          let
+            failures = pkgs.lib.runTests (
+              import ./tests/wheel-packages.nix {
+                inherit pkgs;
+                inherit (lib) mkWheelPackages;
+              }
+            );
+          in
+          pkgs.lib.throwIf (failures != [ ]) "mkWheelPackages tests failed" (
+            pkgs.runCommand "wheel-packages-tests" { } "touch $out"
           );
         wheelhouse-tags-tests =
           let
@@ -1132,6 +1175,8 @@
             deps-core-tests
             eval-marker-tree-tests
             huggingface-model-manager-tests
+            python-flake-tests
+            python-package-tests
             python-wheelhouse-integration
             python-wheelhouse-no-emit-integration
             python-wheelhouse-site-tree-integration
@@ -1139,6 +1184,7 @@
             python-wheelhouse-tests
             update-branches-tests
             version-matches-comparison-tests
+            wheel-packages-tests
             wheelhouse-consumer-selection-tests
             wheelhouse-environment-tests
             wheelhouse-fingerprint-tests

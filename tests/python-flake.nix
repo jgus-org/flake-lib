@@ -97,6 +97,25 @@ in
       }).packages.${system}.six.drvPath
     );
   };
+  testAnArtifactHookWrittenAsAFunctionOfTheSetIsBuiltWithIt = {
+    expected = true;
+    expr =
+      let
+        hook =
+          { pkgs, ... }:
+          pkgs.writeShellApplication {
+            name = "artifact-hook";
+            text = "true";
+          };
+        updaterOf =
+          artifactHook:
+          (packagesProducer { updateVersion.artifactHook = artifactHook; })
+          .packages.${system}.update-version.drvPath;
+      in
+      updaterOf hook == updaterOf (hook {
+        pkgs = import nixpkgs { inherit system; };
+      });
+  };
   testAnOverlayOnlyAttributeIsPublishedAndChecked = {
     expected = {
       checks = [

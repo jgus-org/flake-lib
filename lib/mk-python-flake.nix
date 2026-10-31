@@ -118,6 +118,12 @@ in
     formatting = mkFormatting {
       inherit excludes self system;
     };
+    # An artifact hook is a built executable, so one taken from the deployment's set arrives as a function of it.
+    updaterArgs =
+      updateVersion
+      // optionalAttrs (builtins.isFunction (updateVersion.artifactHook or null)) {
+        artifactHook = updateVersion.artifactHook { inherit pkgs; };
+      };
     update-version = mkUpdateVersion (
       {
         inherit
@@ -127,7 +133,7 @@ in
           source
           ;
       }
-      // updateVersion
+      // updaterArgs
     );
     update-branches = mkUpdateBranches (
       {

@@ -23,9 +23,20 @@ let
   stamp =
     builder: recipe:
     let
-      guarded = if (pinned.format or "") == "wheel" then forbidBuild recipe else recipe;
+      wheel = (pinned.format or "") == "wheel";
+      guarded = if wheel then forbidBuild recipe else recipe;
+      # nixpkgs refuses to guess how a recipe builds; a recipe that says nothing gets the fleet's answer, and one that says `format` keeps its own answer.
+      statesItsBuild = builtins.any (key: guarded ? ${key}) (buildKeys ++ [ "format" ]);
+      buildDefault =
+        if wheel || statesItsBuild then
+          { }
+        else
+          {
+            build-system = [ python.setuptools ];
+            pyproject = true;
+          };
     in
-    builder (({ doCheck = false; } // guarded) // pinned);
+    builder ((({ doCheck = false; } // buildDefault) // guarded) // pinned);
 in
 {
   buildApplication = stamp python.buildPythonApplication;

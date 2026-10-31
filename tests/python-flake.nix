@@ -6,49 +6,109 @@
 }:
 let
   system = "x86_64-linux";
-  pin = {
-    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    version = "1.17.0";
-  };
-  source = {
-    format = "sdist";
+
+  fakeSha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+  pypi = {
+    pin = {
+      hash = fakeSha256;
+      version = "1.17.0";
+    };
     pname = "six";
     type = "pypi";
   };
+
+  packagesPayload =
+    { buildPackage, python, ... }:
+    {
+      six = buildPackage {
+        dependencies = [ python.requests ];
+        pname = "six";
+      };
+    };
+
+  bumpPayload =
+    { python, ... }:
+    {
+      six = python.six.overridePythonAttrs (_: {
+        version = "999.0";
+      });
+    };
+
   producer =
     extra:
     mkPythonFlake (
       {
-        inherit
-          nixpkgs
-          pin
-          self
-          source
-          ;
-        package = {
-          attr = "six";
-          dependencies = p: [ p.six ];
-        };
+        inherit nixpkgs self;
+        systems = [ system ];
       }
       // extra
     );
-  overlaidSix = _final: prev: {
-    pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
-      (_pyfinal: pyprev: {
-        six = pyprev.six.overridePythonAttrs (_: {
-          version = "999.0";
-        });
-      })
-    ];
+
+  packagesProducer =
+    extra:
+    producer (
+      {
+        payload.packages = packagesPayload;
+        upstream = pypi;
+      }
+      // extra
+    );
+
+  overlayOutputs = producer {
+    payload.overlays = bumpPayload;
   };
-  versionOf = d: d.version or null;
+  overlaidTree = import nixpkgs {
+    inherit system;
+    overlays = [ overlayOutputs.overlays.default ];
+  };
+
+  markerPayload =
+    { pkgs, ... }:
+    {
+      marker = pkgs.writeText "marker" (builtins.toString pkgs.config.cudaSupport);
+    };
+
+  gatedOutputs = producer {
+    gate.config.cudaSupport = true;
+    payload.packages = markerPayload;
+  };
+  ungatedOutputs = producer {
+    payload.packages = markerPayload;
+  };
 in
 {
-  testAnOverlayReachesTheRecipe = {
-    expected = true;
-    expr =
-      builtins.any (d: versionOf d == "999.0")
-        (producer { overlays = [ overlaidSix ]; }).packages.${system}.six.propagatedBuildInputs;
+  testARecipeNamingABuildForAWheelSourceThrows = {
+    expected = {
+      success = false;
+      value = false;
+    };
+    expr = builtins.tryEval (
+      (producer {
+        payload.packages = { buildPackage, ... }: {
+          six = buildPackage {
+            pname = "six";
+            pyproject = true;
+          };
+        };
+        upstream = pypi // {
+          format = "wheel";
+        };
+      }).packages.${system}.six.drvPath
+    );
+  };
+  testAnOverlayOnlyAttributeIsPublishedAndChecked = {
+    expected = {
+      checks = [
+        "formatting"
+        "six"
+      ];
+      version = "999.0";
+    };
+    expr = {
+      checks = builtins.attrNames overlayOutputs.checks.${system};
+      version = overlayOutputs.packages.${system}.six.version;
+    };
   };
   testBranchesFalseLeavesTheBranchUpdaterOut = {
     expected = [
@@ -56,66 +116,91 @@ in
       "six"
       "update-version"
     ];
-    expr = builtins.attrNames (producer { branches = false; }).packages.${system};
+    expr = builtins.attrNames (packagesProducer { branches = false; }).packages.${system};
   };
   testComputingTheOutputsNeverForcesSelf =
     let
-      poisoned = producer {
+      poisoned = packagesProducer {
         self.outPath = throw "this flake forced self while computing the outputs it defines";
       };
     in
     {
       expected = true;
       expr =
-        poisoned.packages.${system}.six.drvPath == (producer { }).packages.${system}.six.drvPath
+        poisoned.packages.${system}.six.drvPath == (packagesProducer { }).packages.${system}.six.drvPath
         && (poisoned.checks.${system} ? formatting)
         && (poisoned ? formatter);
     };
-  testExtraChecksMergeWithTheFormatterCheck = {
-    expected = [
-      "formatting"
-      "payload"
-    ];
-    expr = builtins.attrNames (
-      (producer {
-        inherit self;
-        extraChecks = { package, ... }: { payload = package; };
-      }).checks.${system}
-    );
+  testTheGateConfigReachesTheChecksAndNotThePublishedPackage = {
+    expected = {
+      checksAreThePublishedPackagesWithoutAGate = true;
+      checksDifferFromThePublishedPackagesWithOne = true;
+    };
+    expr = {
+      checksAreThePublishedPackagesWithoutAGate =
+        ungatedOutputs.checks.${system}.marker.outPath == ungatedOutputs.packages.${system}.marker.outPath;
+      checksDifferFromThePublishedPackagesWithOne =
+        gatedOutputs.checks.${system}.marker.outPath != gatedOutputs.packages.${system}.marker.outPath;
+    };
   };
-  testTheBranchUpdaterTakesItsOptionsThrough = {
-    expected = false;
+  testTheOverlayHalfReachesTheConsumersPythonSet = {
+    expected = "999.0";
+    expr = overlaidTree.python3Packages.six.version;
+  };
+  testThePackagesHalfPublishesItsAttributesAndTheirChecks = {
+    expected = {
+      checks = [
+        "formatting"
+        "six"
+      ];
+      packages = [
+        "default"
+        "six"
+        "update-branches"
+        "update-version"
+      ];
+    };
     expr =
-      (producer { updateBranches.minimumTrackingVersion = "9.9.9"; })
-      .packages.${system}.update-branches.drvPath == (producer { })
-      .packages.${system}.update-branches.drvPath;
+      let
+        outputs = packagesProducer { };
+      in
+      {
+        checks = builtins.attrNames outputs.checks.${system};
+        packages = builtins.attrNames outputs.packages.${system};
+      };
   };
   testTheProducerPublishesTheFormatter = {
     expected = true;
-    expr = (producer { }).formatter.${system} != null;
+    expr = (packagesProducer { }).formatter.${system} != null;
   };
-  testTheProducerPublishesThePackageUnderItsAttrAndAsDefault = {
+  testThePublishedPackageBuildsThePinnedSource = {
+    expected = "mirror://pypi/s/six/six-1.17.0.tar.gz";
+    expr = builtins.head (packagesProducer { }).packages.${system}.six.src.urls;
+  };
+  testTheSinglePublishedPackageIsAlsoTheDefault = {
     expected = true;
     expr =
       let
-        packages = (producer { }).packages.${system};
+        packages = (packagesProducer { }).packages.${system};
       in
       packages.default.drvPath == packages.six.drvPath;
   };
-  testTheProducerPublishesTheUpdaters = {
+  testTheUpdaterOptionsPassThrough = {
+    expected = false;
+    expr =
+      (packagesProducer { updateVersion.extraHashes = [ "otherHash" ]; })
+      .packages.${system}.update-version.drvPath == (packagesProducer { })
+      .packages.${system}.update-version.drvPath
+      ||
+        (packagesProducer { updateBranches.minimumTrackingVersion = "9.9.9"; })
+        .packages.${system}.update-branches.drvPath == (packagesProducer { })
+        .packages.${system}.update-branches.drvPath;
+  };
+  testTheUpdatersArePublishedOnlyWithAnUpstream = {
     expected = [
       "default"
       "six"
-      "update-branches"
-      "update-version"
     ];
-    expr = builtins.attrNames (producer { }).packages.${system};
-  };
-  testTheVersionUpdaterTakesItsOptionsThrough = {
-    expected = false;
-    expr =
-      (producer { updateVersion.extraHashes = [ "otherHash" ]; })
-      .packages.${system}.update-version.drvPath == (producer { })
-      .packages.${system}.update-version.drvPath;
+    expr = builtins.attrNames (producer { payload.packages = packagesPayload; }).packages.${system};
   };
 }

@@ -1,42 +1,123 @@
-# Assembles a python producer flake's per-system outputs (package, update machinery, formatter) from a source/package/pin spec.
+# Assembles a python producer flake's outputs from what it publishes and the upstream it tracks.
 {
   eachDefaultSystem,
+  eachSystem,
   mkFormatting,
-  mkPythonPackage,
   mkUpdateBranches,
   mkUpdateVersion,
+  pinnedSource,
+  pythonBuilders,
 }:
 {
   self,
   branchOwnedFiles ? null,
   branches ? true,
   excludes ? [ ],
-  extraChecks ? _: { },
+  gate ? { },
   nixpkgs,
   overlays ? [ ],
-  package,
-  pin,
+  payload,
   siblingRefsInPin ? false,
   siblings ? [ ],
-  source,
+  systems ? null,
   updateBranches ? { },
   updateVersion ? { },
+  upstream ? null,
 }:
-eachDefaultSystem (
+let
+  inherit (nixpkgs.lib) genAttrs optionalAttrs;
+  inherit (builtins)
+    attrNames
+    elem
+    filter
+    head
+    length
+    ;
+
+  each = if systems == null then eachDefaultSystem else eachSystem systems;
+
+  # `upstream` is the source shape the updaters write plus the pin the build reads.
+  source = if upstream == null then { } else builtins.removeAttrs upstream [ "pin" ];
+  pin =
+    if upstream == null then
+      null
+    else
+      upstream.pin
+        or (throw "mkPythonFlake: upstream is given without a pin, so the build has no pinned source to fetch");
+  pinSchema = if (source.type or "pypi") == "pypi" then "pypi" else "github";
+
+  packagesPayload = payload.packages or (_: { });
+  overlaysPayload = payload.overlays or (_: { });
+
+  # A payload states its publishables as a function of the set they land in, so the same payload serves the producer's own build and every consumer's tree.
+  recordIn =
+    pkgsFor: pythonSet:
+    let
+      pinned =
+        if upstream == null then
+          { }
+        else
+          pinnedSource {
+            inherit pin source;
+            pkgs = pkgsFor;
+          };
+    in
+    {
+      pkgs = pkgsFor;
+      python = pythonSet;
+    }
+    // pythonBuilders {
+      inherit pinned;
+      python = pythonSet;
+    }
+    // optionalAttrs (upstream != null) {
+      src = pinned.src;
+      version = pinned.version;
+    };
+
+  packagesIn = pkgsFor: packagesPayload (recordIn pkgsFor pkgsFor.python3.pkgs);
+
+  ownOverlay =
+    final: prev:
+    packagesIn final
+    // optionalAttrs (payload ? overlays) {
+      pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+        # The set arrives as it stands after every earlier extension, so a bump reads what the consumer already has and the payload's return value replaces pieces of it.
+        (_pyfinal: pyprev: overlaysPayload (recordIn final pyprev))
+      ];
+    };
+in
+{
+  overlays.default = ownOverlay;
+}
+// each (
   system:
   let
     pkgs = import nixpkgs {
       inherit overlays system;
     };
-    pkg = mkPythonPackage {
-      inherit
-        package
-        pin
-        pkgs
-        source
-        ;
+    published = packagesIn pkgs;
+    packageNames = attrNames published;
+    overlayOnly = filter (name: !elem name packageNames) (
+      attrNames (overlaysPayload (recordIn pkgs pkgs.python3.pkgs))
+    );
+    publishedNames = packageNames ++ overlayOnly;
+
+    treeWith =
+      config:
+      import nixpkgs {
+        inherit config system;
+        overlays = overlays ++ [ ownOverlay ];
+      };
+    overlayTree = treeWith { };
+    gateTree = if (gate.config or { }) == { } then overlayTree else treeWith gate.config;
+    publishedAll = published // genAttrs overlayOnly (name: overlayTree.python3Packages.${name});
+    checkOf =
+      name: if elem name packageNames then gateTree.${name} else gateTree.python3Packages.${name};
+
+    formatting = mkFormatting {
+      inherit excludes self system;
     };
-    pinSchema = if (source.type or "pypi") == "pypi" then "pypi" else "github";
     update-version = mkUpdateVersion (
       {
         inherit
@@ -50,40 +131,24 @@ eachDefaultSystem (
     );
     update-branches = mkUpdateBranches (
       {
-        inherit
-          pinSchema
-          pkgs
-          source
-          ;
+        inherit pinSchema pkgs source;
       }
-      // nixpkgs.lib.optionalAttrs (branchOwnedFiles != null) {
-        inherit branchOwnedFiles;
-      }
+      // optionalAttrs (branchOwnedFiles != null) { inherit branchOwnedFiles; }
       // updateBranches
     );
-    formatting = mkFormatting {
-      inherit
-        excludes
-        self
-        system
-        ;
-    };
   in
   {
-    checks =
-      (extraChecks {
-        inherit pkgs system;
-        package = pkg;
-      })
-      // {
-        formatting = formatting.check;
-      };
+    checks = genAttrs publishedNames checkOf // {
+      formatting = formatting.check;
+    };
     formatter = formatting.formatter;
-    packages = {
-      inherit update-version;
-      ${package.attr} = pkg;
-      default = pkg;
-    }
-    // nixpkgs.lib.optionalAttrs branches { inherit update-branches; };
+    packages =
+      publishedAll
+      // optionalAttrs (length publishedNames == 1) {
+        default = publishedAll.${head publishedNames};
+      }
+      // optionalAttrs (upstream != null) (
+        { inherit update-version; } // optionalAttrs branches { inherit update-branches; }
+      );
   }
 )

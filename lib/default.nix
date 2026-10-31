@@ -22,15 +22,19 @@ let
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
   pythonWheelhouse = import ./python-wheelhouse.nix;
+  pinnedSource = import ./pinned-source.nix;
+  pythonBuilders = import ./python-builders.nix;
   formatting = import ./mk-formatting.nix {
     inherit nixpkgs treefmt-nix;
   };
   mkPythonFlake = import ./mk-python-flake.nix {
     inherit
       eachDefaultSystem
-      mkPythonPackage
+      eachSystem
       mkUpdateBranches
       mkUpdateVersion
+      pinnedSource
+      pythonBuilders
       ;
     inherit (formatting) mkFormatting;
   };

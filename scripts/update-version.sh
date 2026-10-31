@@ -775,16 +775,7 @@ pypi)
   cur_version=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
   echo "Resolving ${PYPI_NAME} ${new_version} on PyPI..."
   rel=$(retry curl -sSfL "https://pypi.org/pypi/${PYPI_NAME}/${new_version}/json")
-  if [[ ${PYPI_FORMAT} == "wheel" ]]; then
-    # Prefer the universal py3-none-any wheel (what mk-pypi-package fetches); fall back to the first wheel.
-    url=$(jq -r '([.urls[] | select(.packagetype == "bdist_wheel") | select(.filename | endswith("-py3-none-any.whl"))][0].url) // ([.urls[] | select(.packagetype == "bdist_wheel")][0].url)' <<<"${rel}")
-  else
-    url=$(jq -r '[.urls[] | select(.packagetype == "sdist")][0].url' <<<"${rel}")
-  fi
-  if [[ -z ${url} || ${url} == "null" ]]; then
-    echo "error: no ${PYPI_FORMAT} artifact for ${PYPI_NAME} ${new_version}" >&2
-    exit 1
-  fi
+  url=$(jq -er --arg mode artifact --arg format "${PYPI_FORMAT}" --arg tag "${PYPI_WHEEL_TAG:-}" -f "${PYPI_ARTIFACTS:-$(dirname "${BASH_SOURCE[0]}")/pypi-artifacts.jq}" <<<"${rel}")
   new_hash=$(nix store prefetch-file --json --hash-type sha256 "${url}" | jq -r '.hash')
   if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
     echo "Resolving sibling cascades..."

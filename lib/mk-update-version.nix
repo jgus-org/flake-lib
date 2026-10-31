@@ -34,6 +34,13 @@
 }:
 assert artifactFingerprint == "" || artifactHook != null;
 assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
+assert
+  !(source ? wheelTag)
+  || (
+    source.type == "pypi"
+    && (source.format or "sdist") == "wheel"
+    && builtins.match "[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+" source.wheelTag != null
+  );
 let
   oci = if source.type == "oci" then import ./oci-image.nix { inherit pkgs source; } else null;
   versionSource = source.versions or source;
@@ -139,8 +146,10 @@ pkgs.writeShellApplication {
         effectiveExtraHashes ++ pkgs.lib.filter (name: name != "sourceHash") buildFailureFields
       )
     );
+    PYPI_ARTIFACTS = "${pkgs.copyPathToStore ../scripts/pypi-artifacts.jq}";
     PYPI_FORMAT = source.format or "sdist";
     PYPI_NAME = source.pname or "";
+    PYPI_WHEEL_TAG = source.wheelTag or "";
     SIBLINGS = builtins.toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     SOURCE_TYPE = source.type;

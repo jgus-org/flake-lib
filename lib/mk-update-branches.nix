@@ -46,6 +46,13 @@ assert builtins.isBool buildVerificationSkip;
 # has had it.
 assert formatter != null || !pkgs.lib.any (name: pkgs.lib.hasInfix "." name) extraHashes;
 assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
+assert
+  !(source ? wheelTag)
+  || (
+    source.type == "pypi"
+    && (source.format or "sdist") == "wheel"
+    && builtins.match "[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+" source.wheelTag != null
+  );
 let
   ownedFiles = pkgs.lib.unique (branchOwnedFiles ++ extraBranchOwnedFiles);
   versionSource = source.versions or source;
@@ -98,8 +105,10 @@ pkgs.writeShellApplication {
     MINIMUM_TRACKING_VERSION = minimumTrackingVersion;
     MIN_VERSION_COMPONENTS = toString minVersionComponents;
     PIN_SCHEMA = pinSchema;
+    PYPI_ARTIFACTS = "${pkgs.copyPathToStore ../scripts/pypi-artifacts.jq}";
     PYPI_FORMAT = source.format or "sdist";
     PYPI_NAME = source.pname or "";
+    PYPI_WHEEL_TAG = source.wheelTag or "";
     SOURCE_TYPE = source.type;
     TRACK_STABLE_ONLY = pkgs.lib.boolToString trackStableOnly;
     VERSION_CANON = pkgs.lib.concatStringsSep "\n" versionCanon;

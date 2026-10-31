@@ -198,14 +198,8 @@ list_upstream_versions() {
   endpoint=$(discovery_endpoint)
   case "${DISCOVERY_TYPE}" in
   pypi)
-    # Only enumerate releases the flake can actually fetch: sdist -> a source tarball; wheel -> a universal py3-none-any wheel (the one mk-pypi-package builds). Releases lacking it are skipped.
-    if [ "${PYPI_FORMAT:-sdist}" = "wheel" ]; then
-      retry curl -sSfL "${endpoint}" |
-        jq -r '.releases | to_entries[] | select(.value | any(.packagetype == "bdist_wheel" and (.filename | endswith("-py3-none-any.whl")))) | .key'
-    else
-      retry curl -sSfL "${endpoint}" |
-        jq -r '.releases | to_entries[] | select(.value | any(.packagetype == "sdist")) | .key'
-    fi
+    retry curl -sSfL "${endpoint}" |
+      jq -r --arg mode versions --arg format "${PYPI_FORMAT:-sdist}" --arg tag "${PYPI_WHEEL_TAG:-}" -f "${PYPI_ARTIFACTS:-$(dirname "${BASH_SOURCE[0]}")/pypi-artifacts.jq}"
     ;;
   github)
     # A github source names its versions either as GitHub Releases or as plain git

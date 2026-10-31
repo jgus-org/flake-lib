@@ -7,7 +7,7 @@
 }:
 let
   inherit (pkgs) lib;
-  ps = pkgs.python3Packages;
+  ps = pkgs.${package.python or "python3"}.pkgs;
   inherit (pin) hash version;
 
   kind = package.kind or "pythonPackage";
@@ -22,14 +22,19 @@ let
     if format == "wheel" then
       {
         format = "wheel";
-        # Universal wheel. fetchPypi's `dist` (URL path segment) and `python` (filename tag) both default to py2.py3; a py3-none-any wheel needs both set to py3, else the path 404s. Platform-specific wheels aren't covered here.
-        src = ps.fetchPypi {
-          inherit hash version;
-          dist = "py3";
-          format = "wheel";
-          pname = source.pname;
-          python = "py3";
-        };
+        src =
+          let
+            wheelTags = lib.splitString "-" (source.wheelTag or "py3-none-any");
+          in
+          ps.fetchPypi {
+            inherit hash version;
+            abi = builtins.elemAt wheelTags 1;
+            dist = builtins.elemAt wheelTags 0;
+            format = "wheel";
+            platform = builtins.elemAt wheelTags 2;
+            pname = source.pname;
+            python = builtins.elemAt wheelTags 0;
+          };
       }
     else
       {
@@ -41,6 +46,12 @@ let
         };
       };
 in
+assert
+  !(source ? wheelTag)
+  || (
+    format == "wheel"
+    && builtins.match "[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+" source.wheelTag != null
+  );
 builder (
   {
     inherit version;

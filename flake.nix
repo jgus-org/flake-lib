@@ -255,6 +255,19 @@
           ];
         };
         hookCheck = name: exe: pkgs.runCommand name { } "test -x ${exe} && touch $out";
+        pypi-artifact-tests =
+          pkgs.runCommand "pypi-artifact-tests"
+            {
+              PYPI_ARTIFACTS = ./scripts/pypi-artifacts.jq;
+              nativeBuildInputs = [
+                pkgs.jq
+                pkgs.python3
+              ];
+            }
+            ''
+              ${pkgs.lib.getExe pkgs.python3} ${./tests/test_pypi_artifacts.py}
+              touch "$out"
+            '';
         cascade-tests =
           pkgs.runCommand "cascade-tests"
             {
@@ -895,6 +908,7 @@
           pkgs.runCommand "update-version-tests"
             {
               NIX_PATH = "nixpkgs=${pkgs.path}";
+              PYPI_ARTIFACTS = ./scripts/pypi-artifacts.jq;
               TEST_BASH = pkgs.bash;
               TEST_FORMATTER = pkgs.lib.getExe orgFormatting.formatter;
               UPDATE_VERSION = ./scripts/update-version.sh;
@@ -930,6 +944,7 @@
               CASCADE_PY = ./scripts/cascade.py;
               DEPS_CORE = ./scripts/deps_core.py;
               GIT_PUSH_LIB = ./scripts/git-push.sh;
+              PYPI_ARTIFACTS = ./scripts/pypi-artifacts.jq;
               UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
               nativeBuildInputs = [
                 pkgs.bash
@@ -1132,6 +1147,7 @@
             deps-core-tests
             eval-marker-tree-tests
             huggingface-model-manager-tests
+            pypi-artifact-tests
             python-wheelhouse-integration
             python-wheelhouse-no-emit-integration
             python-wheelhouse-site-tree-integration

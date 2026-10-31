@@ -20,7 +20,7 @@ class ArtifactSelection(unittest.TestCase):
         return subprocess.run(
             [
                 "jq",
-                "-er",
+                "-er" if mode == "artifact" else "-r",
                 "--arg",
                 "mode",
                 mode,
@@ -60,10 +60,23 @@ class ArtifactSelection(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no matching PyPI artifact", result.stderr)
 
-    def test_ambiguous_builds_are_an_error(self):
-        result = self.select({"urls": [wheel(TAG), wheel(TAG, build="-1")]})
+    def test_ambiguous_artifacts_are_an_error(self):
+        result = self.select({"urls": [wheel(TAG), wheel(TAG)]})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("multiple matching PyPI artifacts", result.stderr)
+
+    def test_build_tagged_wheel_cannot_diverge_from_fetch_filename(self):
+        built = wheel(TAG, build="-1")
+        missing = self.select({"urls": [built]})
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("without a build tag", missing.stderr)
+        versions = self.select({"releases": {"1.0": [built]}}, mode="versions")
+        self.assertEqual(versions.returncode, 0, versions.stderr)
+        self.assertEqual(versions.stdout, "")
+        regular = wheel(TAG)
+        selected = self.select({"urls": [built, regular]})
+        self.assertEqual(selected.returncode, 0, selected.stderr)
+        self.assertEqual(selected.stdout.strip(), regular["url"])
 
     def test_default_still_prefers_universal_and_falls_back_to_first(self):
         native, universal = wheel(TAG), wheel("py3-none-any")
@@ -106,7 +119,7 @@ class ArtifactSelection(unittest.TestCase):
         result = self.select(
             {
                 "releases": {
-                    "1.0": [wheel(TAG), wheel(TAG, build="-1")],
+                    "1.0": [wheel(TAG), wheel(TAG)],
                 }
             },
             mode="versions",

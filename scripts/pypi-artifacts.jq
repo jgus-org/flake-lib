@@ -2,13 +2,13 @@ def candidates:
   if $format == "sdist" then map(select(.packagetype == "sdist"))
   elif $format == "wheel" then
     map(select(.packagetype == "bdist_wheel"))
-    | if $tag == "" then . else map(select(.filename | endswith("-" + $tag + ".whl"))) end
+    | if $tag == "" then . else map(select(.filename | (split("-") | length == 5) and endswith("-" + $tag + ".whl"))) end
   else error("unsupported PyPI artifact format: " + $format)
   end;
 
 def unique_selected:
   if length == 1 then .[0]
-  elif length == 0 then error("no matching PyPI artifact")
+  elif length == 0 then error("no matching PyPI artifact without a build tag")
   else error("multiple matching PyPI artifacts")
   end;
 

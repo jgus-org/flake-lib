@@ -97,6 +97,20 @@ in
       }).packages.${system}.six.drvPath
     );
   };
+  testARecipeNamingDoCheckOwnsTheInstallCheck = {
+    expected = false;
+    expr =
+      (producer {
+        payload.packages = { buildPackage, ... }: {
+          six = buildPackage {
+            doCheck = false;
+            pname = "six";
+            pythonImportsCheck = [ "six" ];
+          };
+        };
+        upstream = pypi;
+      }).packages.${system}.six.doInstallCheck;
+  };
   testAnArtifactHookWrittenAsAFunctionOfTheSetIsBuiltWithIt = {
     expected = true;
     expr =
@@ -137,6 +151,21 @@ in
     ];
     expr = builtins.attrNames (packagesProducer { branches = false; }).packages.${system};
   };
+  testCheckInputsNeverInheritTheSuite = {
+    expected = false;
+    expr =
+      (producer {
+        payload.packages =
+          { buildPackage, python, ... }:
+          {
+            six = buildPackage {
+              nativeCheckInputs = [ python.pytestCheckHook ];
+              pname = "six";
+            };
+          };
+        upstream = pypi;
+      }).packages.${system}.six.doCheck;
+  };
   testComputingTheOutputsNeverForcesSelf =
     let
       poisoned = packagesProducer {
@@ -150,6 +179,19 @@ in
         && (poisoned.checks.${system} ? formatting)
         && (poisoned ? formatter);
     };
+  testTheFleetTestDefaultKeepsADeclaredImportCheck = {
+    expected = true;
+    expr =
+      (producer {
+        payload.packages = { buildPackage, ... }: {
+          six = buildPackage {
+            pname = "six";
+            pythonImportsCheck = [ "six" ];
+          };
+        };
+        upstream = pypi;
+      }).packages.${system}.six.doInstallCheck;
+  };
   testTheGateConfigReachesTheChecksAndNotThePublishedPackage = {
     expected = {
       checksAreThePublishedPackagesWithoutAGate = true;

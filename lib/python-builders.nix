@@ -35,8 +35,17 @@ let
             build-system = [ python.setuptools ];
             pyproject = true;
           };
+      # nixpkgs derives doInstallCheck from doCheck and runs the import check in installCheck, so
+      # stamping the fleet's test default onto a recipe that declares pythonImportsCheck would void
+      # that check. nixpkgs' own default is already off, so the stamp is withheld there rather than
+      # forced back on; a recipe that names doCheck owns both switches.
+      testDefault =
+        if !guarded ? doCheck && (guarded.pythonImportsCheck or [ ]) != [ ] then
+          { }
+        else
+          { doCheck = false; };
     in
-    builder ((({ doCheck = false; } // buildDefault) // guarded) // pinned);
+    builder ((testDefault // buildDefault // guarded) // pinned);
 in
 {
   buildApplication = stamp python.buildPythonApplication;

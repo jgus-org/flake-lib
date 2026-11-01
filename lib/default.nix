@@ -7,11 +7,7 @@ let
     eachDefaultSystem
     eachSystem
     ;
-  mkPythonPackage = import ./mk-python-package.nix;
   mkPythonApplication = import ./mk-python-application.nix;
-  # The name this builder shipped under before it fetched GitHub trees too; the v1
-  # family may not move an interface out from under a consumer.
-  mkPypiPackage = mkPythonPackage;
   mkUpdateVersion = import ./mk-update-version.nix;
   mkUpdateBranches = import ./mk-update-branches.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
@@ -19,10 +15,8 @@ let
   mkComposedHook = import ./mk-composed-hook.nix;
   mkHuggingFaceModelManager = import ./mk-huggingface-model-manager.nix;
   mkOciImage = import ./mk-oci-image.nix;
-  mkWheelPackages = import ./mk-wheel-packages.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
-  pythonWheelhouse = import ./python-wheelhouse.nix;
   pinnedSource = import ./pinned-source.nix;
   pythonBuilders = import ./python-builders.nix;
   pythonDualStackIPv6 = import ./python-dual-stack-ipv6.nix;
@@ -81,27 +75,15 @@ in
     mkHuggingFaceModelManager
     mkJsDepsHook
     mkOciImage
-    mkPypiPackage
     mkPythonApplication
     mkPythonFlake
-    mkPythonPackage
     mkRevalidateHash
     mkUpdateBranches
     mkUpdateVersion
-    mkWheelPackages
     pythonDualStackIPv6
     readPythonRequirements
     versionMatchesComparison
     warnIfNewerMajor
-    ;
-  inherit (pythonWheelhouse)
-    installWheelhouse
-    mkPythonWheelhouse
-    mkWheelhouse
-    mkWheelhouseSiteTree
-    platformTags
-    pythonEnvironments
-    wheelhouseArtifactPaths
     ;
   inherit (formatting) mkFormatting;
 }

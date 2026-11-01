@@ -8,6 +8,7 @@ let
     eachSystem
     ;
   mkPythonPackage = import ./mk-python-package.nix;
+  mkPythonApplication = import ./mk-python-application.nix;
   # The name this builder shipped under before it fetched GitHub trees too; the v1
   # family may not move an interface out from under a consumer.
   mkPypiPackage = mkPythonPackage;
@@ -80,6 +81,7 @@ in
     mkJsDepsHook
     mkOciImage
     mkPypiPackage
+    mkPythonApplication
     mkPythonFlake
     mkPythonPackage
     mkRevalidateHash

@@ -1,5 +1,6 @@
 {
   self,
+  mkPythonApplication,
   mkPythonFlake,
   nixpkgs,
   pkgs,
@@ -330,6 +331,16 @@ in
   testThePublishedPackageBuildsThePinnedSource = {
     expected = "mirror://pypi/s/six/six-1.17.0.tar.gz";
     expr = builtins.head (packagesProducer { }).packages.${system}.six.src.urls;
+  };
+  testThePythonApplicationCarriesItsDependencyLayerAsBaseLayer = {
+    expected = true;
+    expr =
+      (mkPythonApplication {
+        inherit pkgs;
+        dependencies = p: [ p.six ];
+        name = "demo";
+        script = ./fixtures/requirements-sample.txt;
+      }).baseLayer.drvPath == (pkgs.python3.withPackages (p: [ p.six ])).drvPath;
   };
   testTheSinglePublishedPackageIsAlsoTheDefault = {
     expected = true;

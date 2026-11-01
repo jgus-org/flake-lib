@@ -336,6 +336,7 @@
                   self
                   ;
                 inherit (lib)
+                  mkPythonApplication
                   mkPythonFlake
                   readPythonRequirements
                   ;

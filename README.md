@@ -87,6 +87,11 @@ flake-lib.lib.mkWheelhouseSiteTree { pkgs; python; wheelhouse; checkImports ? []
 # an eval-time fetch, never from the `src` derivation's output.
 flake-lib.lib.readPythonRequirements ./requirements.txt  # => [ "pillow" "sqlalchemy" "torch" ... ]
 
+# An executable that runs one python source file against a python environment with the named
+# dependencies. The environment is also the application's `.baseLayer`, so an image build can
+# peel the dependency layer away from the script it runs.
+flake-lib.lib.mkPythonApplication { pkgs; name; dependencies = p: [ p.fastmcp ]; script = ./host.py; }
+
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.
 flake-lib.lib.warnIfNewerMajor { pkgs; name; lib ? pkgs.lib; }

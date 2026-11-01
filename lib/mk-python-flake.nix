@@ -67,10 +67,14 @@ let
       python = pythonSet;
     }
     // pythonBuilders {
-      inherit pinned;
+      # Builders merge every pinned key into the recipe, so the eval-time path travels on the payload argument, not in the recipe's own attributes.
+      pinned = builtins.removeAttrs pinned [ "sourcePath" ];
       python = pythonSet;
     }
     // optionalAttrs (upstream != null) {
+      sourcePath =
+        pinned.sourcePath
+          or (throw "mkPythonFlake: a payload reads source files, but this pin's source has no eval-time path; only a github pin carries one");
       src = pinned.src;
       version = pinned.version;
     };

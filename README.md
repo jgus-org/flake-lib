@@ -80,6 +80,13 @@ flake-lib.lib.mkWheelhouse     { pkgs; wheels; noEmit ? []; }             # targ
 flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
 flake-lib.lib.mkWheelhouseSiteTree { pkgs; python; wheelhouse; checkImports ? []; nativeBuildInputs ? []; buildInputs ? []; .. } # -> derivation installing a wheelhouse as a site tree, ELF-patched, with a clean-interpreter import check
 
+# The distribution names a requirements file asks for, in the shape a python package set
+# names its members: lowercased, `.` and `_` folded to `-`, specifiers, extras, markers,
+# comments, and indented lines dropped. A `mkPythonFlake` payload reads them from the
+# pinned source with the `sourcePath` it is given — evaluation may read source files from
+# an eval-time fetch, never from the `src` derivation's output.
+flake-lib.lib.readPythonRequirements ./requirements.txt  # => [ "pillow" "sqlalchemy" "torch" ... ]
+
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.
 flake-lib.lib.warnIfNewerMajor { pkgs; name; lib ? pkgs.lib; }

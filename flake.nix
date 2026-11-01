@@ -335,7 +335,10 @@
                   pkgs
                   self
                   ;
-                inherit (lib) mkPythonFlake;
+                inherit (lib)
+                  mkPythonFlake
+                  readPythonRequirements
+                  ;
               }
             );
           in

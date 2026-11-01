@@ -3,6 +3,7 @@
   mkPythonFlake,
   nixpkgs,
   pkgs,
+  readPythonRequirements,
 }:
 let
   system = "x86_64-linux";
@@ -113,6 +114,22 @@ in
         repo = package.src.repo;
       };
   };
+  testAPayloadReadingSourceFilesFromAPinWithoutThemThrows = {
+    expected = {
+      success = false;
+      value = false;
+    };
+    expr = builtins.tryEval (
+      (producer {
+        payload.packages =
+          { pkgs, sourcePath, ... }:
+          {
+            six = pkgs.writeText "six" (toString sourcePath);
+          };
+        upstream = pypi;
+      }).packages.${system}.six.drvPath
+    );
+  };
   testARecipeNamingABuildForAWheelSourceThrows = {
     expected = {
       success = false;
@@ -201,6 +218,31 @@ in
         upstream = pypi;
       }).packages.${system}.six.doCheck;
   };
+  testComputingTheOutputsNeverFetchesTheEvalTimeSourcePath = {
+    expected = true;
+    expr =
+      let
+        unfetchable =
+          (producer {
+            payload.packages = { buildPackage, ... }: {
+              six = buildPackage {
+                pname = "six";
+              };
+            };
+            upstream = {
+              owner = "someone";
+              pin = {
+                sourceHash = fakeSha256;
+                sourceRev = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+                version = "1.17.0";
+              };
+              repo = "something";
+              type = "github";
+            };
+          }).packages.${system}.six;
+      in
+      unfetchable.drvPath != null;
+  };
   testComputingTheOutputsNeverForcesSelf =
     let
       poisoned = packagesProducer {
@@ -214,6 +256,22 @@ in
         && (poisoned.checks.${system} ? formatting)
         && (poisoned ? formatter);
     };
+  testReadPythonRequirementsNamesThePackagesTheFileAsksFor = {
+    expected = [
+      "comfyui-frontend-package"
+      "duplicate"
+      "importlib-metadata"
+      "numpy"
+      "pillow"
+      "pydantic"
+      "requests"
+      "sqlalchemy"
+      "torch"
+      "typing-extensions"
+      "zope-interface"
+    ];
+    expr = readPythonRequirements ./fixtures/requirements-sample.txt;
+  };
   testTheFleetTestDefaultKeepsADeclaredImportCheck = {
     expected = true;
     expr =

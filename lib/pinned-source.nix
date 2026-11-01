@@ -29,6 +29,10 @@ if type == "github" then
 else if type == "gitlab" then
   {
     inherit (pin) version;
+    sourcePath = builtins.fetchTarball {
+      sha256 = pin.sourceHash;
+      url = "https://gitlab.com/${source.owner}/${source.repo}/-/archive/${pin.sourceRev}/${source.repo}-${pin.sourceRev}.tar.gz";
+    };
     src = pkgs.fetchFromGitLab {
       inherit (source) owner repo;
       hash = pin.sourceHash;

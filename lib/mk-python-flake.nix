@@ -74,7 +74,7 @@ let
     // optionalAttrs (upstream != null) {
       sourcePath =
         pinned.sourcePath
-          or (throw "mkPythonFlake: a payload reads source files, but this pin's source has no eval-time path; only a github pin carries one");
+          or (throw "mkPythonFlake: a payload reads source files, but this pin's source has no eval-time path; only a github or gitlab pin carries one");
       src = pinned.src;
       version = pinned.version;
     };

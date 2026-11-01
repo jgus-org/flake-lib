@@ -36,7 +36,7 @@ let
 
   each = if systems == null then eachDefaultSystem else eachSystem systems;
 
-  # `upstream` is the source shape the updaters write plus the pin the build reads.
+  # `upstream` is the source shape the updaters write plus the pin the build reads: pypi, or a github/gitlab repository by revision.
   source = if upstream == null then { } else builtins.removeAttrs upstream [ "pin" ];
   pin =
     if upstream == null then

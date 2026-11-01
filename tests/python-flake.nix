@@ -78,6 +78,41 @@ let
   };
 in
 {
+  testAGitlabSourceFetchesItsSourceFromGitLab = {
+    expected = {
+      owner = "someone";
+      repo = "something";
+      version = "1.17.0";
+    };
+    expr =
+      let
+        package =
+          (producer {
+            payload.packages =
+              { buildPackage, ... }:
+              {
+                six = buildPackage {
+                  pname = "six";
+                };
+              };
+            upstream = {
+              owner = "someone";
+              pin = {
+                sourceHash = fakeSha256;
+                sourceRev = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+                version = "1.17.0";
+              };
+              repo = "something";
+              type = "gitlab";
+            };
+          }).packages.${system}.six;
+      in
+      {
+        inherit (package) version;
+        owner = package.src.owner;
+        repo = package.src.repo;
+      };
+  };
   testARecipeNamingABuildForAWheelSourceThrows = {
     expected = {
       success = false;

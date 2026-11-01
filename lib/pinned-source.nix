@@ -21,6 +21,15 @@ if type == "github" then
       rev = pin.sourceRev;
     };
   }
+else if type == "gitlab" then
+  {
+    inherit (pin) version;
+    src = pkgs.fetchFromGitLab {
+      inherit (source) owner repo;
+      hash = pin.sourceHash;
+      rev = pin.sourceRev;
+    };
+  }
 else if (source.format or "sdist") == "wheel" then
   {
     inherit (pin) version;

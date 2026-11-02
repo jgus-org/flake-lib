@@ -7,7 +7,11 @@ let
     eachDefaultSystem
     eachSystem
     ;
-  mkPypiPackage = import ./mk-pypi-package.nix;
+  mkPythonPackage = import ./mk-python-package.nix;
+  mkPythonApplication = import ./mk-python-application.nix;
+  # The name this builder shipped under before it fetched GitHub trees too; the v1
+  # family may not move an interface out from under a consumer.
+  mkPypiPackage = mkPythonPackage;
   mkUpdateVersion = import ./mk-update-version.nix;
   mkUpdateBranches = import ./mk-update-branches.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
@@ -15,19 +19,27 @@ let
   mkComposedHook = import ./mk-composed-hook.nix;
   mkHuggingFaceModelManager = import ./mk-huggingface-model-manager.nix;
   mkOciImage = import ./mk-oci-image.nix;
+  mkWheelPackages = import ./mk-wheel-packages.nix;
   versionMatchesComparison = import ./version-matches-comparison.nix;
   evalMarkerTree = import ./eval-marker-tree.nix { inherit versionMatchesComparison; };
-  mkLeafFlake = import ./mk-leaf-flake.nix {
-    inherit
-      eachDefaultSystem
-      mkPypiPackage
-      mkUpdateBranches
-      mkUpdateVersion
-      ;
-  };
   pythonWheelhouse = import ./python-wheelhouse.nix;
+  pinnedSource = import ./pinned-source.nix;
+  pythonBuilders = import ./python-builders.nix;
+  pythonDualStackIPv6 = import ./python-dual-stack-ipv6.nix;
+  readPythonRequirements = import ./read-python-requirements.nix { inherit (nixpkgs) lib; };
   formatting = import ./mk-formatting.nix {
     inherit nixpkgs treefmt-nix;
+  };
+  mkPythonFlake = import ./mk-python-flake.nix {
+    inherit
+      eachDefaultSystem
+      eachSystem
+      mkUpdateBranches
+      mkUpdateVersion
+      pinnedSource
+      pythonBuilders
+      ;
+    inherit (formatting) mkFormatting;
   };
   depsCore = ../scripts/deps_core.py;
 
@@ -68,12 +80,17 @@ in
     mkComposedHook
     mkHuggingFaceModelManager
     mkJsDepsHook
-    mkLeafFlake
     mkOciImage
     mkPypiPackage
+    mkPythonApplication
+    mkPythonFlake
+    mkPythonPackage
     mkRevalidateHash
     mkUpdateBranches
     mkUpdateVersion
+    mkWheelPackages
+    pythonDualStackIPv6
+    readPythonRequirements
     versionMatchesComparison
     warnIfNewerMajor
     ;

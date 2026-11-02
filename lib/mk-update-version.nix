@@ -113,10 +113,10 @@ pkgs.writeShellApplication {
           ""
         ]
     );
-    GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)
+    GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0.devDATE+gREV)
     GITLAB_OWNER = source.owner or "";
     GITLAB_REPO = source.repo or "";
-    GITLAB_TRACK = source.track or "commit"; # release (tags -> X.Y.Z) | commit (master HEAD -> 0-unstable-DATE)
+    GITLAB_TRACK = source.track or "commit"; # release (tags -> X.Y.Z) | commit (master HEAD -> 0.devDATE+gREV)
     HASH_MODE = hashMode;
     HF_FILES = builtins.toJSON (source.files or [ ]);
     HF_MANIFEST_EXCLUDE = builtins.toJSON (

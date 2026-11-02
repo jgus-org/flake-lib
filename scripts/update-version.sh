@@ -6,12 +6,12 @@
 #   PYPI_FORMAT   sdist | wheel                              [pypi]
 #   VERSION_SOURCE_TYPE       the source an oci producer discovers versions from (github); empty for a single-branch image    [oci]
 #   GH_OWNER/GH_REPO          GitHub owner/repo              [github, github-release-asset, oci release source]
-#   GH_TRACK                  release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0-unstable-DATE)  [github]
+#   GH_TRACK                  release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0.devDATE+gREV)  [github]
 #   GH_BRANCH                 commit-tracking: branch to follow (default: repo default branch)  [github]
 #   GH_ASSET                  release-asset filename template; tokens ${version} (tag minus leading v) and ${tag}  [github-release-asset]
 #   GH_TAG                    release-tag template; token ${version} (default: v${version})  [github-release-asset]
 #   GITLAB_OWNER/GITLAB_REPO  GitLab owner/repo              [gitlab]
-#   GITLAB_TRACK              release (tags -> X.Y.Z) | commit (master HEAD -> 0-unstable-DATE)  [gitlab]
+#   GITLAB_TRACK              release (tags -> X.Y.Z) | commit (master HEAD -> 0.devDATE+gREV)  [gitlab]
 #   HF_REPO/HF_REVISION       repository and followed revision                    [huggingface]
 #   HF_MANIFEST_*             optional metadata-only artifact manifest settings   [huggingface]
 #   SIBLINGS      JSON array of sibling-cascade specs (may be [])
@@ -98,6 +98,17 @@ finish_unchanged() {
   evaluate_published_packages
   echo "Already up to date (${VERSION})."
   exit 0
+}
+
+# A commit-tracked source has no upstream version to carry, and a producer that is a python one
+# puts whatever label the pin holds into package metadata: `0-unstable-YYYY-MM-DD` is what the
+# updater used to write, and `packaging.version.Version` refuses it, so the payload fails the build
+# that reads its own version. A dev release of 0 sorts below every real release the upstream may
+# one day tag, and the rev suffix distinguishes two commits taken on one day in a branch name as
+# well as in the pin.
+commit_version() {
+  local DATE="${1}" REV="${2}"
+  printf '0.dev%s+g%s' "$(tr -dc '0-9' <<<"${DATE}" | cut -c1-8)" "${REV:0:8}"
 }
 
 # The org formatter sorts attributes, so a pin written in any other order comes back changed
@@ -816,7 +827,7 @@ github)
       commit=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${branch}")
     fi
     new_rev=$(jq -r '.sha' <<<"${commit}")
-    new_version="0-unstable-$(jq -r '.commit.committer.date' <<<"${commit}" | cut -d'T' -f1)"
+    new_version=$(commit_version "$(jq -r '.commit.committer.date' <<<"${commit}")" "${new_rev}")
   else
     if [[ -n ${requested} ]]; then
       if [[ ${requested} =~ ^[0-9] ]]; then
@@ -931,7 +942,7 @@ huggingface)
     echo "error: could not resolve ${HF_REPO}@${HF_REF}" >&2
     exit 1
   fi
-  new_version="0-unstable-${HF_DATE}"
+  new_version=$(commit_version "${HF_DATE}" "${HF_REV}")
   write_huggingface_manifest "${HF_METADATA}"
   run_artifact_hook "${HF_REV}" "${new_version}"
   if huggingface_pin_current "${new_version}" "${HF_REV}"; then
@@ -977,7 +988,7 @@ gitlab)
     fi
     new_rev=$(jq -r '.id' <<<"${commit}")
     new_date=$(jq -r '.committed_date' <<<"${commit}" | cut -d'T' -f1)
-    new_version="0-unstable-${new_date}"
+    new_version=$(commit_version "${new_date}" "${new_rev}")
   fi
   if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
     echo "Resolving sibling cascades..."

@@ -9,14 +9,40 @@ branch. There is no copy-and-merge of scripts between repos.
 ## API (`flake-lib.lib`)
 
 ```nix
-# High-level: a simple PyPI leaf collapses to one call.
-flake-lib.lib.mkLeafFlake {
-  inherit nixpkgs;
+# High-level: one call is a whole producer flake.
+flake-lib.lib.mkPythonFlake {
+  inherit self nixpkgs;  # `self` builds the org formatter, so it is required
   source  = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };  # pname = PyPI dist (underscore form)
   package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
   pin     = import ./pin.nix;
 }
-# => packages.<system> = { <attr>; update-version; update-branches; default; }
+# => packages.<system> = { <attr>; default; update-version; update-branches; }
+#    checks.<system>.formatting, formatter.<system>
+
+# A python producer written before this call published a formatter takes no `self` and
+# composes treefmt itself: add `inherit self`, delete that block, and one call is the flake.
+
+# A python producer built from the upstream source tree rather than a published distribution,
+# resolving its dependencies through a sibling producer's overlay, and publishing its
+# payload as a check so the gate builds it:
+flake-lib.lib.mkPythonFlake {
+  inherit self nixpkgs;
+  overlays = [ fastmcp.overlays.default ];
+  source = { type = "github"; owner = "utensils"; repo = "mcp-nixos"; };
+  package = {
+    attr = "mcp-nixos";
+    kind = "pythonApplication";
+    buildSystem = p: [ p.hatchling ];
+    dependencies = p: [ p.beautifulsoup4 p.fastmcp p.requests ];
+    # attrs, or p -> attrs over the python set, or p -> pkgs -> attrs when a check input is not a python package
+    extra = p: { doCheck = true; nativeCheckInputs = [ p.pytestCheckHook ]; };
+  };
+  pin = import ./pin.nix;  # { version; sourceRev; sourceHash; }
+  extraChecks = { package, ... }: { inherit package; };
+  updateBranches = { minimumTrackingVersion = "3.1.0"; };  # anything mkUpdateBranches takes
+}
+# `updateVersion` is the same pass-through for mkUpdateVersion. The call always publishes
+# the org formatter, so a repo carries no treefmt config and no treefmt-nix input.
 
 # The org-standard formatter, so a repo carries no treefmt config, no treefmt-nix input,
 # and no formatter config files of its own.
@@ -36,7 +62,9 @@ flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
-flake-lib.lib.mkPypiPackage    { pkgs; source; package; pin; }
+flake-lib.lib.mkPythonPackage  { pkgs; source; package; pin; }   # a python package or application from PyPI or a GitHub source tree
+# mkPypiPackage is this builder under the name it shipped with before it fetched GitHub
+# trees; new consumers call mkPythonPackage. The alias leaves with the next API family.
 flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
@@ -51,6 +79,41 @@ flake-lib.lib.wheelhouseArtifactPaths { root; pythonVersion; system; pythonVersi
 flake-lib.lib.mkWheelhouse     { pkgs; wheels; noEmit ? []; }             # target-qualified wheels JSON path or list -> { files; wheelhouse; }
 flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
 flake-lib.lib.mkWheelhouseSiteTree { pkgs; python; wheelhouse; checkImports ? []; nativeBuildInputs ? []; buildInputs ? []; .. } # -> derivation installing a wheelhouse as a site tree, ELF-patched, with a clean-interpreter import check
+
+# The distribution names a requirements file asks for, in the shape a python package set
+# names its members: lowercased, `.` and `_` folded to `-`, specifiers, extras, markers,
+# comments, and indented lines dropped. A `mkPythonFlake` payload reads them from the
+# pinned source with the `sourcePath` it is given — evaluation may read source files from
+# an eval-time fetch, never from the `src` derivation's output.
+flake-lib.lib.readPythonRequirements ./requirements.txt  # => [ "pillow" "sqlalchemy" "torch" ... ]
+
+# An executable that runs one python source file against a python environment with the named
+# dependencies. The environment is also the application's `.baseLayer`, so an image build can
+# peel the dependency layer away from the script it runs. The optional arguments carry the
+# launcher conventions a service would otherwise hand-roll on makeWrapper: `workDir` is the
+# directory the script runs in, `runtimeInputs` are extra programs on its PATH, `pythonPath`
+# directories are prepended to its PYTHONPATH, `env` exports unconditionally, and `envDefaults`
+# exports only where the environment has not already set the name. `meta` merges over the
+# launcher's own `{ mainProgram = name; }`.
+flake-lib.lib.mkPythonApplication { pkgs; name; dependencies = p: [ p.fastmcp ]; script = ./host.py; }
+flake-lib.lib.mkPythonApplication {
+  pkgs; name; dependencies; script;
+  workDir ? null;
+  runtimeInputs ? [ ];
+  pythonPath ? [ ];
+  env ? { };
+  envDefaults ? { };
+  meta ? { };
+}
+
+# The one dual-stack IPv6 interposer: `IPV6_V6ONLY=True` setsockopt calls become no-ops, so a
+# `[::]` listener serves both families (asyncio and waitress set the flag before any bind).
+# `site` is a directory holding a `sitecustomize.py`, for a PYTHONPATH the consumer controls —
+# pass it as a `mkPythonApplication` `pythonPath` entry. `withPackage` appends the same
+# interposer to a package's `initFile` (an `__init__.py` the entrypoint transitively imports),
+# for a package whose interpreter environment the consumer does not control.
+flake-lib.lib.pythonDualStackIPv6.site pkgs  # -> sitecustomize directory for PYTHONPATH
+flake-lib.lib.pythonDualStackIPv6.withPackage { package; initFile = "pkg/__init__.py"; }
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.
@@ -225,7 +288,7 @@ The client declares only its requirements source:
 wheelhouse = flake-lib.lib.mkPythonWheelhouse {
   inherit pkgs;
   sources = [
-    { kind = "source-pyproject"; groups = [ "studio" ]; buildSystem = false; }
+    { kind = "source-pyproject"; groups = [ "studio" ]; buildSystemRequires = false; }
     { kind = "source-file"; path = "backend/requirements/studio.txt"; }
     { kind = "repo-file"; path = "requirements.in"; }
   ];
@@ -234,7 +297,7 @@ wheelhouse = flake-lib.lib.mkPythonWheelhouse {
 ```
 
 `source-pyproject` and `source-file` read the pinned upstream source (cloned at
-`NEW_REV`; `buildSystem` appends the pyproject's build-system requires);
+`NEW_REV`; `buildSystemRequires` appends the pyproject's build-system requires);
 `repo-file` reads the consumer's own repository. Requirements are merged in
 order, deduplicated, resolved per environment with `uv pip compile
 --generate-hashes`, fetched with `pip download --require-hashes --only-binary

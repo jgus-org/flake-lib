@@ -97,7 +97,12 @@ def source_requirements(
         requirements = deps_core.pyproject_requirements(
             document, source.get("groups", [])
         )
-        if source.get("buildSystem", False):
+        # Two spellings are read because `buildSystem` also names a package's build
+        # backend in the leaf spec; the newer key wins when both are present.
+        buildSystemRequires = source.get(
+            "buildSystemRequires", source.get("buildSystem", False)
+        )
+        if buildSystemRequires:
             requirements.extend(
                 tomllib.loads(document)["build-system"]["requires"]
             )

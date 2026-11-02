@@ -1,0 +1,14 @@
+# a comment line is not a package
+torch
+numpy>=1.25.0
+Pillow
+SQLAlchemy>=2.0.0
+comfyui-frontend-package==1.52.7
+pydantic~=2.0
+importlib-metadata; python_version < "3.8"
+typing_extensions>=4.0
+zope.interface
+requests[socks]>=2.26
+  an indented line is not a package either
+duplicate
+duplicate>=1.0

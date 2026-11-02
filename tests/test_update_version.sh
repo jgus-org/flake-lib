@@ -319,7 +319,7 @@ TEST_HF_METADATA='{
   SIBLINGS='[]' \
   bash "${UPDATE_VERSION}"
 
-grep -Fq 'version = "0-unstable-2026-08-26";' "${TEST_ROOT}/pin.nix"
+grep -Fq 'version = "0.dev20260826+gmodel-re";' "${TEST_ROOT}/pin.nix"
 grep -Fq 'sourceRev = "model-revision";' "${TEST_ROOT}/pin.nix"
 MANIFEST_HASH=$(sha256sum "${TEST_ROOT}/model-manifest.json" | cut -d' ' -f1)
 grep -Fq "manifestHash = \"${MANIFEST_HASH}\";" "${TEST_ROOT}/pin.nix"
@@ -335,7 +335,7 @@ jq -e '
 
 cat >"${TEST_ROOT}/pin.nix" <<'EOF'
 {
-  version = "0-unstable-2026-08-26";
+  version = "0.dev20260826+gmodel-re";
   sourceRev = "model-revision";
   pythonEnvironment = "3.13";
   requirementsHash = "requirements-hash";
@@ -365,7 +365,7 @@ HF_MISMATCH_OUTPUT=$(TEST_ARTIFACT_LOG="${ARTIFACT_LOG}" \
   bash "${UPDATE_VERSION}")
 grep -Fqx huggingface "${ARTIFACT_LOG}"
 grep -Fq 'artifactFingerprint = "exact-fingerprint";' "${TEST_ROOT}/pin.nix"
-grep -Fq 'Updated the pin to 0-unstable-2026-08-26.' <<<"${HF_MISMATCH_OUTPUT}"
+grep -Fq 'Updated the pin to 0.dev20260826+gmodel-re.' <<<"${HF_MISMATCH_OUTPUT}"
 
 PNPM_ARTIFACT_HOOK="${TEST_ROOT}/pnpm-artifact-hook"
 printf '%s\n' \

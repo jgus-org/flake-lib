@@ -3,17 +3,22 @@
 # Revalidate a fixed-output (vendor) hash that can't be prefetched — Go modules, cargo deps, npm FODs, xcaddy plugin trees — by building and recovering the correct hash from nix's mismatch error.
 #
 #   HASH_FIELD   pin.nix field to rewrite (default "hash")
+#   BUILD_TARGET published package the hash is mined from (default: the whole published family)
 #
-# The build target is the flake's published package family, named by flake-lib's own
-# `build-packages` rather than by this script, and the mismatch is attributed to this field by the
-# hash it states as the one in use, so no caller names a target and a drift in some other published
-# package is not written into this field. Run from the flake root (or set FLAKE_ROOT). Used directly
-# by manifest-style flakes (e.g. caddy).
+# The mismatch is attributed to this field by the hash it states as the one in use, so a drift in
+# some other package is not written into this field whether the build was asked for one package or
+# for all of them. A caller whose hash comes from one known package names it: the family stays the
+# default because nothing about a producer is required to be correct for the default to work, and
+# naming a package that this flake does not publish is an error rather than a fallback. Only the
+# build the hash is mined from narrows -- the tree is still verified by the whole family, the build
+# a pull request is gated by. Run from the flake root (or set FLAKE_ROOT). Used directly by
+# manifest-style flakes (e.g. caddy).
 
 set -euo pipefail
 
 FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
 HASH_FIELD="${HASH_FIELD:-hash}"
+BUILD_TARGET="${BUILD_TARGET:-}"
 BUILD_PACKAGES_SCRIPT="${BUILD_PACKAGES_SCRIPT:?required env var}"
 pin="${FLAKE_ROOT}/pin.nix"
 
@@ -43,9 +48,15 @@ mine_drift() {
   return 1
 }
 
-echo "Building the packages this flake publishes to validate ${HASH_FIELD}..."
+MINING_BUILD='the packages this flake publishes'
+MINING_ARGS=(--require-build)
+if [[ -n ${BUILD_TARGET} ]]; then
+  MINING_BUILD="the published package ${BUILD_TARGET}"
+  MINING_ARGS=(--only "${BUILD_TARGET}")
+fi
+echo "Building ${MINING_BUILD} to validate ${HASH_FIELD}..."
 set +e
-out=$(bash "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build 2>&1)
+out=$(bash "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" "${MINING_ARGS[@]}" 2>&1)
 rc=$?
 set -e
 
@@ -60,7 +71,7 @@ current_hash=$(sed -nE "s/^[[:space:]]*${HASH_FIELD}[[:space:]]*=[[:space:]]*\"(
   head -1)
 new_hash=$(mine_drift "${current_hash}") || new_hash=''
 if [[ -z ${new_hash} ]]; then
-  echo "error: building what this flake publishes failed and it wasn't a hash mismatch over ${HASH_FIELD}:" >&2
+  echo "error: building ${MINING_BUILD} failed and it wasn't a hash mismatch over ${HASH_FIELD}:" >&2
   printf '%s\n' "${out}" >&2
   exit 1
 fi

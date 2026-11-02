@@ -62,7 +62,7 @@ flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
-flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
+flake-lib.lib.mkRevalidateHash { pkgs; buildTarget ? ""; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; meta ? { license = mit; }; stampName ? ".${name}-verified.json"; }
@@ -239,6 +239,8 @@ Use `pinSchema = "github-pnpm"` for the corresponding `{ version, sourceRev,
 sourceHash, pnpmDepsHash }` branch placeholders.
 
 `buildFailureHashes` declares the set of pin fields the build's hash mismatch may name, for a package whose build fails on whichever of its unprefetchable dependencies is stale first: `{ buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ]; }` covers a `fetchPnpmDeps` tree and a `buildGoModule` vendor tree in one bump. A mismatch is attributed to the declared field already holding the hash the build reported as specified, and while no declared field is resolved yet, to the first declared field. `buildFailureHash` and `buildFailureHashes` combine, and each declared field is resolved at most once, so the build runs at most one more time than there are declared fields. A build that still reports a hash mismatch once every declared field is resolved ends the run, as does a mismatch belonging to a pin field no declaration covers.
+
+The updater needs no help naming what to build, because several declared fields are mined from one build of the family and each mismatch is traced back to the field that holds the hash the build named. `mkRevalidateHash` recovers a single field and can be asked narrower: `buildTarget = "caddy"` mines the hash from that published package alone, which is what a flake wants when the hash belongs to one package and its family publishes more than that. The name narrows only the build the hash is mined from; the rewritten tree is still verified against the whole family, so the finished pin is proven by the build a pull request is gated by. A name outside the published family is an error rather than a fallback to the family, so a package renamed away leaves a revalidation that says so instead of quietly rebuilding what the caller asked to avoid.
 
 ### Supported systems
 
@@ -515,6 +517,10 @@ gated by the next pull request without a workflow change.
 github:jgus-org/flake-lib/v1#build-packages` -- and takes the arguments the gate passes through:
 `--dry-run` prints the installables it would build, which is how a repository is audited before
 adopting; `--system` selects another system's family and `--flake` reads another tree.
+`--only NAME` builds one published package instead of the family, for a caller that needs a build
+from that package and no other: it is built even where `passthru.ciBuildSkip` excuses it from the
+gate, since the name says what to build rather than what to gate, and a name outside the family
+fails instead of quietly building the family.
 `--require-build` makes a family with nothing to build a failure instead of a clean exit, for a
 caller that reads a clean exit as something having been built -- hash discovery does, and a hash
 never built is not a hash validated.

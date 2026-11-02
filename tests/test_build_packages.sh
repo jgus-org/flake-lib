@@ -183,4 +183,24 @@ STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' STUB_NIX_BUILD_STATUS=17 run_t
 }
 grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."a"' "${CASE}/nix-log"
 
+# --only builds the one named package and leaves its published siblings alone, which is what lets a
+# caller whose hash comes from one package avoid building everything the flake happens to publish.
+STUB_NIX_SELECTION='{"build": ["a", "z"], "skip": ["model"]}' run_tool --only z
+grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."z"' "${CASE}/nix-log"
+grep -Fxq 'building 1 package(s) for x86_64-linux.' "${OUT}"
+
+# A package excused from the gate is still built when it is named, because the name is given for
+# what the package builds, not for what the runner is willing to build.
+STUB_NIX_SELECTION='{"build": ["a"], "skip": ["model"]}' run_tool --only model
+grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."model"' "${CASE}/nix-log"
+
+# A name this flake does not publish is refused here rather than reaching nix as a build error over a
+# target nobody chose.
+STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' run_tool --only nope && {
+  printf 'a package outside the published family must not be built\n' >&2
+  exit 1
+}
+grep -Fxq 'error: . publishes no package named nope for x86_64-linux' "${ERR}"
+[[ -z $(build_lines) ]]
+
 echo 'build-packages tests passed'

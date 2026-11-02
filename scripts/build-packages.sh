@@ -12,6 +12,7 @@ set -euo pipefail
 
 FLAKE='.'
 SYSTEM=''
+ONLY=''
 DRY_RUN=false
 REQUIRE_BUILD=false
 
@@ -22,10 +23,11 @@ die() {
 
 usage() {
   cat >&2 <<'USAGE'
-usage: build-packages [--flake URL] [--system SYSTEM] [--dry-run] [--require-build]
+usage: build-packages [--flake URL] [--system SYSTEM] [--only NAME] [--dry-run] [--require-build]
 
   --flake URL        flake to build, default: the working directory
   --system SYSTEM    system whose packages are built, default: the building system
+  --only NAME        build one published package by name instead of the family, excusing nothing
   --dry-run          report what would be built and build nothing
   --require-build    fail when nothing would be built, for a caller whose verdict is that
                      something was built
@@ -43,6 +45,11 @@ while [[ ${#} -gt 0 ]]; do
   --system)
     SYSTEM=${2:-}
     [[ -n ${SYSTEM} ]] || usage
+    shift 2
+    ;;
+  --only)
+    ONLY=${2:-}
+    [[ -n ${ONLY} ]] || usage
     shift 2
     ;;
   --dry-run)
@@ -88,6 +95,22 @@ jq -e 'has("build") and has("skip")' >/dev/null <<<"${SELECTION}" ||
   die "the selection did not report a build list and a skip list"
 mapfile -t BUILD_NAMES < <(jq -r '.build[]' <<<"${SELECTION}")
 mapfile -t SKIPPED_NAMES < <(jq -r '.skip[]' <<<"${SELECTION}")
+
+# A name given to --only is published or the caller asked for something this flake does not have,
+# and an absent attribute would otherwise reach nix as a build error over a target nobody chose.
+# The gate's excuse is not asked of: the name is built whether or not a runner would build it,
+# because the caller named it for what it builds, not for what the gate gates.
+if [[ -n ${ONLY} ]]; then
+  ONLY_PUBLISHED=false
+  for NAME in "${BUILD_NAMES[@]}" "${SKIPPED_NAMES[@]}"; do
+    [[ ${NAME} == "${ONLY}" ]] && ONLY_PUBLISHED=true
+  done
+  if [[ ${ONLY_PUBLISHED} != true ]]; then
+    die "${FLAKE} publishes no package named ${ONLY} for ${SYSTEM}"
+  fi
+  BUILD_NAMES=("${ONLY}")
+  SKIPPED_NAMES=()
+fi
 
 if ((${#SKIPPED_NAMES[@]} > 0)); then
   printf 'skipped by passthru.ciBuildSkip: %s\n' "${SKIPPED_NAMES[*]}" >&2

@@ -2,12 +2,13 @@
 
 set -euo pipefail
 
-# The revalidator's whole interface is a tree and the build that tree is verified by: it runs the
-# published-family build, mines the hash a mismatch states, rewrites the pin field that holds it,
-# and builds again to prove the rewrite. What this suite owes is that the build it mines is the
-# build step the package installs, not one the script names for itself -- a tool free to build what
-# it likes is a tool free to build something the gate will not, which is how a producer's update
-# came to fail on an attribute no flake publishes.
+# The revalidator's whole interface is a tree and the build that tree is verified by: it builds what
+# the flake publishes, or the one package a caller names as carrying its hash, mines the hash a
+# mismatch states, rewrites the pin field that holds it, and builds the family again to prove the
+# rewrite. What this suite owes is that the build it mines is the build step the package installs,
+# not one the script names for itself -- a tool free to build what it likes is a tool free to build
+# something the gate will not, which is how a producer's update came to fail on an attribute no flake
+# publishes.
 
 # This suite runs the script through bash for determinism; flake.nix's package wrapper execs it
 # directly, so a missing executable bit breaks every producer's run and nothing here would notice.
@@ -48,6 +49,7 @@ CASE=''
 OUT=''
 BUILDS=''
 FIELD='hash'
+TARGET=''
 run_revalidator() {
   CASE=$(mktemp -d -p "${CASES}")
   mkdir -p "${CASE}/tree"
@@ -63,6 +65,7 @@ run_revalidator() {
     FLAKE_ROOT="${CASE}/tree" \
       BUILD_PACKAGES_SCRIPT="${STUBS}/build-step" \
       BUILD_STUB_PLAN="${CASE}/plan" \
+      BUILD_TARGET="${TARGET}" \
       HASH_FIELD="${FIELD}" \
       STEP_LOG="${BUILDS}" \
       bash "${REVALIDATE_BUILD_HASH}" >"${OUT}" 2>&1
@@ -88,6 +91,31 @@ grep -Fq -- "--flake ${CASE}/tree" "${BUILDS}"
 # The build is asked for one that builds something, because a family that builds nothing reports
 # success, and this script reads success as the hash having been proven.
 grep -Fq -- '--require-build' "${BUILDS}"
+
+# A caller that knows which published package carries its hash names it, so the hash is mined from
+# that build and not from everything the flake happens to publish. The rewritten tree is still
+# verified by the family, because narrowing what a hash is mined from must not narrow what the
+# finished pin is proven against -- that build is the one a pull request is gated by.
+TARGET='caddy'
+run_revalidator 'mismatch sha256-vendorold sha256-vendornew
+ok' '{
+  hash = "sha256-vendorold";
+}'
+grep -Fq 'hash = "sha256-vendornew";' "${CASE}/tree/pin.nix"
+[[ "$(build_count)" -eq 2 ]]
+MINED_BUILD=$(head -1 "${BUILDS}")
+VERIFIED_BUILD=$(tail -1 "${BUILDS}")
+grep -Fq -- '--only caddy' <<<"${MINED_BUILD}"
+if grep -Fq -- '--require-build' <<<"${MINED_BUILD}"; then
+  printf 'a named target is built whether or not the family would build anything, so requiring a build is not asked of it\n' >&2
+  exit 1
+fi
+grep -Fq -- '--require-build' <<<"${VERIFIED_BUILD}"
+if grep -Fq -- '--only' <<<"${VERIFIED_BUILD}"; then
+  printf 'the build that verifies the rewritten tree has to be the whole family, not the mined target\n' >&2
+  exit 1
+fi
+TARGET=''
 
 # A pin whose field is named something other than `hash` is the field that is read and rewritten.
 FIELD='vendorHash'

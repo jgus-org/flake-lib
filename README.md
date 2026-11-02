@@ -93,10 +93,8 @@ flake-lib.lib.readPythonRequirements ./requirements.txt  # => [ "pillow" "sqlalc
 # launcher conventions a service would otherwise hand-roll on makeWrapper: `workDir` is the
 # directory the script runs in, `runtimeInputs` are extra programs on its PATH, `pythonPath`
 # directories are prepended to its PYTHONPATH, `env` exports unconditionally, and `envDefaults`
-# exports only where the environment has not already set the name. `dualStack` puts a
-# `sitecustomize.py` on the PYTHONPATH that no-ops the `IPV6_V6ONLY` asyncio sets before any
-# bind, so a `::` listener serves both families; `meta` merges over the launcher's own
-# `{ mainProgram = name; }`.
+# exports only where the environment has not already set the name. `meta` merges over the
+# launcher's own `{ mainProgram = name; }`.
 flake-lib.lib.mkPythonApplication { pkgs; name; dependencies = p: [ p.fastmcp ]; script = ./host.py; }
 flake-lib.lib.mkPythonApplication {
   pkgs; name; dependencies; script;
@@ -105,9 +103,17 @@ flake-lib.lib.mkPythonApplication {
   pythonPath ? [ ];
   env ? { };
   envDefaults ? { };
-  dualStack ? false;
   meta ? { };
 }
+
+# The one dual-stack IPv6 interposer: `IPV6_V6ONLY=True` setsockopt calls become no-ops, so a
+# `[::]` listener serves both families (asyncio and waitress set the flag before any bind).
+# `site` is a directory holding a `sitecustomize.py`, for a PYTHONPATH the consumer controls —
+# pass it as a `mkPythonApplication` `pythonPath` entry. `withPackage` appends the same
+# interposer to a package's `initFile` (an `__init__.py` the entrypoint transitively imports),
+# for a package whose interpreter environment the consumer does not control.
+flake-lib.lib.pythonDualStackIPv6.site pkgs  # -> sitecustomize directory for PYTHONPATH
+flake-lib.lib.pythonDualStackIPv6.withPackage { package; initFile = "pkg/__init__.py"; }
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.

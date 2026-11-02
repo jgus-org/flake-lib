@@ -1,6 +1,5 @@
 {
   dependencies,
-  dualStack ? false,
   env ? { },
   envDefaults ? { },
   meta ? { },
@@ -14,16 +13,6 @@
 let
   inherit (pkgs) lib;
   baseLayer = pkgs.python3.withPackages dependencies;
-  dualStackSite = pkgs.writeTextDir "sitecustomize.py" ''
-    import socket
-    _orig = socket.socket.setsockopt
-    def setsockopt(self, level, optname, value, *a, **kw):
-        if level == socket.IPPROTO_IPV6 and optname == socket.IPV6_V6ONLY and value:
-            return
-        return _orig(self, level, optname, value, *a, **kw)
-    socket.socket.setsockopt = setsockopt
-  '';
-  pythonDirs = lib.optionals dualStack [ dualStackSite ] ++ pythonPath;
   envFlags = lib.concatStringsSep " " (
     lib.mapAttrsToList (n: v: "--set ${n} ${lib.escapeShellArg (toString v)}") env
   );
@@ -50,8 +39,8 @@ pkgs.runCommand name
       --prefix PATH : ${lib.makeBinPath ([ baseLayer ] ++ runtimeInputs)} \
       ${
         lib.optionalString (
-          pythonDirs != [ ]
-        ) "--prefix PYTHONPATH : ${lib.concatStringsSep ":" (map toString pythonDirs)}"
+          pythonPath != [ ]
+        ) "--prefix PYTHONPATH : ${lib.concatStringsSep ":" (map toString pythonPath)}"
       } \
       ${envFlags} \
       ${envDefaultFlags}

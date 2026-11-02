@@ -25,6 +25,7 @@ let
   pythonWheelhouse = import ./python-wheelhouse.nix;
   pinnedSource = import ./pinned-source.nix;
   pythonBuilders = import ./python-builders.nix;
+  pythonDualStackIPv6 = import ./python-dual-stack-ipv6.nix;
   readPythonRequirements = import ./read-python-requirements.nix { inherit (nixpkgs) lib; };
   formatting = import ./mk-formatting.nix {
     inherit nixpkgs treefmt-nix;
@@ -88,6 +89,7 @@ in
     mkUpdateBranches
     mkUpdateVersion
     mkWheelPackages
+    pythonDualStackIPv6
     readPythonRequirements
     versionMatchesComparison
     warnIfNewerMajor

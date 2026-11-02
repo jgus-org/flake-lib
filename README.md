@@ -93,7 +93,10 @@ flake-lib.lib.readPythonRequirements ./requirements.txt  # => [ "pillow" "sqlalc
 # launcher conventions a service would otherwise hand-roll on makeWrapper: `workDir` is the
 # directory the script runs in, `runtimeInputs` are extra programs on its PATH, `pythonPath`
 # directories are prepended to its PYTHONPATH, `env` exports unconditionally, and `envDefaults`
-# exports only where the environment has not already set the name.
+# exports only where the environment has not already set the name. `dualStack` puts a
+# `sitecustomize.py` on the PYTHONPATH that no-ops the `IPV6_V6ONLY` asyncio sets before any
+# bind, so a `::` listener serves both families; `meta` merges over the launcher's own
+# `{ mainProgram = name; }`.
 flake-lib.lib.mkPythonApplication { pkgs; name; dependencies = p: [ p.fastmcp ]; script = ./host.py; }
 flake-lib.lib.mkPythonApplication {
   pkgs; name; dependencies; script;
@@ -102,6 +105,8 @@ flake-lib.lib.mkPythonApplication {
   pythonPath ? [ ];
   env ? { };
   envDefaults ? { };
+  dualStack ? false;
+  meta ? { };
 }
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs

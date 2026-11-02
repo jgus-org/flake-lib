@@ -89,8 +89,20 @@ flake-lib.lib.readPythonRequirements ./requirements.txt  # => [ "pillow" "sqlalc
 
 # An executable that runs one python source file against a python environment with the named
 # dependencies. The environment is also the application's `.baseLayer`, so an image build can
-# peel the dependency layer away from the script it runs.
+# peel the dependency layer away from the script it runs. The optional arguments carry the
+# launcher conventions a service would otherwise hand-roll on makeWrapper: `workDir` is the
+# directory the script runs in, `runtimeInputs` are extra programs on its PATH, `pythonPath`
+# directories are prepended to its PYTHONPATH, `env` exports unconditionally, and `envDefaults`
+# exports only where the environment has not already set the name.
 flake-lib.lib.mkPythonApplication { pkgs; name; dependencies = p: [ p.fastmcp ]; script = ./host.py; }
+flake-lib.lib.mkPythonApplication {
+  pkgs; name; dependencies; script;
+  workDir ? null;
+  runtimeInputs ? [ ];
+  pythonPath ? [ ];
+  env ? { };
+  envDefaults ? { };
+}
 
 # Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
 # package (postgresql_18, php83, jdk21_headless, …) has a higher major available.

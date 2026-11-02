@@ -575,9 +575,8 @@
                 printf '%s\n' x86_64-linux
                 ;;
               eval)
-                # The published selection `build-packages` reads before it builds, which the
-                # build-failure hash loop reaches through that same tool. The family the updater
-                # counts below is asked for with --raw, so the two shapes tell each other apart.
+                # What `build-packages` selects comes back as JSON; the family the updater counts
+                # below comes back with --raw, so the two fixture shapes tell each other apart.
                 if [[ "''${*}" == *'#packages.'* && "''${*}" == *'--apply'* && "''${*}" == *'--json'* ]]; then
                   printf '%s\n' '{"build":["fixture"],"skip":[]}'
                   exit 0
@@ -673,8 +672,7 @@
         update-version-tests =
           pkgs.runCommand "update-version-tests"
             {
-              # The build-failure hash loop builds through the gate's own tool, so the fixture's
-              # fake `nix` has to be reached through that script text rather than a stand-in.
+              # The recovery build is the gate's own tool, so its script text reaches the fake `nix`.
               BUILD_PACKAGES_SCRIPT = ./scripts/build-packages.sh;
               BUILD_PACKAGES_SELECT = ./scripts/build-packages-select.nix;
               NIX_PATH = "nixpkgs=${pkgs.path}";
@@ -798,7 +796,7 @@
               touch $out
             '';
         # The revalidator builds only through the step the package installs, so this suite needs no
-        # nix at all: the stub is the build, and what is under test is which build gets mined.
+        # nix: the stub is the build.
         revalidate-hash-tests =
           pkgs.runCommand "revalidate-hash-tests"
             {

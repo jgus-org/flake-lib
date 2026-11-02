@@ -162,9 +162,7 @@ grep -Fxq 'skipped by passthru.ciBuildSkip: model' "${ERR}"
 grep -Fxq 'publishes no package for x86_64-linux that a runner builds.' "${OUT}"
 [[ -z $(build_lines) ]]
 
-# A caller whose verdict is that a package was built -- the hash revalidator reads a clean build as
-# "the hash is correct" -- asks for the same tool, and an empty family is a failure for it rather
-# than a pass over nothing.
+# The all-excused family is the same failure.
 STUB_NIX_SELECTION='{"build": [], "skip": ["model"]}' run_tool --require-build && {
   printf 'a required build with every package excused must not pass\n' >&2
   exit 1
@@ -183,19 +181,17 @@ STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' STUB_NIX_BUILD_STATUS=17 run_t
 }
 grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."a"' "${CASE}/nix-log"
 
-# --only builds the one named package and leaves its published siblings alone, which is what lets a
-# caller whose hash comes from one package avoid building everything the flake happens to publish.
+# --only builds the one named package and leaves its published siblings alone.
 STUB_NIX_SELECTION='{"build": ["a", "z"], "skip": ["model"]}' run_tool --only z
 grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."z"' "${CASE}/nix-log"
 grep -Fxq 'building 1 package(s) for x86_64-linux.' "${OUT}"
 
-# A package excused from the gate is still built when it is named, because the name is given for
-# what the package builds, not for what the runner is willing to build.
+# A package excused from the gate is still built when named: the name says what to build, not what
+# to gate.
 STUB_NIX_SELECTION='{"build": ["a"], "skip": ["model"]}' run_tool --only model
 grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."model"' "${CASE}/nix-log"
 
-# A name this flake does not publish is refused here rather than reaching nix as a build error over a
-# target nobody chose.
+# A name this flake does not publish is refused rather than reaching nix as a build error.
 STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' run_tool --only nope && {
   printf 'a package outside the published family must not be built\n' >&2
   exit 1

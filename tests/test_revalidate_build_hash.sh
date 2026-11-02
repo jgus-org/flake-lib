@@ -2,16 +2,11 @@
 
 set -euo pipefail
 
-# The revalidator's whole interface is a tree and the build that tree is verified by: it builds what
-# the flake publishes, or the one package a caller names as carrying its hash, mines the hash a
-# mismatch states, rewrites the pin field that holds it, and builds the family again to prove the
-# rewrite. What this suite owes is that the build it mines is the build step the package installs,
-# not one the script names for itself -- a tool free to build what it likes is a tool free to build
-# something the gate will not, which is how a producer's update came to fail on an attribute no flake
-# publishes.
+# What this suite owes is that the build the hash is recovered from is the build step the installed
+# package provides rather than one the script names for itself -- which is how a producer's update
+# came to fail on an attribute no flake publishes.
 
-# This suite runs the script through bash for determinism; flake.nix's package wrapper execs it
-# directly, so a missing executable bit breaks every producer's run and nothing here would notice.
+# The suite runs the script through bash, so nothing else here would notice a bit the wrapper needs.
 [[ -x ${REVALIDATE_BUILD_HASH:?} ]] || {
   printf 'revalidator script is not executable, so the package wrapper cannot exec it: %s\n' "${REVALIDATE_BUILD_HASH}" >&2
   exit 1
@@ -21,9 +16,8 @@ CASES=$(mktemp -d)
 STUBS=$(mktemp -d)
 trap 'rm -rf "${CASES}" "${STUBS}"' EXIT
 
-# The stub stands in for the build step and is run as a script text under bash, so it needs neither
-# an executable bit nor a shebang that resolves. Each build consumes the first line of the plan,
-# which says what that build reports; a plan with no lines left builds clean.
+# The stub is run as a script text under bash, so it needs no exec bit and no resolvable shebang.
+# Each build consumes the plan's first line; a plan with no lines left builds clean.
 cat <<'STUB' >"${STUBS}/build-step"
 printf '%s\n' "$*" >>"${STEP_LOG:?}"
 OUTCOME=''
@@ -58,8 +52,7 @@ run_revalidator() {
   OUT="${CASE}/out"
   BUILDS="${CASE}/builds"
   : >"${BUILDS}"
-  # The tree is named through the environment while the run starts somewhere else, so a revalidator
-  # that read its own working directory instead would build the wrong tree and still exit clean.
+  # The run starts outside the tree, so a revalidator reading its own directory fails here.
   (
     cd "${CASES}"
     FLAKE_ROOT="${CASE}/tree" \
@@ -74,8 +67,7 @@ run_revalidator() {
 
 build_count() { wc -l <"${BUILDS}"; }
 
-# A vendor hash that drifted: the mismatch states the hash the pin carries and the one the build
-# produced, so the field is rewritten to the second and the tree is built again to prove it.
+# A drifted hash is rewritten to the one the build produced.
 run_revalidator 'mismatch sha256-vendorold sha256-vendornew
 ok' '{
   plugins = [ "example@v1.0.0" ];
@@ -88,14 +80,11 @@ grep -Fq 'hash = "sha256-vendornew";' "${CASE}/tree/pin.nix"
 }
 grep -Fq -- "--flake ${CASE}/tree" "${BUILDS}"
 
-# The build is asked for one that builds something, because a family that builds nothing reports
-# success, and this script reads success as the hash having been proven.
+# A family that builds nothing reports success, so the recovery build is asked for a build.
 grep -Fq -- '--require-build' "${BUILDS}"
 
-# A caller that knows which published package carries its hash names it, so the hash is mined from
-# that build and not from everything the flake happens to publish. The rewritten tree is still
-# verified by the family, because narrowing what a hash is mined from must not narrow what the
-# finished pin is proven against -- that build is the one a pull request is gated by.
+# Naming the package narrows the recovery build without narrowing what the finished pin is proven
+# against.
 TARGET='caddy'
 run_revalidator 'mismatch sha256-vendorold sha256-vendornew
 ok' '{
@@ -128,8 +117,7 @@ grep -Fq 'vendorHash = "sha256-vendornew";' "${CASE}/tree/pin.nix"
 grep -Fq 'hash = "sha256-source";' "${CASE}/tree/pin.nix"
 FIELD='hash'
 
-# A pin that carries the field named by HASH_FIELD beside a field whose name ends with it: the
-# rewrite is anchored to the start of the line, so `hash` never reaches a `sourceHash` beside it.
+# The rewrite is anchored to line start, so `hash` never reaches a `sourceHash` beside it.
 run_revalidator 'mismatch sha256-vendorold sha256-vendornew
 ok' '{
   sourceHash = "sha256-source";
@@ -138,8 +126,7 @@ ok' '{
 grep -Fq 'hash = "sha256-vendornew";' "${CASE}/tree/pin.nix"
 grep -Fq 'sourceHash = "sha256-source";' "${CASE}/tree/pin.nix"
 
-# The family is built whole, so a mismatch over some other published package is not this field's
-# drift: nothing is written, and the run says it did not find this field's mismatch.
+# A mismatch over a hash this field does not hold is not this field's drift.
 run_revalidator 'mismatch sha256-someone-elses sha256-vendornew
 ok' '{
   hash = "sha256-vendorold";
@@ -150,8 +137,7 @@ ok' '{
 grep -Fq 'hash = "sha256-vendorold";' "${CASE}/tree/pin.nix"
 [[ "$(build_count)" -eq 1 ]]
 
-# A published package that does not build for a reason other than the hash has no correct hash to
-# recover: the run stops, leaves the pin alone, and does not rewrite and rebuild on a guess.
+# A build that fails for another reason has no correct hash to recover.
 if run_revalidator 'fails' '{
   hash = "sha256-vendorold";
 }'; then
@@ -164,8 +150,7 @@ grep -Fq 'hash = "sha256-vendorold";' "${CASE}/tree/pin.nix"
   exit 1
 }
 
-# The build step arrives with the installed package, so a caller that runs the script text without
-# it has to be told rather than report a hash it never built anything for.
+# Running the script text without its installed build step is an error, not a verdict.
 CASE=$(mktemp -d -p "${CASES}")
 mkdir -p "${CASE}/tree"
 printf '%s\n' '{

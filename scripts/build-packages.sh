@@ -96,10 +96,9 @@ jq -e 'has("build") and has("skip")' >/dev/null <<<"${SELECTION}" ||
 mapfile -t BUILD_NAMES < <(jq -r '.build[]' <<<"${SELECTION}")
 mapfile -t SKIPPED_NAMES < <(jq -r '.skip[]' <<<"${SELECTION}")
 
-# A name given to --only is published or the caller asked for something this flake does not have,
-# and an absent attribute would otherwise reach nix as a build error over a target nobody chose.
-# The gate's excuse is not asked of: the name is built whether or not a runner would build it,
-# because the caller named it for what it builds, not for what the gate gates.
+# A name outside the published family is refused here rather than reaching nix as a build error over
+# a target nobody chose. The gate's excuse is not asked of it: the name says what to build, not what
+# to gate.
 if [[ -n ${ONLY} ]]; then
   ONLY_PUBLISHED=false
   for NAME in "${BUILD_NAMES[@]}" "${SKIPPED_NAMES[@]}"; do

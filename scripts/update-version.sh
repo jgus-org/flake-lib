@@ -533,14 +533,10 @@ revalidate_build_hashes() {
   if [[ -n ${BUILD_TARGET:-} ]]; then
     DISCOVERY_ARGS=(--only "${BUILD_TARGET}")
   fi
-  # Every published package is built and its combined log mined, so no producer has to name the
-  # attribute that carries the drifted hash: a mismatch states its own hash, and the field that
-  # holds it is looked up from there. A producer that knows which published package carries its hash
-  # narrows this build to that package, because the question this build answers is what a hash
-  # fetches, not whether the tree builds. The build itself is flake-lib's own `build-packages`, the
-  # same one the publication path and the pull-request gate run, so one definition names the
-  # targets. It is asked to build something: a family that builds nothing would report the
-  # incomplete pin's hashes as resolved without having built the package carrying them.
+  # A mismatch states its own hash, so the field holding it is looked up from there and no producer
+  # has to name a target; a producer that does narrows this build to what its hash fetches. A family
+  # that builds nothing would report the incomplete pin's hashes as resolved, so a build is required
+  # either way.
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
     set +e
@@ -548,8 +544,7 @@ revalidate_build_hashes() {
     rc=$?
     set -e
     if ((rc == 0)); then
-      # A narrowed discovery build has proven one package's fetch, not the tree. The run commits
-      # what the pull-request gate would have built, so the family is built before it returns.
+      # The narrowed build proved one package's fetch, not the tree the run commits.
       if [[ -n ${BUILD_TARGET:-} ]]; then
         bash "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build
       fi

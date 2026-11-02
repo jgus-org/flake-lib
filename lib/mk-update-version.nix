@@ -14,10 +14,7 @@
 # so the tree a run commits is the tree a pull request would have gated. Hash discovery is the
 # exception: `hashMode = "build-failure"` builds what the flake publishes and mines the mismatch out
 # of that log, which is the one place this tool starts a build of its own. `buildTarget` names the
-# published package that build is mined from, for a flake whose hash belongs to one package and
-# publishes more than that. The family stays the default, and a narrowed discovery build is still
-# followed by the whole family before the run commits, because the discovery build is asked what it
-# fetches and the family build is what proves the tree.
+# published package that build is mined from; the family is still built whole before the run commits.
 {
   artifactFingerprint ? "",
   artifactHook ? null,
@@ -98,9 +95,6 @@ pkgs.writeShellApplication {
     ARTIFACT_FINGERPRINT = artifactFingerprint;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
     BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
-    # The build-failure hash loop is the only build this tool starts, so it starts the same build a
-    # pull request is gated by, run from the script text the published tools wrap rather than by
-    # nesting one wrapper in another.
     BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
     BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";
     BUILD_TARGET = buildTarget;

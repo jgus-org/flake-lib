@@ -440,8 +440,7 @@ fi
 grep -Fq 'resolved once each' <<<"${BOUND_OUTPUT}"
 [[ "$(wc -l <"${BOUND_ROOT}/builds.log")" -eq 3 ]]
 
-# Over the family, one build per hash plus one that resolves them all: the build that discovers a
-# hash is also the build that proves the tree, because it is the same build.
+# Over the family, the build that discovers a hash is the build that proves the tree.
 PLAIN_ROOT="${TEST_ROOT}/build-failure-plain"
 PLAIN_PLAN="${TEST_ROOT}/plain.plan"
 cat >"${PLAIN_PLAN}" <<'EOF'
@@ -452,9 +451,7 @@ run_build_failure_case "${PLAIN_ROOT}" "${PLAIN_PLAN}" '["vendorHash"]' '["vendo
 grep -Fq 'vendorHash = "sha256-vendornew";' "${PLAIN_ROOT}/pin.nix"
 [[ "$(wc -l <"${PLAIN_ROOT}/builds.log")" -eq 2 ]]
 
-# A producer that names the package carrying its hash narrows the build the hash is recovered from,
-# and the run still commits what the whole family builds: the family is built once the last hash
-# resolves, so naming a target cannot trade away the build a pull request is gated by.
+# A named target narrows the recovery build; the family is still built before the run commits.
 NARROW_ROOT="${TEST_ROOT}/build-failure-narrowed"
 NARROW_PLAN="${TEST_ROOT}/narrowed.plan"
 cat >"${NARROW_PLAN}" <<'EOF'
@@ -466,8 +463,7 @@ run_build_failure_case "${NARROW_ROOT}" "${NARROW_PLAN}" '["vendorHash"]' '["ven
 grep -Fq 'vendorHash = "sha256-vendornew";' "${NARROW_ROOT}/pin.nix"
 [[ "$(wc -l <"${NARROW_ROOT}/builds.log")" -eq 3 ]]
 
-# A name this flake does not publish stops the run where the family would have carried on, and
-# stops it before anything is built.
+# A name this flake does not publish stops the run before anything is built.
 STRAY_ROOT="${TEST_ROOT}/build-failure-stray-target"
 STRAY_PLAN="${TEST_ROOT}/stray.plan"
 cat >"${STRAY_PLAN}" <<'EOF'

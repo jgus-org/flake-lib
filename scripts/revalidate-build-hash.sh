@@ -1,4 +1,4 @@
-#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#nix nixpkgs#gnused nixpkgs#coreutils --command bash
+#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#jq nixpkgs#nix nixpkgs#gnused nixpkgs#coreutils --command bash
 
 # Revalidate a fixed-output (vendor) hash that can't be prefetched — Go modules, cargo deps, npm FODs, xcaddy plugin trees — by building and recovering the correct hash from nix's mismatch error.
 #
@@ -6,13 +6,9 @@
 #   BUILD_TARGET published package the hash is mined from (default: the whole published family)
 #
 # The mismatch is attributed to this field by the hash it states as the one in use, so a drift in
-# some other package is not written into this field whether the build was asked for one package or
-# for all of them. A caller whose hash comes from one known package names it: the family stays the
-# default because nothing about a producer is required to be correct for the default to work, and
-# naming a package that this flake does not publish is an error rather than a fallback. Only the
-# build the hash is mined from narrows -- the tree is still verified by the whole family, the build
-# a pull request is gated by. Run from the flake root (or set FLAKE_ROOT). Used directly by
-# manifest-style flakes (e.g. caddy).
+# some other package is not written into this field. Only the recovery build narrows: the rewritten
+# tree is still verified over the whole family. Run from the flake root (or set FLAKE_ROOT). Used
+# directly by manifest-style flakes (e.g. caddy).
 
 set -euo pipefail
 
@@ -27,10 +23,8 @@ if [[ ! -f ${pin} ]]; then
   exit 1
 fi
 
-# Reads the family's combined build log for the hash a mismatch produced. A mismatch states the hash
-# it was built against on the line above the one it produced, so the two are read as a pair: the
-# first pair naming the hash this field holds is the one this field is wrong about. Both labels are
-# padded, so the lines are read as the two fields they are rather than cut at a fixed distance.
+# The hash a mismatch was built against is stated above the one it produced, so the pair is read as
+# fields rather than cut at a fixed distance, and the first pair naming this field's hash is it.
 mine_drift() {
   local line label value specified=''
   while IFS= read -r line; do

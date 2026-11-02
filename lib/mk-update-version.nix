@@ -2,6 +2,7 @@
 #   hashMode     : "prefetch" (default) or "build-failure" (vendor hashes that can't be prefetched)
 #   buildFailureHash  : the one pin field name whose value the build's hash mismatch can name
 #   buildFailureHashes : the pin field names any of which the build's hash mismatch can name
+#   buildTarget    : published package a build-failure hash is mined from (default: the whole published family)
 #   extraHashes  : extra pin field names whose values the artifactHook emits (e.g. [ "npmDepsHash" ])
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
 #   formatter    : the repository's own formatter package (e.g. self.formatter.${system}). Required when a pin field name carries a dot: that field is written as a nested attribute, and only the org formatter defines that shape.
@@ -10,16 +11,20 @@
 #
 # This tool evaluates what the flake publishes and starts no package build of its own: the
 # publication path runs flake-lib's `build-and-check`, the same command that gates a pull request,
-# so the tree a run commits is the tree a pull request would have gated. There is no argument
-# naming a build target because the target is what that path standardizes on. Hash discovery is the
-# exception: `hashMode = "build-failure"` builds what the flake publishes and mines the mismatch
-# out of that log, which is the one place this tool starts a build of its own.
+# so the tree a run commits is the tree a pull request would have gated. Hash discovery is the
+# exception: `hashMode = "build-failure"` builds what the flake publishes and mines the mismatch out
+# of that log, which is the one place this tool starts a build of its own. `buildTarget` names the
+# published package that build is mined from, for a flake whose hash belongs to one package and
+# publishes more than that. The family stays the default, and a narrowed discovery build is still
+# followed by the whole family before the run commits, because the discovery build is asked what it
+# fetches and the family build is what proves the tree.
 {
   artifactFingerprint ? "",
   artifactHook ? null,
   buildFailureHash ?
     if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
   buildFailureHashes ? [ ],
+  buildTarget ? "",
   extraHashes ? [ ],
   formatter ? null,
   hashMode ? "prefetch",
@@ -98,6 +103,7 @@ pkgs.writeShellApplication {
     # nesting one wrapper in another.
     BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
     BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";
+    BUILD_TARGET = buildTarget;
     CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
     DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
     EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;

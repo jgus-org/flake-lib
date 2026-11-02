@@ -529,19 +529,32 @@ next_unresolved_failure_field() {
 revalidate_build_hashes() {
   local -A BUILD_FAILURE_RESOLVED=()
   local out rc specified new field owner
-  # Every published package is built and its combined log mined, so no producer is asked to name
-  # the attribute that carries the drifted hash: a mismatch states its own hash, and the field that
-  # holds it is looked up from there. The build itself is flake-lib's own `build-packages`, the
+  local -a DISCOVERY_ARGS=(--require-build)
+  if [[ -n ${BUILD_TARGET:-} ]]; then
+    DISCOVERY_ARGS=(--only "${BUILD_TARGET}")
+  fi
+  # Every published package is built and its combined log mined, so no producer has to name the
+  # attribute that carries the drifted hash: a mismatch states its own hash, and the field that
+  # holds it is looked up from there. A producer that knows which published package carries its hash
+  # narrows this build to that package, because the question this build answers is what a hash
+  # fetches, not whether the tree builds. The build itself is flake-lib's own `build-packages`, the
   # same one the publication path and the pull-request gate run, so one definition names the
   # targets. It is asked to build something: a family that builds nothing would report the
   # incomplete pin's hashes as resolved without having built the package carrying them.
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
     set +e
-    out=$(bash "${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" --require-build 2>&1)
+    out=$(bash "${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" "${DISCOVERY_ARGS[@]}" 2>&1)
     rc=$?
     set -e
-    ((rc == 0)) && return 0
+    if ((rc == 0)); then
+      # A narrowed discovery build has proven one package's fetch, not the tree. The run commits
+      # what the pull-request gate would have built, so the family is built before it returns.
+      if [[ -n ${BUILD_TARGET:-} ]]; then
+        bash "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build
+      fi
+      return 0
+    fi
     specified=$(printf '%s\n' "${out}" | sed -nE 's/.*specified:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
     new=$(printf '%s\n' "${out}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
     if [[ -z ${new} ]]; then

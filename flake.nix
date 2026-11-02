@@ -575,6 +575,13 @@
                 printf '%s\n' x86_64-linux
                 ;;
               eval)
+                # The published selection `build-packages` reads before it builds, which the
+                # build-failure hash loop reaches through that same tool. The family the updater
+                # counts below is asked for with --raw, so the two shapes tell each other apart.
+                if [[ "''${*}" == *'#packages.'* && "''${*}" == *'--apply'* && "''${*}" == *'--json'* ]]; then
+                  printf '%s\n' '{"build":["fixture"],"skip":[]}'
+                  exit 0
+                fi
                 # The published-family evaluation the updater runs before it writes a pin. The
                 # count is not what the fixture is about, only that the updater asked -- and the
                 # failure injection and the evaluation log keep applying to it, because a run that
@@ -666,6 +673,10 @@
         update-version-tests =
           pkgs.runCommand "update-version-tests"
             {
+              # The build-failure hash loop builds through the gate's own tool, so the fixture's
+              # fake `nix` has to be reached through that script text rather than a stand-in.
+              BUILD_PACKAGES_SCRIPT = ./scripts/build-packages.sh;
+              BUILD_PACKAGES_SELECT = ./scripts/build-packages-select.nix;
               NIX_PATH = "nixpkgs=${pkgs.path}";
               TEST_BASH = pkgs.bash;
               TEST_FORMATTER = pkgs.lib.getExe orgFormatting.formatter;
@@ -784,6 +795,23 @@
             }
             ''
               bash ${./tests/test_build_and_check.sh}
+              touch $out
+            '';
+        # The revalidator builds only through the step the package installs, so this suite needs no
+        # nix at all: the stub is the build, and what is under test is which build gets mined.
+        revalidate-hash-tests =
+          pkgs.runCommand "revalidate-hash-tests"
+            {
+              REVALIDATE_BUILD_HASH = ./scripts/revalidate-build-hash.sh;
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.coreutils
+                pkgs.gnugrep
+                pkgs.gnused
+              ];
+            }
+            ''
+              bash ${./tests/test_revalidate_build_hash.sh}
               touch $out
             '';
         # The selection is pure Nix handed to `nix eval --apply`, so it is tested as pure
@@ -913,6 +941,7 @@
             build-and-check-tests
             build-packages-select-tests
             build-packages-tests
+            revalidate-hash-tests
             update-workflows-tests
             wait-for-deps-tests
             workflow-templates

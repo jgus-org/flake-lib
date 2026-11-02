@@ -11,6 +11,15 @@ pkgs.writeShellApplication {
   # The default HASH_FIELD value "hash" collides with the `hash` shell builtin, so writeShellApplication's generated `HASH_FIELD=hash` trips SC2209 (false positive).
   excludeShellChecks = [ "SC2209" ];
   name = "revalidate-hash";
-  runtimeEnv.HASH_FIELD = hashField;
+  runtimeEnv = {
+    # The build the hash is mined from is the same one a pull request is gated by, run from the
+    # script text the published tool wraps rather than by nesting one wrapper in another.
+    BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
+    BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";
+    HASH_FIELD = hashField;
+  };
+  # That build step reads its selection with jq, so the tool that runs it carries jq though this
+  # script never calls it directly.
+  runtimeInputs = [ pkgs.jq ];
   text = ''exec ${../scripts/revalidate-build-hash.sh} "$@"'';
 }

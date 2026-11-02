@@ -93,6 +93,11 @@ pkgs.writeShellApplication {
     ARTIFACT_FINGERPRINT = artifactFingerprint;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
     BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
+    # The build-failure hash loop is the only build this tool starts, so it starts the same build a
+    # pull request is gated by, run from the script text the published tools wrap rather than by
+    # nesting one wrapper in another.
+    BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
+    BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";
     CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
     DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
     EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;

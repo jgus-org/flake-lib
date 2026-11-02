@@ -226,8 +226,9 @@ its own, since the publication path runs the pull-request gate's command instead
 one build the updater does start is hash discovery: a fixed-output hash that cannot be prefetched
 is recovered from a package build's hash-mismatch error, which is what
 `hashMode = "build-failure"` and `buildFailureHash`/`buildFailureHashes` select. That discovery
-builds `packages.default`, so a flake that uses it has to publish one; a flake with no
-`packages.default` says so rather than finishing a pin whose hashes were never resolved.
+runs the same build a pull request is gated by, over the same published family, and asks for a
+build rather than a clean report over nothing to build: a flake that publishes no package this
+runner builds fails there rather than finishing a pin whose hashes were never resolved.
 
 `buildFailureHash` names one additional pin field whose value is populated from
 the package build's fixed-output hash mismatch. This supports dependency fetchers
@@ -284,10 +285,11 @@ retries the same version, so the failure is visible and the published state stay
 Aggregate publication builds nothing: it moves a ref to a commit an exact branch
 already published, and that refresh built it.
 
-Hash discovery is the one place flake-lib still names `packages.default`. A build-failure hash can
-only be recovered from a build of one named package, so `hashMode = "build-failure"` requires a
-producer to publish one; a producer with no `packages.default` is told so instead of finishing a
-pin whose hashes were never resolved.
+Hash discovery builds the family the gate builds, so it names no attribute of its own: a producer
+whose deliverable is an overlay publishes no package it deploys, and the hash it pins is recovered
+from the family it does publish. What it requires instead is that the build be a build: a producer
+publishing no package this runner builds is told so there rather than finishing a pin whose hashes
+were never resolved.
 
 `buildVerificationSkip` is the way out, and the reason belongs in a comment beside it:
 
@@ -513,6 +515,9 @@ gated by the next pull request without a workflow change.
 github:jgus-org/flake-lib/v1#build-packages` -- and takes the arguments the gate passes through:
 `--dry-run` prints the installables it would build, which is how a repository is audited before
 adopting; `--system` selects another system's family and `--flake` reads another tree.
+`--require-build` makes a family with nothing to build a failure instead of a clean exit, for a
+caller that reads a clean exit as something having been built -- hash discovery does, and a hash
+never built is not a hash validated.
 
 Adopting it names the template the way every other flake-lib workflow is adopted, and it
 then refreshes with the rest:

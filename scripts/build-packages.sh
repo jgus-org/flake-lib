@@ -13,6 +13,7 @@ set -euo pipefail
 FLAKE='.'
 SYSTEM=''
 DRY_RUN=false
+REQUIRE_BUILD=false
 
 die() {
   printf 'error: %s\n' "${1}" >&2
@@ -21,11 +22,13 @@ die() {
 
 usage() {
   cat >&2 <<'USAGE'
-usage: build-packages [--flake URL] [--system SYSTEM] [--dry-run]
+usage: build-packages [--flake URL] [--system SYSTEM] [--dry-run] [--require-build]
 
-  --flake URL     flake to build, default: the working directory
-  --system SYSTEM system whose packages are built, default: the building system
-  --dry-run       report what would be built and build nothing
+  --flake URL        flake to build, default: the working directory
+  --system SYSTEM    system whose packages are built, default: the building system
+  --dry-run          report what would be built and build nothing
+  --require-build    fail when nothing would be built, for a caller whose verdict is that
+                     something was built
 USAGE
   exit 2
 }
@@ -44,6 +47,10 @@ while [[ ${#} -gt 0 ]]; do
     ;;
   --dry-run)
     DRY_RUN=true
+    shift
+    ;;
+  --require-build)
+    REQUIRE_BUILD=true
     shift
     ;;
   -h | --help) usage ;;
@@ -65,6 +72,9 @@ trap 'rm -f "${STDERR}"' EXIT
 if ! SELECTION=$(nix eval --no-write-lock-file --json --apply "$(cat "${SELECT}")" "${FLAKE}#packages.${SYSTEM}" 2>"${STDERR}"); then
   cat "${STDERR}" >&2
   if grep -Fq "or 'packages.${SYSTEM}'" "${STDERR}"; then
+    if [[ ${REQUIRE_BUILD} == true ]]; then
+      die "a build was required, and ${FLAKE} publishes no packages for ${SYSTEM}"
+    fi
     printf 'publishes no packages for %s, so there is nothing to build.\n' "${SYSTEM}"
     exit 0
   fi
@@ -92,6 +102,9 @@ for NAME in "${BUILD_NAMES[@]}"; do
 done
 
 if ((${#TARGETS[@]} == 0)); then
+  if [[ ${REQUIRE_BUILD} == true ]]; then
+    die "a build was required, and ${FLAKE} publishes no package for ${SYSTEM} that a runner builds"
+  fi
   printf 'publishes no package for %s that a runner builds.\n' "${SYSTEM}"
   exit 0
 fi

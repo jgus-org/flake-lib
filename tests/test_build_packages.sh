@@ -117,6 +117,17 @@ STUB_NIX_EVAL_STATUS=1 \
 grep -Fxq 'publishes no packages for aarch64-darwin, so there is nothing to build.' "${OUT}"
 [[ -z $(build_lines) ]]
 
+# The same absent family asked of a caller that needs a build is a failure, because that caller's
+# clean exit would be read as something having been built.
+STUB_NIX_EVAL_STATUS=1 \
+  STUB_NIX_EVAL_STDERR="error: flake 'github:eg/x' does not provide attribute 'packages.x86_64-linux.packages.aarch64-darwin', 'legacyPackages.x86_64-linux.packages.aarch64-darwin' or 'packages.aarch64-darwin'" \
+  run_tool --system aarch64-darwin --require-build && {
+  printf 'a required build over a flake with no family must not pass\n' >&2
+  exit 1
+}
+grep -Fxq 'error: a build was required, and . publishes no packages for aarch64-darwin' "${ERR}"
+[[ -z $(build_lines) ]]
+
 # A flake that fails to evaluate is not that. The reason reaches the caller, and the run
 # does not pass.
 STUB_NIX_EVAL_STATUS=1 STUB_NIX_EVAL_STDERR='error: boom' run_tool && {
@@ -150,6 +161,20 @@ STUB_NIX_SELECTION='{"build": [], "skip": ["model"]}' run_tool
 grep -Fxq 'skipped by passthru.ciBuildSkip: model' "${ERR}"
 grep -Fxq 'publishes no package for x86_64-linux that a runner builds.' "${OUT}"
 [[ -z $(build_lines) ]]
+
+# A caller whose verdict is that a package was built -- the hash revalidator reads a clean build as
+# "the hash is correct" -- asks for the same tool, and an empty family is a failure for it rather
+# than a pass over nothing.
+STUB_NIX_SELECTION='{"build": [], "skip": ["model"]}' run_tool --require-build && {
+  printf 'a required build with every package excused must not pass\n' >&2
+  exit 1
+}
+grep -Fxq 'error: a build was required, and . publishes no package for x86_64-linux that a runner builds' "${ERR}"
+[[ -z $(build_lines) ]]
+
+# The same ask over a family that does exist builds exactly what it would have built without it.
+STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' run_tool --require-build
+grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."a"' "${CASE}/nix-log"
 
 # A build that fails is the gate failing, with the builder's own output passed through.
 STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' STUB_NIX_BUILD_STATUS=17 run_tool && {

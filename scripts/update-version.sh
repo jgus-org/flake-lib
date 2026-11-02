@@ -531,16 +531,14 @@ revalidate_build_hashes() {
   local out rc specified new field owner
   # Every published package is built and its combined log mined, so no producer is asked to name
   # the attribute that carries the drifted hash: a mismatch states its own hash, and the field that
-  # holds it is looked up from there.
-  local SYSTEM
-  SYSTEM=$(nix config show system) || {
-    echo "error: this nix does not report the system it builds for" >&2
-    exit 1
-  }
+  # holds it is looked up from there. The build itself is flake-lib's own `build-packages`, the
+  # same one the publication path and the pull-request gate run, so one definition names the
+  # targets. It is asked to build something: a family that builds nothing would report the
+  # incomplete pin's hashes as resolved without having built the package carrying them.
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
     set +e
-    out=$(nix build "${FLAKE_ROOT}#packages.${SYSTEM}" --no-link 2>&1)
+    out=$(bash "${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" --require-build 2>&1)
     rc=$?
     set -e
     ((rc == 0)) && return 0

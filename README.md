@@ -61,10 +61,7 @@ flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 
 # Low-level: bespoke flakes supply their own package derivation.
 flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
-flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" "requirements.in" "requirements-*.lock" "wheels-*.json" "python-readiness.json" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
-flake-lib.lib.mkPythonPackage  { pkgs; source; package; pin; }   # a python package or application from PyPI or a GitHub source tree
-# mkPypiPackage is this builder under the name it shipped with before it fetched GitHub
-# trees; new consumers call mkPythonPackage. The alias leaves with the next API family.
+flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
 flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
@@ -72,13 +69,6 @@ flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; meta ? { 
 flake-lib.lib.mkOciImage       { pkgs; source; pin; meta ? {}; }
 flake-lib.lib.versionMatchesComparison actual { operator; version; }
 flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
-flake-lib.lib.pythonEnvironments                                         # prepared wheelhouse environments: pythonVersions + systems + targets
-flake-lib.lib.platformTags     { pythonVersion; platform; }              # "3.13" + "x86_64-manylinux_2_28" -> uv/pip tag attrs
-flake-lib.lib.mkPythonWheelhouse { pkgs; sources; extraRequirements ? []; noEmit ? []; pythonVersions ? pythonEnvironments.pythonVersions; systems ? pythonEnvironments.systems; index ? "https://pypi.org/simple"; depsCore ? flake-lib.lib.depsCore; }  # -> { hook; fingerprint; }
-flake-lib.lib.wheelhouseArtifactPaths { root; pythonVersion; system; pythonVersions ? pythonEnvironments.pythonVersions; } # -> { requirementsLock; wheelManifest; }
-flake-lib.lib.mkWheelhouse     { pkgs; wheels; noEmit ? []; }             # target-qualified wheels JSON path or list -> { files; wheelhouse; }
-flake-lib.lib.installWheelhouse { python; target; wheelhouse; }          # bash snippet installing a wheelhouse into a target dir
-flake-lib.lib.mkWheelhouseSiteTree { pkgs; python; wheelhouse; checkImports ? []; nativeBuildInputs ? []; buildInputs ? []; .. } # -> derivation installing a wheelhouse as a site tree, ELF-patched, with a clean-interpreter import check
 
 # The distribution names a requirements file asks for, in the shape a python package set
 # names its members: lowercased, `.` and `_` folded to `-`, specifiers, extras, markers,
@@ -253,132 +243,6 @@ sourceHash, pnpmDepsHash }` branch placeholders.
 
 `eachDefaultSystem` and `eachDefaultLinuxSystem` replace `flake-utils.lib.eachDefaultSystem`. They differ from flake-utils in one case: under `--impure`, flake-utils adds `builtins.currentSystem` to the set when the evaluating host is not already in it, while these helpers iterate exactly the hosts they name.
 
-### Python wheel closures
-
-`mkPythonWheelhouse` is an `artifactHook` that pins a consumer's complete python
-dependency closure as hash-pinned wheels instead of per-package flakes or
-floating nixpkgs pythonPackages. It returns `{ hook; fingerprint; }`: pass
-`hook` through `mkComposedHook` (or directly) as the `artifactHook`, and
-`fingerprint` to `mkUpdateVersion`'s generic `artifactFingerprint` so the hook
-re-runs when its complete generation contract moves, even at an unchanged
-version and rev. `mkUpdateVersion` adds the `artifactFingerprint` pin field
-automatically and rejects a hook result that does not emit the declared value.
-
-flake-lib pre-prepares wheel sets for these environments:
-
-```nix
-flake-lib.lib.pythonEnvironments
-# {
-#   pythonVersions = [ "3.13" "3.14" ];
-#   systems = defaultSystems;  # the standard three
-#   targets = {
-#     x86_64-linux = { uvPlatform = "x86_64-manylinux_2_28"; };
-#     aarch64-linux = { uvPlatform = "aarch64-manylinux_2_28"; };
-#     x86_64-darwin = { uvPlatform = "x86_64-apple-darwin"; };
-#     aarch64-darwin = { uvPlatform = "aarch64-apple-darwin"; };
-#   };
-# }
-```
-
-The Python-version list and system-to-platform mapping form the prepared compatibility menu: every pair is claimed support, so every environment resolves before mutation. If replacement or pruning raises `OSError`, the hook attempts to restore every pre-publication path and then fails, blocking upstream branch publication. Persistent filesystem failures during restoration or abrupt process termination can leave the worktree partial. Removed pairs, legacy unqualified artifacts, and the obsolete `python-readiness.json` are pruned after a successful resolution. A consumer may narrow `pythonVersions` or `systems` only for a demonstrated incompatibility. `requirementsHash` and `wheelManifestHash` are deterministic aggregates over the complete ordered `(python, system)` environment set.
-
-The client declares only its requirements source:
-
-```nix
-wheelhouse = flake-lib.lib.mkPythonWheelhouse {
-  inherit pkgs;
-  sources = [
-    { kind = "source-pyproject"; groups = [ "studio" ]; buildSystemRequires = false; }
-    { kind = "source-file"; path = "backend/requirements/studio.txt"; }
-    { kind = "repo-file"; path = "requirements.in"; }
-  ];
-};
-# mkUpdateVersion { ...; artifactHook = lib.getExe wheelhouse.hook; artifactFingerprint = wheelhouse.fingerprint; extraHashes = [ "requirementsHash" "wheelManifestHash" ]; }
-```
-
-`source-pyproject` and `source-file` read the pinned upstream source (cloned at
-`NEW_REV`; `buildSystemRequires` appends the pyproject's build-system requires);
-`repo-file` reads the consumer's own repository. Requirements are merged in
-order, deduplicated, resolved per environment with `uv pip compile
---generate-hashes`, fetched with `pip download --require-hashes --only-binary
-:all:` over the full ≤-target manylinux tag ladder (pip matches platform tags
-exactly, unlike uv's resolver), and recorded per wheel as `name`, `version`,
-`filename`, `url`, `sha256`, `size`.
-Requirements-file directives such as `-r` and `-c` are rejected; flatten
-included requirements and constraints into the declared source file before
-using it as a wheelhouse source.
-
-`noEmit` names packages that stay in the resolution graph but are omitted from
-the emitted lock and wheelhouse (`uv pip compile --no-emit-package`): the
-graph keeps honoring their metadata, and their own dependencies still resolve
-and are emitted. This serves environments that layer wheels over a stack the
-deployment provides separately — a consumer supplying CUDA-enabled `torch`
-from its own package set still needs `torch`'s dependents resolved against
-`torch`'s metadata, while a lock that carried `torch` itself would install a
-second, mismatched copy beside the provided one.
-
-`mkWheelhouse` takes the same `noEmit` for the other side of that boundary. A
-committed manifest records what the resolution fetched, so exclusion at the generator alone still leaves every consumer of an already-committed manifest installing the provided package beside its own copy; `noEmit` at eval time keeps it out of the artifact whatever the lock says, and never fetches it. It accepts distribution names, matched case- and separator-insensitively, or a predicate over the name as the manifest records it, which covers a family of names a resolution may or may not emit (`nvidia-*`). A listed name matching no wheel is reported at eval time rather than ignored, so an exclusion that stops matching is visible instead of silently reinstating the duplicate.
-
-At eval time `mkWheelhouse` turns a target-qualified manifest into a hash-pinned wheelhouse. `wheelhouseArtifactPaths` selects exactly one committed manifest from the composed interpreter version and Nix target system. `installWheelhouse` installs it into an application derivation:
-
-```nix
-python = pkgs.python3;
-wheelArtifacts = flake-lib.lib.wheelhouseArtifactPaths {
-  root = ./.;
-  pythonVersion = python.pythonVersion;
-  system = pkgs.system;
-};
-wheelManifest = wheelArtifacts.wheelManifest;
-wheelhouse = flake-lib.lib.mkWheelhouse { inherit pkgs; wheels = wheelManifest; };
-nativeBuildInputs = [ pkgs.uv pkgs.autoPatchelfHook ];
-installPhase = ''
-  mkdir -p "$out/lib/site-packages"
-  ${flake-lib.lib.installWheelhouse { inherit python; target = "$out/lib/site-packages"; wheelhouse = wheelhouse.wheelhouse; }}
-'';
-```
-
-Native manylinux wheels name a loader and shared libraries that exist on the machine that
-built them and nowhere in the store, so an installed wheelhouse is only a valid store
-artifact once its binaries are rewritten against nix's libraries. That rewrite is the
-install, not an optional addition: `mkWheelhouseSiteTree` builds the derivation, installs
-the wheelhouse into `$out/$sitePackages`, and takes the same attributes as
-`stdenv.mkDerivation` plus `checkImports` — module names imported in an interpreter
-started with no environment at all, so a site tree that loads only under an ambient
-`LD_LIBRARY_PATH` fails its build instead of its first import in production. `buildInputs`
-extends the libraries the rewrite may resolve against. `meta.sourceProvenance` defaults to
-`binaryNativeCode`, since wheels arrive compiled; a caller's own `meta` overrides it.
-
-```nix
-python = pkgs.python3;
-wheelhouse = flake-lib.lib.mkWheelhouse {
-  inherit pkgs;
-  wheels = flake-lib.lib.wheelhouseArtifactPaths {
-    root = ./.;
-    pythonVersion = python.pythonVersion;
-    system = pkgs.system;
-  }.wheelManifest;
-};
-
-comfyuiWheelhouse = flake-lib.lib.mkWheelhouseSiteTree {
-  inherit pkgs python wheelhouse;
-  pname = "comfyui-wheelhouse";
-  version = "1.2.3";
-  dontUnpack = true;
-  checkImports = [ "numpy" "PIL.Image" ];
-  buildInputs = [ pkgs.stdenv.cc.cc.lib ];
-};
-```
-
-An application that installs its own source beside its wheels is the same builder: unpack
-the source, overlay or patch it with `postPatch`, and add the project install to
-`postInstall` targeting `$out/$sitePackages`. `installWheelhouse` remains the snippet for
-a consumer whose layout differs from a site tree.
-
-A library a program `dlopen`s by soname with no `DT_NEEDED` entry (a GPU driver, for
-instance) is not something a rewrite can introduce; that belongs in the wrapper or image
-environment that runs it.
-
 `templates/workflows/` holds the workflow files a consuming repo installs under
 `.github/workflows/` under the same names: `update-branches.yml` drives the
 orchestrator for a source with named releases, `update-version.yml` moves one
@@ -431,7 +295,7 @@ pin whose hashes were never resolved.
 flake-lib.lib.mkUpdateBranches {
   inherit pkgs source;
   pinSchema = "pypi";
-  # The published package builds a 20-minute CUDA wheelhouse; the pin's own hash check is the gate here.
+  # The published package builds a 20-minute CUDA torch; the pin's own hash check is the gate here.
   buildVerificationSkip = true;
 }
 ```

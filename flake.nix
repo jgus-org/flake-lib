@@ -212,15 +212,6 @@
           fetcherVersion = 2;
           manager = "npm";
         };
-        wheelhouse-example = lib.mkPythonWheelhouse {
-          inherit pkgs;
-          sources = [
-            {
-              kind = "repo-file";
-              path = "requirements.in";
-            }
-          ];
-        };
         huggingface-model-manager = lib.mkHuggingFaceModelManager {
           inherit pkgs;
           manifest = pkgs.writeText "huggingface-model-manager-manifest.json" ''
@@ -237,7 +228,6 @@
           model = { };
           name = "huggingface-model-manager";
         };
-        wheelhouse-example-hook = wheelhouse-example.hook;
         npm-generated-hook = lib.mkJsDepsHook {
           inherit pkgs;
           manager = "npm";
@@ -311,21 +301,6 @@
           pkgs.lib.throwIf (failures != [ ]) "defaultSystems tests failed" (
             pkgs.runCommand "default-systems-tests" { } "touch $out"
           );
-        python-package-tests =
-          let
-            failures = pkgs.lib.runTests (
-              import ./tests/python-package.nix {
-                inherit pkgs;
-                inherit (lib)
-                  mkPypiPackage
-                  mkPythonPackage
-                  ;
-              }
-            );
-          in
-          pkgs.lib.throwIf (failures != [ ]) "mkPythonPackage tests failed" (
-            pkgs.runCommand "python-package-tests" { } "touch $out"
-          );
         python-flake-tests =
           let
             failures = pkgs.lib.runTests (
@@ -346,256 +321,6 @@
           pkgs.lib.throwIf (failures != [ ]) "mkPythonFlake tests failed" (
             pkgs.runCommand "python-flake-tests" { } "touch $out"
           );
-        wheel-packages-tests =
-          let
-            failures = pkgs.lib.runTests (
-              import ./tests/wheel-packages.nix {
-                inherit pkgs;
-                inherit (lib) mkWheelPackages;
-              }
-            );
-          in
-          pkgs.lib.throwIf (failures != [ ]) "mkWheelPackages tests failed" (
-            pkgs.runCommand "wheel-packages-tests" { } "touch $out"
-          );
-        wheelhouse-tags-tests =
-          let
-            failures = pkgs.lib.runTests (import ./tests/wheelhouse-tags.nix { inherit (lib) platformTags; });
-          in
-          pkgs.lib.throwIf (failures != [ ]) "platformTags tests failed" (
-            pkgs.runCommand "wheelhouse-tags-tests" { } "touch $out"
-          );
-        wheelhouse-environment-tests =
-          let
-            x86 = lib.mkPythonWheelhouse {
-              inherit pkgs;
-              pythonVersions = [ "3.13" ];
-              sources = [
-                {
-                  kind = "repo-file";
-                  path = "requirements.in";
-                }
-              ];
-              systems = [ "x86_64-linux" ];
-            };
-            arm = lib.mkPythonWheelhouse {
-              inherit pkgs;
-              pythonVersions = [ "3.13" ];
-              sources = [
-                {
-                  kind = "repo-file";
-                  path = "requirements.in";
-                }
-              ];
-              systems = [ "aarch64-linux" ];
-            };
-            unsupportedSystem = builtins.tryEval (
-              lib.wheelhouseArtifactPaths {
-                pythonVersion = "3.13";
-                root = ./.;
-                system = "armv7-linux";
-              }
-            );
-            unsupportedPython = builtins.tryEval (
-              lib.wheelhouseArtifactPaths {
-                pythonVersion = "3.12";
-                root = ./.;
-                system = "x86_64-linux";
-              }
-            );
-            customPython = lib.wheelhouseArtifactPaths {
-              pythonVersion = "3.12";
-              pythonVersions = [ "3.12" ];
-              root = ./.;
-              system = "x86_64-linux";
-            };
-          in
-          assert x86.fingerprint != arm.fingerprint;
-          assert !unsupportedSystem.success;
-          assert !unsupportedPython.success;
-          assert builtins.baseNameOf customPython.wheelManifest == "wheels-3.12-x86_64-linux.json";
-          pkgs.runCommand "wheelhouse-environment-tests" { } "touch $out";
-        wheelhouse-fingerprint-tests =
-          let
-            changedMenu = lib.mkPythonWheelhouse {
-              inherit pkgs;
-              pythonVersions = [ "3.13" ];
-              sources = [
-                {
-                  kind = "repo-file";
-                  path = "requirements.in";
-                }
-              ];
-            };
-            changedSource = lib.mkPythonWheelhouse {
-              inherit pkgs;
-              extraRequirements = [ "example" ];
-              sources = [
-                {
-                  kind = "repo-file";
-                  path = "requirements.in";
-                }
-              ];
-            };
-            changedIndex = lib.mkPythonWheelhouse {
-              inherit pkgs;
-              index = "https://index.example.test/simple";
-              sources = [
-                {
-                  kind = "repo-file";
-                  path = "requirements.in";
-                }
-              ];
-            };
-            reordered = lib.mkPythonWheelhouse {
-              inherit pkgs;
-              pythonVersions = [
-                "3.14"
-                "3.13"
-              ];
-              sources = [
-                {
-                  kind = "repo-file";
-                  path = "requirements.in";
-                }
-              ];
-            };
-          in
-          assert wheelhouse-example.fingerprint != changedMenu.fingerprint;
-          assert wheelhouse-example.fingerprint != changedSource.fingerprint;
-          assert wheelhouse-example.fingerprint != changedIndex.fingerprint;
-          assert wheelhouse-example.fingerprint != reordered.fingerprint;
-          pkgs.runCommand "wheelhouse-fingerprint-tests" { } "touch $out";
-        wheelhouse-consumer-selection-tests =
-          let
-            python = pkgs.python313;
-            artifacts = lib.wheelhouseArtifactPaths {
-              pythonVersion = python.pythonVersion;
-              root = ./.;
-              system = "aarch64-linux";
-            };
-          in
-          assert builtins.baseNameOf artifacts.requirementsLock == "requirements-3.13-aarch64-linux.lock";
-          assert builtins.baseNameOf artifacts.wheelManifest == "wheels-3.13-aarch64-linux.json";
-          pkgs.runCommand "wheelhouse-consumer-selection-tests" { } "touch $out";
-        python-wheelhouse-tests =
-          pkgs.runCommand "python-wheelhouse-tests"
-            {
-              DEPS_CORE = ./scripts/deps_core.py;
-              TEST_BASH = pkgs.bash;
-              WHEELHOUSE_PY = ./scripts/python-wheelhouse.py;
-              nativeBuildInputs = [
-                pkgs.bash
-                (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.packaging ]))
-              ];
-            }
-            ''
-              python3 ${./tests/test_python_wheelhouse.py}
-              touch $out
-            '';
-        python-wheelhouse-integration =
-          let
-            wheelhouse =
-              (lib.mkWheelhouse {
-                inherit pkgs;
-                wheels = ./tests/fixtures/mini-wheels.json;
-              }).wheelhouse;
-            python = pkgs.python313;
-          in
-          pkgs.runCommand "python-wheelhouse-integration"
-            {
-              buildInputs = [
-                pkgs.stdenv.cc.cc.lib
-                pkgs.zlib
-              ];
-              nativeBuildInputs = [
-                pkgs.uv
-                pkgs.autoPatchelfHook
-              ];
-            }
-            ''
-              export HOME=$TMPDIR
-              mkdir "$out"
-              ${lib.installWheelhouse {
-                inherit python;
-                inherit wheelhouse;
-                target = "$out";
-              }}
-              PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig, msgpack'
-            '';
-        wheelhouse-no-emit-tests =
-          let
-            failures = pkgs.lib.runTests (
-              import ./tests/wheelhouse-no-emit.nix {
-                inherit pkgs;
-                inherit (lib) mkWheelhouse;
-              }
-            );
-          in
-          pkgs.lib.throwIf (failures != [ ]) "mkWheelhouse noEmit tests failed" (
-            pkgs.runCommand "wheelhouse-no-emit-tests" { } "touch $out"
-          );
-        # The manifest names a wheel the consumer provides itself; the installed tree must not carry it, and
-        # must not need the interpreter-side fixups the vendored copy would have dragged in.
-        python-wheelhouse-no-emit-integration =
-          let
-            wheelhouse =
-              (lib.mkWheelhouse {
-                inherit pkgs;
-                noEmit = [ "msgpack" ];
-                wheels = ./tests/fixtures/mini-wheels.json;
-              }).wheelhouse;
-            python = pkgs.python313;
-          in
-          pkgs.runCommand "python-wheelhouse-no-emit-integration" { nativeBuildInputs = [ pkgs.uv ]; } ''
-            export HOME=$TMPDIR
-            mkdir "$out"
-            ${lib.installWheelhouse {
-              inherit python;
-              inherit wheelhouse;
-              target = "$out";
-            }}
-            test ! -e "$out/msgpack"
-            ! PYTHONPATH="$out" ${python}/bin/python -c 'import msgpack'
-            PYTHONPATH="$out" ${python}/bin/python -c 'import attrs, iniconfig'
-          '';
-        python-wheelhouse-site-tree-integration = lib.mkWheelhouseSiteTree {
-          inherit pkgs;
-          checkImports = [ "numpy" ];
-          dontUnpack = true;
-          pname = "python-wheelhouse-site-tree";
-          python = pkgs.python313;
-          version = "1";
-          wheelhouse =
-            (lib.mkWheelhouse {
-              inherit pkgs;
-              wheels = ./tests/fixtures/native-wheels.json;
-            }).wheelhouse;
-        };
-        # The import check above only measures a real rewrite if the same wheel cannot import untouched.
-        python-wheelhouse-site-tree-unpatched-import =
-          let
-            python = pkgs.python313;
-            wheel =
-              pkgs.lib.head
-                (lib.mkWheelhouse {
-                  inherit pkgs;
-                  wheels = ./tests/fixtures/native-wheels.json;
-                }).files;
-          in
-          pkgs.runCommand "python-wheelhouse-site-tree-unpatched-import"
-            {
-              nativeBuildInputs = [
-                pkgs.unzip
-                python
-              ];
-            }
-            ''
-              mkdir -p "$out/${python.sitePackages}"
-              unzip -q ${wheel} -d "$out/${python.sitePackages}"
-              test ! -e "$out/${python.sitePackages}/numpy.libs/libstdc++.so.6"
-              ! env -i PYTHONPATH="$out/${python.sitePackages}" ${python}/bin/python -c 'import numpy'
-            '';
         huggingface-model-manager-tests =
           pkgs.runCommand "huggingface-model-manager-tests"
             {
@@ -1180,20 +905,8 @@
             eval-marker-tree-tests
             huggingface-model-manager-tests
             python-flake-tests
-            python-package-tests
-            python-wheelhouse-integration
-            python-wheelhouse-no-emit-integration
-            python-wheelhouse-site-tree-integration
-            python-wheelhouse-site-tree-unpatched-import
-            python-wheelhouse-tests
             update-branches-tests
             version-matches-comparison-tests
-            wheel-packages-tests
-            wheelhouse-consumer-selection-tests
-            wheelhouse-environment-tests
-            wheelhouse-fingerprint-tests
-            wheelhouse-no-emit-tests
-            wheelhouse-tags-tests
             ;
           inherit update-version-tests;
           inherit
@@ -1209,7 +922,6 @@
           formatting = orgFormatting.check;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
-          wheelhouse-hook = hookCheck "wheelhouse-hook" wheelhouse-example-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
         };
         formatter = orgFormatting.formatter;

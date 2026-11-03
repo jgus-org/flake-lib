@@ -538,16 +538,17 @@ then refreshes with the rest:
 nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt build-and-check.yml
 ```
 
-A flake that locks a private repository needs one secret, because nix fetches a github input
-anonymously: `BUILD_TOKEN`, a credential that can read the contents of every private repository
-the flake locks. It is inert where the secret does not resolve, so a repository of public inputs
-declares nothing, and a run without it fetches the public inputs alone. Set it on the
+A flake that locks a private repository needs one secret: `BUILD_TOKEN`, a credential that can
+read the contents of every private repository the flake locks. Every other fetch already carries a
+credential, the nix action falling back to the run's own token where the caller's does not resolve,
+so a repository of public inputs declares nothing and still never fetches anonymously. Set it on the
 repositories that need it rather than organization-wide: a secret an organization grants every
 repository is readable by the pull requests of every public one, which is a wider circle than a
 contents credential justifies. GitHub gives a fork pull request no secrets at all, so a flake
 with a private input is gated by pull requests from inside the organization. The credential comes
 with being given nix: every job that uses `jgus-org/flake-lib/.github/actions/nix` passes
-`BUILD_TOKEN`, and an action given nothing hands nothing over.
+`BUILD_TOKEN`, and the action hands nix the caller's credential where it resolves and the run's
+own everywhere else.
 
 A package the runner cannot build excuses itself, with the reason in the comment beside
 the marker:

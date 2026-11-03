@@ -17,10 +17,10 @@ inputs:
       Credential for the github inputs a flake locks, handed to later steps through
       NIX_CONFIG, the setting being client-side. The run's own token stands in where this
       does not resolve, an anonymous fetch being metered against the source address every
-      runner behind one address shares; the run's own token reads no private repository, so
-      a flake that locks one needs this input. Nothing is handed over when neither
-      resolves: GitHub refuses a request carrying an empty access token, even for a public
-      repository.
+      runner behind one address shares; the run's own token reaches the public inputs and the
+      repository the run belongs to, so a flake locking another's private repository needs
+      this input. Nothing is handed over when neither resolves: GitHub refuses a request
+      carrying an empty access token, even for a public repository.
     required: false
     default: ""
 

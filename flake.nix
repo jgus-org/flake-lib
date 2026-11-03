@@ -910,11 +910,11 @@
               done
               # A named credential resolves to nothing wherever the repository has no such
               # secret, and an anonymous fetch is metered against the address the runner leaves
-              # through, which every runner on one host shares. The action answers that with the
-              # run's own token, so a job is never anonymous because its caller named nothing,
-              # and a bespoke workflow that names no credential is not the exception.
+              # through, which every runner on one host shares. The assertion belongs on the
+              # action rather than the templates because a bespoke workflow that names no
+              # credential is not the exception.
               NIX_ACTION=${./.github/actions/nix}/action.yml
-              if ! yq -r '.runs.steps[].env.ACCESS_TOKEN // ""' "$NIX_ACTION" |
+              if ! yq -r '[.runs.steps[].env // {} | .[]] | .[]' "$NIX_ACTION" |
                 grep -qE 'inputs\.github-token.*\|\|[[:space:]]*github\.token'; then
                 echo "error: $NIX_ACTION leaves a job naming no credential fetching anonymously" >&2
                 exit 1

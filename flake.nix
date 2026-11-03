@@ -889,11 +889,11 @@
               for TOOL in $(grep -rhoE 'github:jgus-org/flake-lib/v1#[a-z0-9-]+' ${./templates/workflows} | sed 's|.*#||' | sort -u); do
                 grep -Fxq "$TOOL" "$PUBLISHED_TOOLS"
               done
-              # A run's own token reaches every public input and no private one, so a job that
-              # evaluates a flake locking a private repository needs a credential of its own, and
-              # GitHub refuses one that is empty, so handing one over silently is the failure the
-              # nix action guards against. The credential belongs to being given nix, which makes
-              # the rule a count: every step that asks the action for nix passes it.
+              # A run's own token reaches the public inputs and its own repository, so a job that
+              # evaluates a flake locking another's private repository needs a credential of its
+              # own, and GitHub refuses one that is empty, so handing one over silently is the
+              # failure the nix action guards against. The credential belongs to being given nix,
+              # which makes the rule a count: every step that asks the action for nix passes it.
               for TEMPLATE in ${./templates/workflows}/*.yml; do
                 if ! NIX_CALLS=$(yq -r '[.jobs[].steps[]? | select(.uses? // "" | test("/.github/actions/nix@"))] | length' "$TEMPLATE"); then
                   echo "error: $TEMPLATE has no readable steps" >&2

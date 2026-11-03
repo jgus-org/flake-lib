@@ -69,20 +69,13 @@
           text = ''exec ${./scripts/build-packages.sh} "$@"'';
         };
         # The gate one tree has to pass, so that the pull-request template and the publication
-        # path run one definition rather than each naming the attribute it builds. It is run from
-        # the same script text the published tool wraps rather than by nesting one
-        # writeShellApplication in another, so the gate resolves its runtime once.
+        # path run one definition rather than each naming the attribute it builds.
         build-and-check = pkgs.writeShellApplication {
           name = "build-and-check";
           runtimeEnv = {
             BUILD_PACKAGES_SCRIPT = pkgs.copyPathToStore ./scripts/build-packages.sh;
             BUILD_PACKAGES_SELECT = pkgs.copyPathToStore ./scripts/build-packages-select.nix;
           };
-          runtimeInputs = [
-            pkgs.coreutils
-            pkgs.gnugrep
-            pkgs.jq
-          ];
           text = ''exec ${./scripts/build-and-check.sh} "$@"'';
         };
         # Ordering is observed from the consumer side, so like the refresher this takes nothing
@@ -669,11 +662,22 @@
             [[ "''${TEST_OCI_FAIL:-}" != store ]]
           '';
         };
+        # A build sandbox has no /usr/bin/env, so a script that names its tools in a `nix shell`
+        # shebang cannot be exec'd there. These shims run the same script texts production execs
+        # through an interpreter the sandbox already has, with the suite's own PATH still around.
+        build-packages-test-shim = pkgs.writeShellApplication {
+          name = "build-packages";
+          text = ''exec ${pkgs.lib.getExe pkgs.bash} ${./scripts/build-packages.sh} "$@"'';
+        };
+        build-and-check-test-shim = pkgs.writeShellApplication {
+          name = "build-and-check";
+          text = ''exec ${pkgs.lib.getExe pkgs.bash} ${./scripts/build-and-check.sh} "$@"'';
+        };
         update-version-tests =
           pkgs.runCommand "update-version-tests"
             {
               # The recovery build is the gate's own tool, so its script text reaches the fake `nix`.
-              BUILD_PACKAGES_SCRIPT = ./scripts/build-packages.sh;
+              BUILD_PACKAGES_SCRIPT = "${build-packages-test-shim}/bin/build-packages";
               BUILD_PACKAGES_SELECT = ./scripts/build-packages-select.nix;
               NIX_PATH = "nixpkgs=${pkgs.path}";
               TEST_BASH = pkgs.bash;
@@ -705,8 +709,8 @@
               # The publication path runs the gate a pull request runs, from the same script texts
               # the published tools wrap, so the fixture's fake `nix` has to be reached through
               # those texts rather than a stand-in for them.
-              BUILD_AND_CHECK_SCRIPT = ./scripts/build-and-check.sh;
-              BUILD_PACKAGES_SCRIPT = ./scripts/build-packages.sh;
+              BUILD_AND_CHECK_SCRIPT = "${build-and-check-test-shim}/bin/build-and-check";
+              BUILD_PACKAGES_SCRIPT = "${build-packages-test-shim}/bin/build-packages";
               BUILD_PACKAGES_SELECT = ./scripts/build-packages-select.nix;
               CASCADE_PY = ./scripts/cascade.py;
               DEPS_CORE = ./scripts/deps_core.py;

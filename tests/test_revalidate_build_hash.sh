@@ -16,9 +16,12 @@ CASES=$(mktemp -d)
 STUBS=$(mktemp -d)
 trap 'rm -rf "${CASES}" "${STUBS}"' EXIT
 
-# The stub is run as a script text under bash, so it needs no exec bit and no resolvable shebang.
-# Each build consumes the plan's first line; a plan with no lines left builds clean.
-cat <<'STUB' >"${STUBS}/build-step"
+# The revalidator execs the build step, so the stub's shebang has to resolve where the test runs:
+# the bash already on PATH is the one that does. Each build consumes the plan's first line; a plan
+# with no lines left builds clean.
+{
+  printf '#!%s\n' "$(command -v bash)"
+  cat <<'STUB'
 printf '%s\n' "$*" >>"${STEP_LOG:?}"
 OUTCOME=''
 TEST_SPECIFIED=''
@@ -38,6 +41,8 @@ fails)
   ;;
 esac
 STUB
+} >"${STUBS}/build-step"
+chmod +x "${STUBS}/build-step"
 
 CASE=''
 OUT=''

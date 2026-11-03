@@ -540,13 +540,13 @@ revalidate_build_hashes() {
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
     set +e
-    out=$(bash "${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" "${DISCOVERY_ARGS[@]}" 2>&1)
+    out=$("${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" "${DISCOVERY_ARGS[@]}" 2>&1)
     rc=$?
     set -e
     if ((rc == 0)); then
       # The narrowed build proved one package's fetch, not the tree the run commits.
       if [[ -n ${BUILD_TARGET:-} ]]; then
-        bash "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build
+        "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build
       fi
       return 0
     fi

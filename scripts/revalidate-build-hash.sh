@@ -1,4 +1,4 @@
-#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#jq nixpkgs#nix nixpkgs#gnused nixpkgs#coreutils --command bash
+#!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#nix nixpkgs#gnused nixpkgs#coreutils --command bash
 
 # Revalidate a fixed-output (vendor) hash that can't be prefetched — Go modules, cargo deps, npm FODs, xcaddy plugin trees — by building and recovering the correct hash from nix's mismatch error.
 #
@@ -50,7 +50,7 @@ if [[ -n ${BUILD_TARGET} ]]; then
 fi
 echo "Building ${MINING_BUILD} to validate ${HASH_FIELD}..."
 set +e
-out=$(bash "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" "${MINING_ARGS[@]}" 2>&1)
+out=$("${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" "${MINING_ARGS[@]}" 2>&1)
 rc=$?
 set -e
 
@@ -75,5 +75,5 @@ echo "  ${HASH_FIELD} drift -> ${new_hash}"
 sed -i -E "s|^([[:space:]]*${HASH_FIELD}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${new_hash}\\2|" "${pin}"
 
 echo "Verifying build..."
-bash "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build
+"${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build
 echo "  ${HASH_FIELD} validated."

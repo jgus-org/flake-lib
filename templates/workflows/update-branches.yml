@@ -26,10 +26,6 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: update
-  cancel-in-progress: false
-
 jobs:
   # A producer whose flake takes inputs from other producers here must not pin them before
   # their own update has published. The edges are this repository's flake inputs, so nothing
@@ -60,7 +56,7 @@ jobs:
     needs: deps
     # A dependency that failed is worth continuing past: ordering is best effort. A run that is
     # being cancelled is not -- GitHub schedules this job and never dispatches it, so the run
-    # queues forever and holds the concurrency group every later update waits behind.
+    # queues forever, and nothing can cancel, complete, or delete it afterwards.
     if: "!cancelled()"
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     outputs:

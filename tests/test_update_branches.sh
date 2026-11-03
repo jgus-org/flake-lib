@@ -851,7 +851,7 @@ initialize_repository
 export VERSION_TRACK=tag TEST_TAGS_VERSIONS=$'v1.6.0\nv1.5.0\nnot-a-version'
 PLAN=$(run_command '9.9.9' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.6.0","1.5.0"]' ]]
-grep -Fqx -- '/repos/example/example/tags' "${CASE_ROOT}/gh-endpoints"
+grep -Fqx -- '/repos/example/example/tags?per_page=30&page=1' "${CASE_ROOT}/gh-endpoints"
 unset VERSION_TRACK TEST_TAGS_VERSIONS
 
 # Without a tracking mode the github vocabulary names releases, which is what the updater's own default is.
@@ -859,8 +859,34 @@ initialize_repository
 export TEST_TAGS_VERSIONS=$'v9.9.9'
 PLAN=$(run_command '1.2.0' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.0"]' ]]
-grep -Fqx -- '/repos/example/example/releases' "${CASE_ROOT}/gh-endpoints"
+grep -Fqx -- '/repos/example/example/releases?per_page=30&page=1' "${CASE_ROOT}/gh-endpoints"
 unset TEST_TAGS_VERSIONS
+
+# GitHub answers one numbered page per request and names nothing that follows it, so the
+# enumeration keeps asking until a page comes back short of the page size.
+initialize_repository
+export GITHUB_PAGE_SIZE=2 TEST_VERSIONS_NEXT=$'v1.7.0'
+PLAN=$(run_command $'v1.9.0\nv1.8.0' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.9.0","1.8.0","1.7.0"]' ]]
+[[ "$(wc -l <"${CASE_ROOT}/gh-endpoints")" == 2 ]]
+unset GITHUB_PAGE_SIZE TEST_VERSIONS_NEXT
+
+# One page failing answers a retry of that page alone, so the versions the other pages
+# carried are not lost with it.
+initialize_repository
+export GITHUB_PAGE_SIZE=2 TEST_VERSIONS_NEXT=$'v1.7.0' TEST_GH_FLAKY_PAGES=2
+PLAN=$(run_command $'v1.9.0\nv1.8.0' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.9.0","1.8.0","1.7.0"]' ]]
+unset GITHUB_PAGE_SIZE TEST_VERSIONS_NEXT TEST_GH_FLAKY_PAGES
+
+# A page that never answers ends discovery in failure; an enumeration that stopped partway
+# would otherwise be taken for upstream's whole version list, leaving what it never reached unbranched.
+initialize_repository
+export GITHUB_PAGE_SIZE=2 TEST_VERSIONS_NEXT=$'v1.7.0' TEST_GH_DEAD_PAGES=2
+run_failed_update $'v1.9.0\nv1.8.0' '["v","V",""]' '' '' list
+grep -Fq -- 'gh failed after 5 attempts' "${CASE_ROOT}/update.log"
+grep -Fq -- '/repos/example/example/releases?per_page=2&page=2' "${CASE_ROOT}/gh-endpoints"
+unset GITHUB_PAGE_SIZE TEST_VERSIONS_NEXT TEST_GH_DEAD_PAGES
 
 # An empty enumeration says which endpoint was queried and how the source tracks, rather than guessing at why it came back empty.
 initialize_repository

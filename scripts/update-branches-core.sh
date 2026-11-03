@@ -64,6 +64,13 @@ fi
 # fetched, whatever the API keeps naming.
 GITLAB_MAX_PAGES="${GITLAB_MAX_PAGES:-20}"
 
+# GitHub's release and tag lists answer one page per request and name nothing that follows,
+# so a short page ends the enumeration and this cap bounds it. A release page carries every
+# release's note body, and GitHub stops answering before it finishes sending a hundred of
+# them for an upstream with a long release history, so the page is deliberately small.
+GITHUB_MAX_PAGES="${GITHUB_MAX_PAGES:-500}"
+GITHUB_PAGE_SIZE="${GITHUB_PAGE_SIZE:-30}"
+
 # shellcheck source=/dev/null
 source "${GIT_PUSH_LIB:?required env var}"
 
@@ -76,8 +83,8 @@ retry() {
       return 0
     fi
     if ((attempt < 5)); then
-      echo "  ${1} failed (attempt ${attempt}/5); retrying in 5s..." >&2
-      sleep 5
+      echo "  ${1} failed (attempt ${attempt}/5); retrying in ${TRANSIENT_RETRY_DELAY_SECONDS}s..." >&2
+      sleep "${TRANSIENT_RETRY_DELAY_SECONDS}"
     fi
   done
   echo "  ${1} failed after 5 attempts" >&2
@@ -193,6 +200,34 @@ list_gitlab_tags() {
   done
 }
 
+# GitHub answers one page per request and names nothing that follows it, so a short page
+# ends the enumeration. A page is retried on its own because an upstream with a long
+# release history has pages that fail by themselves: retrying the whole enumeration
+# re-rolls every page already fetched, so a list that stops partway is what a run with any
+# flaky page produces. A page that never answers fails the enumeration instead.
+list_github_pages() {
+  local endpoint="${1}" jq_filter="${2}" page=1 pages=0 names count
+  while :; do
+    pages=$((pages + 1))
+    if ((pages > GITHUB_MAX_PAGES)); then
+      echo "error: github enumeration of ${endpoint} did not end within ${GITHUB_MAX_PAGES} pages" >&2
+      return 1
+    fi
+    if ! names=$(retry gh api "${endpoint}?per_page=${GITHUB_PAGE_SIZE}&page=${page}" --jq "${jq_filter}"); then
+      return 1
+    fi
+    if [[ -z ${names} ]]; then
+      return 0
+    fi
+    printf '%s\n' "${names}"
+    count=$(wc -l <<<"${names}")
+    if ((count < GITHUB_PAGE_SIZE)); then
+      return 0
+    fi
+    page=$((page + 1))
+  done
+}
+
 list_upstream_versions() {
   local DISCOVERY_TYPE="${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}" endpoint
   endpoint=$(discovery_endpoint)
@@ -212,13 +247,13 @@ list_upstream_versions() {
     # tags, and an upstream that ships tags without Releases has an empty releases
     # list. Only the flake's tracking mode says which endpoint holds its names.
     if [[ ${VERSION_TRACK} == "tag" ]]; then
-      retry gh api --paginate "${endpoint}" --jq '.[].name'
+      list_github_pages "${endpoint}" '.[].name'
     else
-      retry gh api --paginate "${endpoint}" --jq '.[].tag_name'
+      list_github_pages "${endpoint}" '.[].tag_name'
     fi
     ;;
   github-release-asset)
-    retry gh api --paginate "${endpoint}" --jq '.[].tag_name'
+    list_github_pages "${endpoint}" '.[].tag_name'
     ;;
   gitlab)
     list_gitlab_tags "${endpoint}"

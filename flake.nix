@@ -330,19 +330,57 @@
         update-branches-test-gh = pkgs.writeShellApplication {
           name = "gh";
           text = ''
-            # Discovery consults one endpoint per source, so record which one a tracking
-            # mode reached for rather than only what came back from it.
-            endpoint="''${3:-}"
+            # Discovery consults one endpoint per source and asks for one numbered page per
+            # request, so record each request and read from that log how many times this
+            # page has already been asked for.
+            endpoint=""
+            for argument in "$@"; do
+              if [[ "''${argument}" == /* ]]; then
+                endpoint="''${argument}"
+                break
+              fi
+            done
+            attempts=0
             if [[ -n "''${TEST_GH_ENDPOINTS:-}" ]]; then
+              if [[ -f "''${TEST_GH_ENDPOINTS}" ]]; then
+                attempts="$(grep -c -x -F -- "''${endpoint}" "''${TEST_GH_ENDPOINTS}" || true)"
+              fi
               printf '%s\n' "''${endpoint}" >> "''${TEST_GH_ENDPOINTS}"
             fi
-            if [[ "''${endpoint}" == */tags ]]; then
-              if [[ -n "''${TEST_TAGS_VERSIONS:-}" ]]; then
-                printf '%s\n' "''${TEST_TAGS_VERSIONS}"
-              fi
-            else
-              printf '%s\n' "''${TEST_VERSIONS}"
+            # A request naming no page is the single-shot lookup an updater other than
+            # discovery makes, and it reaches the page-one content.
+            page="''${endpoint##*page=}"
+            if [[ "''${page}" == "''${endpoint}" ]]; then
+              page=1
             fi
+            # A page named as dead never answers; a page named as flaky fails the request
+            # that first reaches it and answers the retry.
+            if [[ " ''${TEST_GH_DEAD_PAGES:-} " == *" ''${page} "* ]] ||
+              {
+                [[ " ''${TEST_GH_FLAKY_PAGES:-} " == *" ''${page} "* ]] &&
+                  [[ "''${attempts}" == "0" ]]
+              }; then
+              printf 'gh: could not respond in time (HTTP 504)\n' >&2
+              exit 1
+            fi
+            names=""
+            case "''${endpoint%%'?'*}" in
+            */tags)
+              if [[ "''${page}" == "1" ]]; then
+                names="''${TEST_TAGS_VERSIONS:-}"
+              else
+                names="''${TEST_TAGS_VERSIONS_NEXT:-}"
+              fi
+              ;;
+            *)
+              if [[ "''${page}" == "1" ]]; then
+                names="''${TEST_VERSIONS:-}"
+              else
+                names="''${TEST_VERSIONS_NEXT:-}"
+              fi
+              ;;
+            esac
+            printf '%s\n' "''${names}"
           '';
         };
         update-branches-test-curl = pkgs.writeShellApplication {

@@ -694,12 +694,10 @@ refresh_version() {
   # The pull-request gate, run here against the worktree this branch is about to push: one
   # definition of what a runner verifies, so a producer publishes exactly what a pull request would
   # have gated. The gate builds the packages this flake publishes and checks the flake, which
-  # builds the checks that realize what an overlay produces; it is run from the script text the
-  # published tool wraps rather than the wrapper, so no second nix shell is resolved to reach the
-  # same tools.
+  # builds the checks that realize what an overlay produces.
   if [[ ${BUILD_VERIFICATION_SKIP} == "true" ]]; then
     echo "  publication verification skipped"
-  elif ! run_with_transient_retry "gate for ${branch}" bash "${BUILD_AND_CHECK_SCRIPT:?required env var}"; then
+  elif ! run_with_transient_retry "gate for ${branch}" "${BUILD_AND_CHECK_SCRIPT:?required env var}"; then
     LAST_FAILURE_REASON="a build or check failed at ${v}"
     echo "::warning title=Branch ${branch} not published::a build or check failed at ${v}; no commit was pushed to ${branch}."
     echo "  ERROR: a build or check failed at ${v}; ${branch} not published." >&2

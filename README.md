@@ -60,9 +60,9 @@ flake-lib.lib.defaultSystems       # [ "aarch64-darwin" "aarch64-linux" "x86_64-
 flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
 
 # Low-level: bespoke flakes supply their own package derivation.
-flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
+flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; buildTarget ? ""; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
 flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
-flake-lib.lib.mkRevalidateHash { pkgs; hashField ? "hash"; meta ? { license = mit; }; }
+flake-lib.lib.mkRevalidateHash { pkgs; buildTarget ? ""; hashField ? "hash"; meta ? { license = mit; }; }
 flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
 flake-lib.lib.mkComposedHook   { pkgs; hooks; }
 flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; meta ? { license = mit; }; stampName ? ".${name}-verified.json"; }
@@ -226,8 +226,9 @@ its own, since the publication path runs the pull-request gate's command instead
 one build the updater does start is hash discovery: a fixed-output hash that cannot be prefetched
 is recovered from a package build's hash-mismatch error, which is what
 `hashMode = "build-failure"` and `buildFailureHash`/`buildFailureHashes` select. That discovery
-builds `packages.default`, so a flake that uses it has to publish one; a flake with no
-`packages.default` says so rather than finishing a pin whose hashes were never resolved.
+runs the same build a pull request is gated by, over the same published family, and asks for a
+build rather than a clean report over nothing to build: a flake that publishes no package this
+runner builds fails there rather than finishing a pin whose hashes were never resolved.
 
 `buildFailureHash` names one additional pin field whose value is populated from
 the package build's fixed-output hash mismatch. This supports dependency fetchers
@@ -238,6 +239,8 @@ Use `pinSchema = "github-pnpm"` for the corresponding `{ version, sourceRev,
 sourceHash, pnpmDepsHash }` branch placeholders.
 
 `buildFailureHashes` declares the set of pin fields the build's hash mismatch may name, for a package whose build fails on whichever of its unprefetchable dependencies is stale first: `{ buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ]; }` covers a `fetchPnpmDeps` tree and a `buildGoModule` vendor tree in one bump. A mismatch is attributed to the declared field already holding the hash the build reported as specified, and while no declared field is resolved yet, to the first declared field. `buildFailureHash` and `buildFailureHashes` combine, and each declared field is resolved at most once, so the build runs at most one more time than there are declared fields. A build that still reports a hash mismatch once every declared field is resolved ends the run, as does a mismatch belonging to a pin field no declaration covers.
+
+Both recovery tools take `buildTarget`, the published package the hash is recovered from: `mkRevalidateHash { buildTarget = "caddy"; }`, or the same name on `mkUpdateVersion`. The question a recovery build answers is what a hash fetches, and that is usually one package's build, so a flake whose family publishes more than the package carrying its hash need not build the rest to recover one value. The family stays the default because nothing about a producer has to be correct for the default to work, and naming a target narrows only the recovery build: the rewritten tree is still built whole before it is committed or reported, so the finished pin is proven by the build a pull request is gated by. A name outside the published family is an error rather than a fallback, so a package renamed away leaves a recovery that says so instead of quietly rebuilding what the caller asked to avoid.
 
 ### Supported systems
 
@@ -284,10 +287,11 @@ retries the same version, so the failure is visible and the published state stay
 Aggregate publication builds nothing: it moves a ref to a commit an exact branch
 already published, and that refresh built it.
 
-Hash discovery is the one place flake-lib still names `packages.default`. A build-failure hash can
-only be recovered from a build of one named package, so `hashMode = "build-failure"` requires a
-producer to publish one; a producer with no `packages.default` is told so instead of finishing a
-pin whose hashes were never resolved.
+Hash discovery builds the family the gate builds, so it names no attribute of its own: a producer
+whose deliverable is an overlay publishes no package it deploys, and the hash it pins is recovered
+from the family it does publish. What it requires instead is that the build be a build: a producer
+publishing no package this runner builds is told so there rather than finishing a pin whose hashes
+were never resolved.
 
 `buildVerificationSkip` is the way out, and the reason belongs in a comment beside it:
 
@@ -513,6 +517,13 @@ gated by the next pull request without a workflow change.
 github:jgus-org/flake-lib/v1#build-packages` -- and takes the arguments the gate passes through:
 `--dry-run` prints the installables it would build, which is how a repository is audited before
 adopting; `--system` selects another system's family and `--flake` reads another tree.
+`--only NAME` builds one published package instead of the family, for a caller that needs a build
+from that package and no other: it is built even where `passthru.ciBuildSkip` excuses it from the
+gate, since the name says what to build rather than what to gate, and a name outside the family
+fails instead of quietly building the family.
+`--require-build` makes a family with nothing to build a failure instead of a clean exit, for a
+caller that reads a clean exit as something having been built -- hash discovery does, and a hash
+never built is not a hash validated.
 
 Adopting it names the template the way every other flake-lib workflow is adopted, and it
 then refreshes with the rest:

@@ -374,7 +374,7 @@ printf '%s\n' \
 chmod +x "${PNPM_ARTIFACT_HOOK}"
 
 run_build_failure_case() {
-  local CASE_ROOT="${1}" PLAN="${2}" FAILURE_HASHES="${3}" PIN_HASHES_JSON="${4}" EXTRA_HASHES_JSON="${5}"
+  local CASE_ROOT="${1}" PLAN="${2}" FAILURE_HASHES="${3}" PIN_HASHES_JSON="${4}" EXTRA_HASHES_JSON="${5}" TARGET="${6:-}"
   mkdir -p "${CASE_ROOT}"
   printf '%s\n' '{ version = ""; sourceRev = ""; sourceHash = ""; }' >"${CASE_ROOT}/pin.nix"
   FLAKE_ROOT="${CASE_ROOT}" \
@@ -391,6 +391,7 @@ run_build_failure_case() {
     EXTRA_HASHES="${EXTRA_HASHES_JSON}" \
     PIN_HASHES="${PIN_HASHES_JSON}" \
     BUILD_FAILURE_HASHES="${FAILURE_HASHES}" \
+    BUILD_TARGET="${TARGET}" \
     ARTIFACT_HOOK="${PNPM_ARTIFACT_HOOK}" \
     SIBLINGS='[]' \
     TEST_BUILD_PLAN="${PLAN}" \
@@ -438,3 +439,43 @@ if BOUND_OUTPUT=$(run_build_failure_case "${BOUND_ROOT}" "${BOUND_PLAN}" '["pnpm
 fi
 grep -Fq 'resolved once each' <<<"${BOUND_OUTPUT}"
 [[ "$(wc -l <"${BOUND_ROOT}/builds.log")" -eq 3 ]]
+
+# Over the family, the build that discovers a hash is the build that proves the tree.
+PLAIN_ROOT="${TEST_ROOT}/build-failure-plain"
+PLAIN_PLAN="${TEST_ROOT}/plain.plan"
+cat >"${PLAIN_PLAN}" <<'EOF'
+mismatch sha256-vendorold sha256-vendornew
+ok
+EOF
+run_build_failure_case "${PLAIN_ROOT}" "${PLAIN_PLAN}" '["vendorHash"]' '["vendorHash"]' '[]'
+grep -Fq 'vendorHash = "sha256-vendornew";' "${PLAIN_ROOT}/pin.nix"
+[[ "$(wc -l <"${PLAIN_ROOT}/builds.log")" -eq 2 ]]
+
+# A named target narrows the recovery build; the family is still built before the run commits.
+NARROW_ROOT="${TEST_ROOT}/build-failure-narrowed"
+NARROW_PLAN="${TEST_ROOT}/narrowed.plan"
+cat >"${NARROW_PLAN}" <<'EOF'
+mismatch sha256-vendorold sha256-vendornew
+ok
+ok
+EOF
+run_build_failure_case "${NARROW_ROOT}" "${NARROW_PLAN}" '["vendorHash"]' '["vendorHash"]' '[]' 'fixture'
+grep -Fq 'vendorHash = "sha256-vendornew";' "${NARROW_ROOT}/pin.nix"
+[[ "$(wc -l <"${NARROW_ROOT}/builds.log")" -eq 3 ]]
+
+# A name this flake does not publish stops the run before anything is built.
+STRAY_ROOT="${TEST_ROOT}/build-failure-stray-target"
+STRAY_PLAN="${TEST_ROOT}/stray.plan"
+cat >"${STRAY_PLAN}" <<'EOF'
+mismatch sha256-vendorold sha256-vendornew
+ok
+EOF
+if STRAY_OUTPUT=$(run_build_failure_case "${STRAY_ROOT}" "${STRAY_PLAN}" '["vendorHash"]' '["vendorHash"]' '[]' 'not-published' 2>&1); then
+  echo "expected the run to stop on a build target this flake does not publish" >&2
+  exit 1
+fi
+grep -Fq 'publishes no package named not-published' <<<"${STRAY_OUTPUT}"
+[[ ! -e "${STRAY_ROOT}/builds.log" ]] || {
+  echo "expected a build target outside the published family to build nothing" >&2
+  exit 1
+}

@@ -66,8 +66,7 @@ pkgs.writeShellApplication {
   runtimeEnv = {
     BRANCH_OWNED_FILES = pkgs.lib.concatStringsSep " " ownedFiles;
     # The publication path runs the pull-request gate's own command, from the same script texts
-    # the published tools wrap: one definition of what a runner verifies, and no second nix shell
-    # resolved to reach the tools the gate needs.
+    # the published tools wrap: one definition of what a runner verifies.
     BUILD_AND_CHECK_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-and-check.sh}";
     BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
     BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";

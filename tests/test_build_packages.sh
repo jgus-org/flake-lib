@@ -117,6 +117,17 @@ STUB_NIX_EVAL_STATUS=1 \
 grep -Fxq 'publishes no packages for aarch64-darwin, so there is nothing to build.' "${OUT}"
 [[ -z $(build_lines) ]]
 
+# The same absent family asked of a caller that needs a build is a failure, because that caller's
+# clean exit would be read as something having been built.
+STUB_NIX_EVAL_STATUS=1 \
+  STUB_NIX_EVAL_STDERR="error: flake 'github:eg/x' does not provide attribute 'packages.x86_64-linux.packages.aarch64-darwin', 'legacyPackages.x86_64-linux.packages.aarch64-darwin' or 'packages.aarch64-darwin'" \
+  run_tool --system aarch64-darwin --require-build && {
+  printf 'a required build over a flake with no family must not pass\n' >&2
+  exit 1
+}
+grep -Fxq 'error: a build was required, and . publishes no packages for aarch64-darwin' "${ERR}"
+[[ -z $(build_lines) ]]
+
 # A flake that fails to evaluate is not that. The reason reaches the caller, and the run
 # does not pass.
 STUB_NIX_EVAL_STATUS=1 STUB_NIX_EVAL_STDERR='error: boom' run_tool && {
@@ -151,11 +162,41 @@ grep -Fxq 'skipped by passthru.ciBuildSkip: model' "${ERR}"
 grep -Fxq 'publishes no package for x86_64-linux that a runner builds.' "${OUT}"
 [[ -z $(build_lines) ]]
 
+# The all-excused family is the same failure.
+STUB_NIX_SELECTION='{"build": [], "skip": ["model"]}' run_tool --require-build && {
+  printf 'a required build with every package excused must not pass\n' >&2
+  exit 1
+}
+grep -Fxq 'error: a build was required, and . publishes no package for x86_64-linux that a runner builds' "${ERR}"
+[[ -z $(build_lines) ]]
+
+# The same ask over a family that does exist builds exactly what it would have built without it.
+STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' run_tool --require-build
+grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."a"' "${CASE}/nix-log"
+
 # A build that fails is the gate failing, with the builder's own output passed through.
 STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' STUB_NIX_BUILD_STATUS=17 run_tool && {
   printf 'a failed build must fail the gate\n' >&2
   exit 1
 }
 grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."a"' "${CASE}/nix-log"
+
+# --only builds the one named package and leaves its published siblings alone.
+STUB_NIX_SELECTION='{"build": ["a", "z"], "skip": ["model"]}' run_tool --only z
+grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."z"' "${CASE}/nix-log"
+grep -Fxq 'building 1 package(s) for x86_64-linux.' "${OUT}"
+
+# A package excused from the gate is still built when named: the name says what to build, not what
+# to gate.
+STUB_NIX_SELECTION='{"build": ["a"], "skip": ["model"]}' run_tool --only model
+grep -Fxq 'build --no-link -L --no-write-lock-file .#packages.x86_64-linux."model"' "${CASE}/nix-log"
+
+# A name this flake does not publish is refused rather than reaching nix as a build error.
+STUB_NIX_SELECTION='{"build": ["a"], "skip": []}' run_tool --only nope && {
+  printf 'a package outside the published family must not be built\n' >&2
+  exit 1
+}
+grep -Fxq 'error: . publishes no package named nope for x86_64-linux' "${ERR}"
+[[ -z $(build_lines) ]]
 
 echo 'build-packages tests passed'

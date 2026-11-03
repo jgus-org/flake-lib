@@ -12,7 +12,9 @@ set -euo pipefail
 
 FLAKE='.'
 SYSTEM=''
+ONLY=''
 DRY_RUN=false
+REQUIRE_BUILD=false
 
 die() {
   printf 'error: %s\n' "${1}" >&2
@@ -21,11 +23,14 @@ die() {
 
 usage() {
   cat >&2 <<'USAGE'
-usage: build-packages [--flake URL] [--system SYSTEM] [--dry-run]
+usage: build-packages [--flake URL] [--system SYSTEM] [--only NAME] [--dry-run] [--require-build]
 
-  --flake URL     flake to build, default: the working directory
-  --system SYSTEM system whose packages are built, default: the building system
-  --dry-run       report what would be built and build nothing
+  --flake URL        flake to build, default: the working directory
+  --system SYSTEM    system whose packages are built, default: the building system
+  --only NAME        build one published package by name instead of the family, excusing nothing
+  --dry-run          report what would be built and build nothing
+  --require-build    fail when nothing would be built, for a caller whose verdict is that
+                     something was built
 USAGE
   exit 2
 }
@@ -42,8 +47,17 @@ while [[ ${#} -gt 0 ]]; do
     [[ -n ${SYSTEM} ]] || usage
     shift 2
     ;;
+  --only)
+    ONLY=${2:-}
+    [[ -n ${ONLY} ]] || usage
+    shift 2
+    ;;
   --dry-run)
     DRY_RUN=true
+    shift
+    ;;
+  --require-build)
+    REQUIRE_BUILD=true
     shift
     ;;
   -h | --help) usage ;;
@@ -65,6 +79,9 @@ trap 'rm -f "${STDERR}"' EXIT
 if ! SELECTION=$(nix eval --no-write-lock-file --json --apply "$(cat "${SELECT}")" "${FLAKE}#packages.${SYSTEM}" 2>"${STDERR}"); then
   cat "${STDERR}" >&2
   if grep -Fq "or 'packages.${SYSTEM}'" "${STDERR}"; then
+    if [[ ${REQUIRE_BUILD} == true ]]; then
+      die "a build was required, and ${FLAKE} publishes no packages for ${SYSTEM}"
+    fi
     printf 'publishes no packages for %s, so there is nothing to build.\n' "${SYSTEM}"
     exit 0
   fi
@@ -79,6 +96,21 @@ jq -e 'has("build") and has("skip")' >/dev/null <<<"${SELECTION}" ||
 mapfile -t BUILD_NAMES < <(jq -r '.build[]' <<<"${SELECTION}")
 mapfile -t SKIPPED_NAMES < <(jq -r '.skip[]' <<<"${SELECTION}")
 
+# A name outside the published family is refused here rather than reaching nix as a build error over
+# a target nobody chose. The gate's excuse is not asked of it: the name says what to build, not what
+# to gate.
+if [[ -n ${ONLY} ]]; then
+  ONLY_PUBLISHED=false
+  for NAME in "${BUILD_NAMES[@]}" "${SKIPPED_NAMES[@]}"; do
+    [[ ${NAME} == "${ONLY}" ]] && ONLY_PUBLISHED=true
+  done
+  if [[ ${ONLY_PUBLISHED} != true ]]; then
+    die "${FLAKE} publishes no package named ${ONLY} for ${SYSTEM}"
+  fi
+  BUILD_NAMES=("${ONLY}")
+  SKIPPED_NAMES=()
+fi
+
 if ((${#SKIPPED_NAMES[@]} > 0)); then
   printf 'skipped by passthru.ciBuildSkip: %s\n' "${SKIPPED_NAMES[*]}" >&2
 fi
@@ -92,6 +124,9 @@ for NAME in "${BUILD_NAMES[@]}"; do
 done
 
 if ((${#TARGETS[@]} == 0)); then
+  if [[ ${REQUIRE_BUILD} == true ]]; then
+    die "a build was required, and ${FLAKE} publishes no package for ${SYSTEM} that a runner builds"
+  fi
   printf 'publishes no package for %s that a runner builds.\n' "${SYSTEM}"
   exit 0
 fi

@@ -17,9 +17,7 @@ set -uo pipefail
 
 STATUS=0
 
-# Run from the script text rather than the published wrapper, so the gate resolves its nix shell
-# once instead of nesting a second one to reach the same tools.
-bash "${BUILD_PACKAGES_SCRIPT:?required env var}" || STATUS=1
+"${BUILD_PACKAGES_SCRIPT:?required env var}" || STATUS=1
 
 echo 'checking the flake...'
 nix flake check --no-write-lock-file || STATUS=1

@@ -15,9 +15,9 @@ inputs:
   github-token:
     description: >-
       Credential for the github inputs a flake locks, handed to later steps through
-      NIX_CONFIG, the setting being client-side. Nothing is handed over when it does not
-      resolve: GitHub refuses a request carrying an empty access token, even for a public
-      repository, so a repository without the secret keeps fetching what it can reach.
+      NIX_CONFIG, the setting being client-side. Where it does not resolve, nix fetches with
+      the run's own token, which reads no other repository's private contents: a flake
+      locking one needs this input.
     required: false
     default: ""
 
@@ -26,7 +26,7 @@ runs:
   steps:
     - shell: bash
       env:
-        ACCESS_TOKEN: ${{ inputs.github-token }}
+        ACCESS_TOKEN: ${{ inputs.github-token || github.token }}
       run: |
         set -euo pipefail
         settings=.github/nix.conf

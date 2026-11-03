@@ -889,11 +889,11 @@
               for TOOL in $(grep -rhoE 'github:jgus-org/flake-lib/v1#[a-z0-9-]+' ${./templates/workflows} | sed 's|.*#||' | sort -u); do
                 grep -Fxq "$TOOL" "$PUBLISHED_TOOLS"
               done
-              # nix fetches a github input anonymously, so a job that evaluates a flake locking
-              # a private repository needs a credential, and GitHub refuses one that is empty,
-              # so handing one over silently is the failure the nix action guards against. The
-              # credential belongs to being given nix, which makes the rule a count: every step
-              # that asks the action for nix passes it.
+              # A run's own token reaches every public input and no private one, so a job that
+              # evaluates a flake locking a private repository needs a credential of its own, and
+              # GitHub refuses one that is empty, so handing one over silently is the failure the
+              # nix action guards against. The credential belongs to being given nix, which makes
+              # the rule a count: every step that asks the action for nix passes it.
               for TEMPLATE in ${./templates/workflows}/*.yml; do
                 if ! NIX_CALLS=$(yq -r '[.jobs[].steps[]? | select(.uses? // "" | test("/.github/actions/nix@"))] | length' "$TEMPLATE"); then
                   echo "error: $TEMPLATE has no readable steps" >&2
@@ -908,6 +908,17 @@
                   exit 1
                 fi
               done
+              # A named credential resolves to nothing wherever the repository has no such
+              # secret, and an anonymous fetch is metered against the address the runner leaves
+              # through, which every runner on one host shares. The action answers that with the
+              # run's own token, so a job is never anonymous because its caller named nothing,
+              # and a bespoke workflow that names no credential is not the exception.
+              NIX_ACTION=${./.github/actions/nix}/action.yml
+              if ! yq -r '.runs.steps[].env.ACCESS_TOKEN // ""' "$NIX_ACTION" |
+                grep -qE 'inputs\.github-token.*\|\|[[:space:]]*github\.token'; then
+                echo "error: $NIX_ACTION leaves a job naming no credential fetching anonymously" >&2
+                exit 1
+              fi
               # A job scheduled inside a run that is being cancelled is never dispatched: the run
               # stays queued with nobody able to cancel or complete it, and it holds the
               # concurrency group that every later update in that repository waits behind. A

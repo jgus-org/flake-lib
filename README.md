@@ -264,6 +264,12 @@ whenever the `ATTIC_TOKEN` secret resolves -- one organization secret covers eve
 -- and falls back to the repository's Actions cache when it does not, so repositories
 and fork pull requests without a token behave as before.
 
+The `github-token` input names the credential nix carries for the `github:` inputs a flake locks,
+handed to every later step through the job's `NIX_CONFIG`. Where it does not resolve the run's own
+token stands in, a github fetch carrying no credential being metered against the address the
+runner leaves through -- one address for every runner on one host -- rather than against the
+repository the run belongs to.
+
 A repository whose builds need a nix setting the runner does not default to publishes that setting
 in `.github/nix.conf`, a nix.conf fragment in git, and `.github/actions/nix` hands it to every later
 step through the job's `NIX_CONFIG`.

@@ -97,7 +97,7 @@ assert_no_run_output() {
 }
 
 # The adopt note lists what is still in the way. The refresher's own workflow is exempt: it
-# writes the same branch by design and shares the update workflows' concurrency group.
+# writes the same branch by design and every refresh rewrites it, which is how it stays current.
 ADOPT_NOTE='note: adopt also carries a schedule, and a workflow flake-lib has no template for is never refreshed:'
 
 # A refresh replaces each templated workflow wholesale with the template's text: values the

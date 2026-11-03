@@ -26,10 +26,6 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: update
-  cancel-in-progress: false
-
 jobs:
   # A producer whose flake takes inputs from other producers here must not pin them before
   # their own update has published. The edges are this repository's flake inputs, so nothing

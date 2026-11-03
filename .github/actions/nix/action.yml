@@ -15,12 +15,9 @@ inputs:
   github-token:
     description: >-
       Credential for the github inputs a flake locks, handed to later steps through
-      NIX_CONFIG, the setting being client-side. The run's own token stands in where this
-      does not resolve, an anonymous fetch being metered against the source address every
-      runner behind one address shares; the run's own token reaches the public inputs and the
-      repository the run belongs to, so a flake locking another's private repository needs
-      this input. Nothing is handed over when neither resolves: GitHub refuses a request
-      carrying an empty access token, even for a public repository.
+      NIX_CONFIG, the setting being client-side. Where it does not resolve, nix fetches with
+      the run's own token, which reads no other repository's private contents: a flake
+      locking one needs this input.
     required: false
     default: ""
 

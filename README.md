@@ -264,12 +264,6 @@ whenever the `ATTIC_TOKEN` secret resolves -- one organization secret covers eve
 -- and falls back to the repository's Actions cache when it does not, so repositories
 and fork pull requests without a token behave as before.
 
-The `github-token` input names the credential nix carries for the `github:` inputs a flake locks,
-handed to every later step through the job's `NIX_CONFIG`. Where it does not resolve the run's own
-token stands in, a github fetch carrying no credential being metered against the address the
-runner leaves through -- one address for every runner on one host -- rather than against the
-repository the run belongs to.
-
 A repository whose builds need a nix setting the runner does not default to publishes that setting
 in `.github/nix.conf`, a nix.conf fragment in git, and `.github/actions/nix` hands it to every later
 step through the job's `NIX_CONFIG`.
@@ -539,16 +533,13 @@ nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt build-and-check.y
 ```
 
 A flake that locks a private repository needs one secret: `BUILD_TOKEN`, a credential that can
-read the contents of every private repository the flake locks. Every other fetch already carries a
-credential, the nix action falling back to the run's own token where the caller's does not resolve,
-so a repository of public inputs declares nothing and still never fetches anonymously. Set it on the
-repositories that need it rather than organization-wide: a secret an organization grants every
-repository is readable by the pull requests of every public one, which is a wider circle than a
-contents credential justifies. GitHub gives a fork pull request no secrets at all, so a flake
-with a private input is gated by pull requests from inside the organization. The credential comes
-with being given nix: every job that uses `jgus-org/flake-lib/.github/actions/nix` passes
-`BUILD_TOKEN`, and the action hands nix the caller's credential where it resolves and the run's
-own everywhere else.
+read the contents of every private repository the flake locks. A repository whose inputs are all
+public declares nothing. Set it on the repositories that need it rather than organization-wide: a
+secret an organization grants every repository is readable by the pull requests of every public
+one, which is a wider circle than a contents credential justifies. GitHub gives a fork pull
+request no secrets at all, so a flake with a private input is gated by pull requests from inside
+the organization. The credential comes with being given nix: every job that uses
+`jgus-org/flake-lib/.github/actions/nix` passes `BUILD_TOKEN`.
 
 A package the runner cannot build excuses itself, with the reason in the comment beside
 the marker:

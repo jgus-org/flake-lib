@@ -673,6 +673,19 @@
           name = "build-and-check";
           text = ''exec ${pkgs.lib.getExe pkgs.bash} ${./scripts/build-and-check.sh} "$@"'';
         };
+        pypi-artifacts-tests =
+          pkgs.runCommand "pypi-artifacts-tests"
+            {
+              PYPI_ARTIFACTS = ./scripts/pypi-artifacts.jq;
+              nativeBuildInputs = [
+                pkgs.jq
+                pkgs.python3
+              ];
+            }
+            ''
+              python ${./tests/test_pypi_artifacts.py}
+              touch "$out"
+            '';
         update-version-tests =
           pkgs.runCommand "update-version-tests"
             {
@@ -680,6 +693,7 @@
               BUILD_PACKAGES_SCRIPT = "${build-packages-test-shim}/bin/build-packages";
               BUILD_PACKAGES_SELECT = ./scripts/build-packages-select.nix;
               NIX_PATH = "nixpkgs=${pkgs.path}";
+              PYPI_ARTIFACTS = ./scripts/pypi-artifacts.jq;
               TEST_BASH = pkgs.bash;
               TEST_FORMATTER = pkgs.lib.getExe orgFormatting.formatter;
               UPDATE_VERSION = ./scripts/update-version.sh;
@@ -715,6 +729,7 @@
               CASCADE_PY = ./scripts/cascade.py;
               DEPS_CORE = ./scripts/deps_core.py;
               GIT_PUSH_LIB = ./scripts/git-push.sh;
+              PYPI_ARTIFACTS = ./scripts/pypi-artifacts.jq;
               UPDATE_BRANCHES_CORE = ./scripts/update-branches-core.sh;
               nativeBuildInputs = [
                 pkgs.bash
@@ -949,6 +964,7 @@
             deps-core-tests
             eval-marker-tree-tests
             huggingface-model-manager-tests
+            pypi-artifacts-tests
             python-flake-tests
             update-branches-tests
             version-matches-comparison-tests

@@ -12,6 +12,13 @@ let
     pname = source.pname;
   };
 in
+assert
+  !(source ? wheelTag)
+  || (
+    type == "pypi"
+    && (source.format or "sdist") == "wheel"
+    && builtins.match "[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+-[a-zA-Z0-9_.]+" source.wheelTag != null
+  );
 if type == "github" then
   {
     inherit (pin) version;
@@ -43,15 +50,21 @@ else if (source.format or "sdist") == "wheel" then
   {
     inherit (pin) version;
     format = "wheel";
-    src = pkgs.python3.pkgs.fetchPypi (
-      pypiName
-      // {
-        dist = "py3";
-        format = "wheel";
-        hash = pin.hash;
-        python = "py3";
-      }
-    );
+    src =
+      let
+        tags = pkgs.lib.splitString "-" (source.wheelTag or "py3-none-any");
+      in
+      pkgs.python3.pkgs.fetchPypi (
+        pypiName
+        // {
+          abi = builtins.elemAt tags 1;
+          dist = builtins.elemAt tags 0;
+          format = "wheel";
+          hash = pin.hash;
+          platform = builtins.elemAt tags 2;
+          python = builtins.elemAt tags 0;
+        }
+      );
   }
 else
   {

@@ -58,7 +58,10 @@ jobs:
 
   discover:
     needs: deps
-    if: always()
+    # A dependency that failed is worth continuing past: ordering is best effort. A run that is
+    # being cancelled is not -- GitHub schedules this job and never dispatches it, so the run
+    # queues forever and holds the concurrency group every later update waits behind.
+    if: "!cancelled()"
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     outputs:
       base_sha: ${{ steps.plan.outputs.base_sha }}
@@ -85,7 +88,7 @@ jobs:
 
   newest-stable:
     needs: discover
-    if: always() && needs.discover.result == 'success' && needs.discover.outputs.newest_stable != 'null'
+    if: "!cancelled() && needs.discover.result == 'success' && needs.discover.outputs.newest_stable != 'null'"
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
@@ -129,7 +132,7 @@ jobs:
 
   maintenance:
     needs: [discover, newest-stable]
-    if: always() && needs.discover.result == 'success' && needs.discover.outputs.maintenance != '[]'
+    if: "!cancelled() && needs.discover.result == 'success' && needs.discover.outputs.maintenance != '[]'"
     strategy:
       fail-fast: false
       # Bound the fan-out: the matrix grows with every tracked release, and unbounded
@@ -163,7 +166,7 @@ jobs:
 
   publish:
     needs: [discover, newest-stable, maintenance]
-    if: always() && needs.discover.result == 'success'
+    if: "!cancelled() && needs.discover.result == 'success'"
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7

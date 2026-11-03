@@ -908,6 +908,21 @@
                   exit 1
                 fi
               done
+              # A job scheduled inside a run that is being cancelled is never dispatched: the run
+              # stays queued with nobody able to cancel or complete it, and it holds the
+              # concurrency group that every later update in that repository waits behind. A
+              # dependency that ended badly is worth running anyway, so a job waiting on another
+              # names cancellation as the one outcome it does not run through.
+              for TEMPLATE in ${./templates/workflows}/*.yml; do
+                if ! WAITING=$(yq -r '[.jobs | to_entries[] | select(.value.needs?) | select((.value.if // "") | test("cancelled") | not) | .key] | join(" ")' "$TEMPLATE"); then
+                  echo "error: $TEMPLATE has unreadable job conditions" >&2
+                  exit 1
+                fi
+                if [ -n "$WAITING" ]; then
+                  echo "error: $TEMPLATE schedules $WAITING through a cancelled dependency" >&2
+                  exit 1
+                fi
+              done
               touch $out
             '';
         formatting-tests =

@@ -64,7 +64,10 @@ jobs:
 
   update:
     needs: deps
-    if: always()
+    # A dependency that failed is worth continuing past: ordering is best effort. A run that is
+    # being cancelled is not -- GitHub schedules this job and never dispatches it, so the run
+    # queues forever and holds the concurrency group every later update waits behind.
+    if: "!cancelled()"
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7

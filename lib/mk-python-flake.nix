@@ -1,7 +1,10 @@
 # Assembles a python producer flake's outputs from what it publishes and the upstream it tracks.
 # The payload states its publishables in three halves: `payload.packages` for artifacts the flake
 # ships, `payload.overlays` for members of the consumer's python set, and `payload.checks` for a
-# gate that is nothing but a gate.
+# gate that is nothing but a gate. Each half reaches exactly one output family: `packages.<system>`
+# is the packages half and nothing else, while `checks.<system>` is the overlay members built in the
+# tree `gate.config` names, the checks half, and `formatting`. A built artifact is never also a
+# check, so a name appears in one family by what it is and not by which builder made it.
 {
   eachDefaultSystem,
   eachSystem,
@@ -109,7 +112,6 @@ in
     overlayOnly = filter (name: !elem name packageNames) (
       attrNames (overlaysPayload (recordIn pkgs pkgs.python3.pkgs))
     );
-    publishedNames = packageNames ++ overlayOnly;
 
     treeWith =
       config:
@@ -119,11 +121,9 @@ in
       };
     overlayTree = treeWith { };
     gateTree = if (gate.config or { }) == { } then overlayTree else treeWith gate.config;
-    publishedAll = published // genAttrs overlayOnly (name: overlayTree.python3Packages.${name});
-    checkOf =
-      name: if elem name packageNames then gateTree.${name} else gateTree.python3Packages.${name};
+    gateChecks = genAttrs overlayOnly (name: gateTree.python3Packages.${name});
     ownChecks = checksPayload (recordIn gateTree gateTree.python3.pkgs);
-    hiddenChecks = attrNames (builtins.intersectAttrs ownChecks publishedAll);
+    hiddenChecks = filter (name: elem name (packageNames ++ overlayOnly)) (attrNames ownChecks);
 
     formatting = mkFormatting {
       inherit excludes self system;
@@ -157,10 +157,10 @@ in
     checks =
       throwIf (hiddenChecks != [ ])
         (
-          "mkPythonFlake: payload.checks names ${builtins.concatStringsSep ", " hiddenChecks}, which the payload also publishes as an artifact, so the gate builds the artifact under those names and never the check"
+          "mkPythonFlake: payload.checks names ${builtins.concatStringsSep ", " hiddenChecks}, which the payload also publishes, so one name would carry the published artifact in `packages.<system>` and the gate's build of it in `checks.<system>`"
         )
         (
-          genAttrs publishedNames checkOf
+          gateChecks
           // ownChecks
           // {
             formatting = formatting.check;
@@ -168,9 +168,9 @@ in
         );
     formatter = formatting.formatter;
     packages =
-      publishedAll
-      // optionalAttrs (length publishedNames == 1) {
-        default = publishedAll.${head publishedNames};
+      published
+      // optionalAttrs (length packageNames == 1) {
+        default = published.${head packageNames};
       }
       // optionalAttrs (upstream != null) (
         { inherit update-version; } // optionalAttrs branches { inherit update-branches; }

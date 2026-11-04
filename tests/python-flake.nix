@@ -65,38 +65,73 @@ let
     overlays = [ overlayOutputs.overlays.default ];
   };
 
+  # The marker carries the package-set configuration of the tree that built it, so reading the
+  # attribute says which tree did. It is stated as an overlay member because a member is what the
+  # gate materializes; a published artifact is never a check.
   markerPayload =
-    { pkgs, ... }:
+    { pkgs, python, ... }:
     {
-      marker = pkgs.writeText "marker" (builtins.toString pkgs.config.cudaSupport);
+      marker = python.six.overridePythonAttrs (old: {
+        passthru = (old.passthru or { }) // {
+          cudaSupport = pkgs.config.cudaSupport;
+        };
+      });
     };
 
   gatedOutputs = producer {
     gate.config.cudaSupport = true;
-    payload.packages = markerPayload;
+    payload = {
+      overlays = markerPayload;
+      packages = packagesPayload;
+    };
+    upstream = pypi;
   };
   ungatedOutputs = producer {
-    payload.packages = markerPayload;
+    payload = {
+      overlays = markerPayload;
+      packages = packagesPayload;
+    };
+    upstream = pypi;
   };
 in
 {
   testACheckNamedLikeAPublishedAttributeThrows = {
     expected = {
-      success = false;
-      value = false;
+      againstAPackage = {
+        success = false;
+        value = false;
+      };
+      againstAnOverlayMember = {
+        success = false;
+        value = false;
+      };
     };
-    expr = builtins.tryEval (
-      (producer {
-        payload = {
-          checks =
-            { pkgs, ... }:
-            {
-              marker = pkgs.writeText "clash" "clash";
-            };
-          packages = markerPayload;
-        };
-      }).checks.${system}
-    );
+    expr = {
+      againstAPackage = builtins.tryEval (
+        (producer {
+          payload = {
+            checks =
+              { pkgs, ... }:
+              {
+                six = pkgs.writeText "clash" "clash";
+              };
+            packages = packagesPayload;
+          };
+        }).checks.${system}
+      );
+      againstAnOverlayMember = builtins.tryEval (
+        (producer {
+          payload = {
+            checks =
+              { pkgs, ... }:
+              {
+                marker = pkgs.writeText "clash" "clash";
+              };
+            overlays = markerPayload;
+          };
+        }).checks.${system}
+      );
+    };
   };
   testAGitlabSourceFetchesItsSourceFromGitLab = {
     expected = {
@@ -201,17 +236,17 @@ in
         pkgs = import nixpkgs { inherit system; };
       });
   };
-  testAnOverlayOnlyAttributeIsPublishedAndChecked = {
+  testAnOverlayOnlyAttributeIsCheckedAndNotPublished = {
     expected = {
       checks = [
         "formatting"
         "six"
       ];
-      version = "999.0";
+      packages = [ ];
     };
     expr = {
       checks = builtins.attrNames overlayOutputs.checks.${system};
-      version = overlayOutputs.packages.${system}.six.version;
+      packages = builtins.attrNames overlayOutputs.packages.${system};
     };
   };
   testBranchesFalseLeavesTheBranchUpdaterOut = {
@@ -294,26 +329,32 @@ in
   testTheChecksHalfIsBuiltInTheGatedTree = {
     expected = true;
     expr =
-      (producer {
-        gate.config.cudaSupport = true;
-        payload = {
-          checks =
-            { pkgs, ... }:
-            {
-              gate = pkgs.writeText "marker" (builtins.toString pkgs.config.cudaSupport);
-            };
-          packages = markerPayload;
+      let
+        gatedTree = import nixpkgs {
+          inherit system;
+          config.cudaSupport = true;
         };
-      }).checks.${system}.gate.drvPath == (producer {
-        gate.config.cudaSupport = true;
-        payload.packages = markerPayload;
-      }).checks.${system}.marker.drvPath;
+        plainTree = import nixpkgs { inherit system; };
+        check =
+          (producer {
+            gate.config.cudaSupport = true;
+            payload.checks =
+              { pkgs, ... }:
+              {
+                gate = pkgs.writeText "marker" (builtins.toString pkgs.config.cudaSupport);
+              };
+          }).checks.${system}.gate;
+      in
+      check.drvPath == (gatedTree.writeText "marker" (builtins.toString gatedTree.config.cudaSupport))
+      .drvPath
+      &&
+        check.drvPath != (plainTree.writeText "marker" (builtins.toString plainTree.config.cudaSupport))
+        .drvPath;
   };
   testTheChecksHalfIsCheckedBesideThePublishedFamily = {
     expected = {
       checks = [
         "formatting"
-        "six"
         "suite"
       ];
       packages = [
@@ -378,28 +419,31 @@ in
         upstream = pypi;
       }).packages.${system}.six.doInstallCheck;
   };
-  testTheGateConfigReachesTheChecksAndNotThePublishedPackage = {
+  testTheGateConfigReachesTheChecksAndNothingPublished = {
     expected = {
-      checksAreThePublishedPackagesWithoutAGate = true;
-      checksDifferFromThePublishedPackagesWithOne = true;
+      checksAreNamedByTheOverlayHalf = [
+        "formatting"
+        "marker"
+      ];
+      gateChangesTheCheck = true;
+      gateLeavesThePublishedPackage = true;
     };
     expr = {
-      checksAreThePublishedPackagesWithoutAGate =
-        ungatedOutputs.checks.${system}.marker.outPath == ungatedOutputs.packages.${system}.marker.outPath;
-      checksDifferFromThePublishedPackagesWithOne =
-        gatedOutputs.checks.${system}.marker.outPath != gatedOutputs.packages.${system}.marker.outPath;
+      checksAreNamedByTheOverlayHalf = builtins.attrNames gatedOutputs.checks.${system};
+      gateChangesTheCheck =
+        gatedOutputs.checks.${system}.marker.passthru.cudaSupport
+        != ungatedOutputs.checks.${system}.marker.passthru.cudaSupport;
+      gateLeavesThePublishedPackage =
+        gatedOutputs.packages.${system}.six.drvPath == ungatedOutputs.packages.${system}.six.drvPath;
     };
   };
   testTheOverlayHalfReachesTheConsumersPythonSet = {
     expected = "999.0";
     expr = overlaidTree.python3Packages.six.version;
   };
-  testThePackagesHalfPublishesItsAttributesAndTheirChecks = {
+  testThePackagesHalfIsPublishedAndNotChecked = {
     expected = {
-      checks = [
-        "formatting"
-        "six"
-      ];
+      checks = [ "formatting" ];
       packages = [
         "default"
         "six"

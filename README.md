@@ -14,9 +14,11 @@ and `flake.nix` are executable uses.
 
 `mkPythonFlake` (`lib/mk-python-flake.nix`) -- one call is a whole producer flake: the upstream
 it tracks, the payload it publishes, and the org formatter. It publishes `overlays.default`, and
-per supported system `packages` (the payload, the update tools, and `default` when the payload has
-exactly one package), `checks` (the same payload, so the pull-request gate builds it, plus whatever
-`payload.checks` states and `formatting`) and `formatter`. The update tools appear only when the
+per supported system `packages` (the `payload.packages` half, the update tools, and `default` when
+that half has exactly one package), `checks` (the `payload.overlays` members built in the tree
+`gate.config` names, the `payload.checks` half, and `formatting`) and `formatter`. No name reaches
+both families: a built artifact is never a check, so the gate's first half builds what the flake
+ships and its second half builds what verifies it. The update tools appear only when the
 flake names an upstream to track. The tree it formats is the tree the caller hands it, so a flake-parts module and a plain
 flake both pass what they already have in scope. A producer built from the upstream source tree
 rather than a published distribution reads source files from an eval-time fetch, never from a

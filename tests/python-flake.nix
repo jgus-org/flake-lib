@@ -80,6 +80,24 @@ let
   };
 in
 {
+  testACheckNamedLikeAPublishedAttributeThrows = {
+    expected = {
+      success = false;
+      value = false;
+    };
+    expr = builtins.tryEval (
+      (producer {
+        payload = {
+          checks =
+            { pkgs, ... }:
+            {
+              marker = pkgs.writeText "clash" "clash";
+            };
+          packages = markerPayload;
+        };
+      }).checks.${system}
+    );
+  };
   testAGitlabSourceFetchesItsSourceFromGitLab = {
     expected = {
       owner = "someone";
@@ -272,6 +290,80 @@ in
       "zope-interface"
     ];
     expr = readPythonRequirements ./fixtures/requirements-sample.txt;
+  };
+  testTheChecksHalfIsBuiltInTheGatedTree = {
+    expected = true;
+    expr =
+      (producer {
+        gate.config.cudaSupport = true;
+        payload = {
+          checks =
+            { pkgs, ... }:
+            {
+              gate = pkgs.writeText "marker" (builtins.toString pkgs.config.cudaSupport);
+            };
+          packages = markerPayload;
+        };
+      }).checks.${system}.gate.drvPath == (producer {
+        gate.config.cudaSupport = true;
+        payload.packages = markerPayload;
+      }).checks.${system}.marker.drvPath;
+  };
+  testTheChecksHalfIsCheckedBesideThePublishedFamily = {
+    expected = {
+      checks = [
+        "formatting"
+        "six"
+        "suite"
+      ];
+      packages = [
+        "default"
+        "six"
+        "update-branches"
+        "update-version"
+      ];
+    };
+    expr =
+      let
+        outputs = producer {
+          payload = {
+            checks =
+              { pkgs, ... }:
+              {
+                suite = pkgs.writeText "suite" "suite";
+              };
+            packages = packagesPayload;
+          };
+          upstream = pypi;
+        };
+      in
+      {
+        checks = builtins.attrNames outputs.checks.${system};
+        packages = builtins.attrNames outputs.packages.${system};
+      };
+  };
+  testTheChecksHalfIsCheckedWithoutBeingPublished = {
+    expected = {
+      checks = [
+        "formatting"
+        "suite"
+      ];
+      packages = [ ];
+    };
+    expr =
+      let
+        outputs = producer {
+          payload.checks =
+            { pkgs, ... }:
+            {
+              suite = pkgs.writeText "suite" "suite";
+            };
+        };
+      in
+      {
+        checks = builtins.attrNames outputs.checks.${system};
+        packages = builtins.attrNames outputs.packages.${system};
+      };
   };
   testTheFleetTestDefaultKeepsADeclaredImportCheck = {
     expected = true;

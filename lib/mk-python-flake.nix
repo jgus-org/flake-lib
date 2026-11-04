@@ -1,4 +1,7 @@
 # Assembles a python producer flake's outputs from what it publishes and the upstream it tracks.
+# The payload states its publishables in three halves: `payload.packages` for artifacts the flake
+# ships, `payload.overlays` for members of the consumer's python set, and `payload.checks` for a
+# gate that is nothing but a gate.
 {
   eachDefaultSystem,
   eachSystem,
@@ -25,7 +28,7 @@
   upstream ? null,
 }:
 let
-  inherit (nixpkgs.lib) genAttrs optionalAttrs;
+  inherit (nixpkgs.lib) genAttrs optionalAttrs throwIf;
   inherit (builtins)
     attrNames
     elem
@@ -48,6 +51,7 @@ let
 
   packagesPayload = payload.packages or (_: { });
   overlaysPayload = payload.overlays or (_: { });
+  checksPayload = payload.checks or (_: { });
 
   # A payload states its publishables as a function of the set they land in, so the same payload serves the producer's own build and every consumer's tree.
   recordIn =
@@ -118,6 +122,8 @@ in
     publishedAll = published // genAttrs overlayOnly (name: overlayTree.python3Packages.${name});
     checkOf =
       name: if elem name packageNames then gateTree.${name} else gateTree.python3Packages.${name};
+    ownChecks = checksPayload (recordIn gateTree gateTree.python3.pkgs);
+    hiddenChecks = attrNames (builtins.intersectAttrs ownChecks publishedAll);
 
     formatting = mkFormatting {
       inherit excludes self system;
@@ -148,9 +154,18 @@ in
     );
   in
   {
-    checks = genAttrs publishedNames checkOf // {
-      formatting = formatting.check;
-    };
+    checks =
+      throwIf (hiddenChecks != [ ])
+        (
+          "mkPythonFlake: payload.checks names ${builtins.concatStringsSep ", " hiddenChecks}, which the payload also publishes as an artifact, so the gate builds the artifact under those names and never the check"
+        )
+        (
+          genAttrs publishedNames checkOf
+          // ownChecks
+          // {
+            formatting = formatting.check;
+          }
+        );
     formatter = formatting.formatter;
     packages =
       publishedAll

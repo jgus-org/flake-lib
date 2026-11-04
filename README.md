@@ -8,166 +8,111 @@ branch. There is no copy-and-merge of scripts between repos.
 
 ## API (`flake-lib.lib`)
 
-```nix
-# High-level: one call is a whole producer flake.
-flake-lib.lib.mkPythonFlake {
-  inherit self nixpkgs;  # `self` builds the org formatter, so it is required
-  source  = { type = "pypi"; pname = "iso639_lang"; format = "sdist"; };  # pname = PyPI dist (underscore form)
-  package = { attr = "iso639-lang"; description = "..."; };               # attr = nix attr (dash form)
-  pin     = import ./pin.nix;
-}
-# => packages.<system> = { <attr>; default; update-version; update-branches; }
-#    checks.<system>.formatting, formatter.<system>
+Every entry states what a call is for and what it publishes. The arguments are the
+implementation's: each entry names the file that owns them, and `tests/python-flake.nix`
+and `flake.nix` are executable uses.
 
-# A python producer written before this call published a formatter takes no `self` and
-# composes treefmt itself: add `inherit self`, delete that block, and one call is the flake.
+`mkPythonFlake` (`lib/mk-python-flake.nix`) -- one call is a whole producer flake: the upstream
+it tracks, the payload it publishes, and the org formatter. It publishes `overlays.default`, and
+per supported system `packages` (the payload, the update tools, and `default` when the payload has
+exactly one package), `checks` (the same payload, so the pull-request gate builds it, plus
+`formatting`) and `formatter`. The update tools appear only when the flake names an upstream to
+track. The tree it formats is the tree the caller hands it, so a flake-parts module and a plain
+flake both pass what they already have in scope. A producer built from the upstream source tree
+rather than a published distribution reads source files from an eval-time fetch, never from a
+derivation's output. The fetch a pin names is `lib/pinned-source.nix`; the recipe defaults,
+including the rule that a wheel is installed rather than built, are `lib/python-builders.nix`.
 
-# A python producer built from the upstream source tree rather than a published distribution,
-# resolving its dependencies through a sibling producer's overlay, and publishing its
-# payload as a check so the gate builds it:
-flake-lib.lib.mkPythonFlake {
-  inherit self nixpkgs;
-  overlays = [ fastmcp.overlays.default ];
-  source = { type = "github"; owner = "utensils"; repo = "mcp-nixos"; };
-  package = {
-    attr = "mcp-nixos";
-    kind = "pythonApplication";
-    buildSystem = p: [ p.hatchling ];
-    dependencies = p: [ p.beautifulsoup4 p.fastmcp p.requests ];
-    # attrs, or p -> attrs over the python set, or p -> pkgs -> attrs when a check input is not a python package
-    extra = p: { doCheck = true; nativeCheckInputs = [ p.pytestCheckHook ]; };
-  };
-  pin = import ./pin.nix;  # { version; sourceRev; sourceHash; }
-  extraChecks = { package, ... }: { inherit package; };
-  updateBranches = { minimumTrackingVersion = "3.1.0"; };  # anything mkUpdateBranches takes
-}
-# `updateVersion` is the same pass-through for mkUpdateVersion. The call always publishes
-# the org formatter, so a repo carries no treefmt config and no treefmt-nix input.
+`mkFormatting` (`lib/mk-formatting.nix`) -- the org-standard formatter, so a repo carries no
+treefmt config, no treefmt-nix input, and no formatter config files of its own. It publishes a
+`formatter` and a `check` over the tree the caller hands it, with the repo's own paths excluded on
+top of treefmt's defaults. The tools resolve from the nixpkgs the caller's flake-lib input
+resolves to, and the function takes no package set, so a caller's only lever on their version is
+its `follows` edge. See [Org-standard formatting](#org-standard-formatting-mkformatting).
 
-# The org-standard formatter, so a repo carries no treefmt config, no treefmt-nix input,
-# and no formatter config files of its own.
-flake-lib.lib.mkFormatting {
-  inherit self system;
-  excludes = [ "secrets/**" ];  # repo-specific paths, merged with treefmt's own defaults
-}
-# => { formatter; check; }
+`eachDefaultSystem`, `eachDefaultLinuxSystem`, `eachSystem`, `defaultSystems`,
+`defaultLinuxSystems` (`lib/default-systems.nix`) -- per-system outputs over the hosts this fleet
+builds for, replacing the flake-utils equivalents and iterating exactly the hosts they name; see
+[Supported systems](#supported-systems).
 
-# Per-system outputs, over the systems this fleet builds for.
-flake-lib.lib.eachDefaultSystem      (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux, aarch64-darwin
-flake-lib.lib.eachDefaultLinuxSystem (system: { packages.default = ...; })  # x86_64-linux, aarch64-linux
-flake-lib.lib.eachSystem             [ "x86_64-linux" ] (system: { packages.default = ...; })  # a caller-chosen list
-flake-lib.lib.defaultSystems       # [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ]
-flake-lib.lib.defaultLinuxSystems  # [ "aarch64-linux" "x86_64-linux" ]
+`mkUpdateVersion` (`lib/mk-update-version.nix`, runtime in `scripts/update-version.sh`) -- the
+updater for one pinned source: it resolves the upstream's newest release, populates every hash the
+pin declares, cascades to siblings, and runs the pull-request gate over the result before anything
+is committed. It evaluates everything the flake publishes and starts no package build of its own
+except hash discovery.
 
-# Low-level: bespoke flakes supply their own package derivation.
-flake-lib.lib.mkUpdateVersion  { pkgs; source; siblings ? []; siblingRefsInPin ? false; hashMode ? "prefetch"; extraHashes ? []; buildFailureHash ? null; buildFailureHashes ? []; buildTarget ? ""; artifactHook ? null; formatter ? null; markerEnvironment ? {}; artifactFingerprint ? ""; meta ? { license = mit; }; }
-flake-lib.lib.mkUpdateBranches { pkgs; source; pinSchema; branchOwnedFiles ? [ "pin.nix" "flake.lock" ]; extraBranchOwnedFiles ? []; extraHashes ? []; formatter ? null; versionOverrides ? {}; versionCanon ? []; minVersionComponents ? 3; meta ? { license = mit; }; }
-flake-lib.lib.mkRevalidateHash { pkgs; buildTarget ? ""; hashField ? "hash"; meta ? { license = mit; }; }
-flake-lib.lib.mkJsDepsHook     { pkgs; manager; source ? "shipped"; field ? null; fetcherVersion ? null; }
-flake-lib.lib.mkComposedHook   { pkgs; hooks; }
-flake-lib.lib.mkHuggingFaceModelManager { pkgs; name; manifest; model; meta ? { license = mit; }; stampName ? ".${name}-verified.json"; }
-flake-lib.lib.mkOciImage       { pkgs; source; pin; meta ? {}; }
-flake-lib.lib.versionMatchesComparison actual { operator; version; }
-flake-lib.lib.depsCore                                                   # store path of the shared python dep-resolution module; load via the DEPS_CORE env var
+`mkUpdateBranches` (`lib/mk-update-branches.nix`, runtime in `scripts/update-branches-core.sh`) --
+the per-version-branch orchestrator: it enumerates the upstream's versions, maintains one branch
+per version plus the aggregates, and publishes only refs a run has built. Its discovery, refresh,
+and publication phases split across jobs; see [Split update-branches jobs](#split-update-branches-jobs).
 
-# The distribution names a requirements file asks for, in the shape a python package set
-# names its members: lowercased, `.` and `_` folded to `-`, specifiers, extras, markers,
-# comments, and indented lines dropped. A `mkPythonFlake` payload reads them from the
-# pinned source with the `sourcePath` it is given — evaluation may read source files from
-# an eval-time fetch, never from the `src` derivation's output.
-flake-lib.lib.readPythonRequirements ./requirements.txt  # => [ "pillow" "sqlalchemy" "torch" ... ]
+`mkRevalidateHash` (`lib/mk-revalidate-hash.nix`) -- a recovery tool that rewrites one
+fixed-output hash pin from a build's hash mismatch, for a hash nothing can prefetch.
 
-# An executable that runs one python source file against a python environment with the named
-# dependencies. The environment is also the application's `.baseLayer`, so an image build can
-# peel the dependency layer away from the script it runs. The optional arguments carry the
-# launcher conventions a service would otherwise hand-roll on makeWrapper: `workDir` is the
-# directory the script runs in, `runtimeInputs` are extra programs on its PATH, `pythonPath`
-# directories are prepended to its PYTHONPATH, `env` exports unconditionally, and `envDefaults`
-# exports only where the environment has not already set the name. `meta` merges over the
-# launcher's own `{ mainProgram = name; }`.
-flake-lib.lib.mkPythonApplication { pkgs; name; dependencies = p: [ p.fastmcp ]; script = ./host.py; }
-flake-lib.lib.mkPythonApplication {
-  pkgs; name; dependencies; script;
-  workDir ? null;
-  runtimeInputs ? [ ];
-  pythonPath ? [ ];
-  env ? { };
-  envDefaults ? { };
-  meta ? { };
-}
+`mkJsDepsHook` (`lib/mk-js-deps-hook.nix`) -- an artifact hook that computes a JS package-manager
+offline-dependency hash at the pinned revision and prints it for the updater to capture into the
+pin.
 
-# The one dual-stack IPv6 interposer: `IPV6_V6ONLY=True` setsockopt calls become no-ops, so a
-# `[::]` listener serves both families (asyncio and waitress set the flag before any bind).
-# `site` is a directory holding a `sitecustomize.py`, for a PYTHONPATH the consumer controls —
-# pass it as a `mkPythonApplication` `pythonPath` entry. `withPackage` appends the same
-# interposer to a package's `initFile` (an `__init__.py` the entrypoint transitively imports),
-# for a package whose interpreter environment the consumer does not control.
-flake-lib.lib.pythonDualStackIPv6.site pkgs  # -> sitecustomize directory for PYTHONPATH
-flake-lib.lib.pythonDualStackIPv6.withPackage { package; initFile = "pkg/__init__.py"; }
+`mkComposedHook` (`lib/mk-composed-hook.nix`) -- several artifact hooks composed into the one
+executable a single hook slot takes.
 
-# Returns pkgs.${name}, emitting an eval warning when a version-numbered nixpkgs
-# package (postgresql_18, php83, jdk21_headless, …) has a higher major available.
-flake-lib.lib.warnIfNewerMajor { pkgs; name; lib ? pkgs.lib; }
-```
+`mkHuggingFaceModelManager` (`lib/mk-huggingface-model-manager.nix`, runtime in
+`scripts/huggingface-model-manager.py`) -- the runtime downloader for a manifest-pinned model
+repository, carrying the manifest's identity on the derivation.
+
+`mkOciImage` (`lib/mk-oci-image.nix`, shared shape in `lib/oci-image.nix`) -- the image a registry
+digest pin names: a fixed-output directory holding the upstream manifest, config and compressed
+layers, copied unchanged, with the loading helpers a consumer needs beside it.
+
+`versionMatchesComparison` (`lib/version-matches-comparison.nix`) -- a version against one
+comparison operator, with numeric versions normalized so leading and trailing zero components do
+not decide, and an exact operator that compares the strings as written.
+
+`evalMarkerTree` (`lib/eval-marker-tree.nix`) -- a PEP 508 marker tree decided against a stated
+environment, so an incompatible requirement is dropped rather than pinned.
+
+`readPythonRequirements` (`lib/read-python-requirements.nix`) -- the distribution names a
+requirements file asks for, in the shape a python package set names its members: lowercased, `.`
+and `_` folded to `-`, with specifiers, extras, markers, comments, and indented lines dropped. A
+producer's payload reads them from the pinned source rather than a checked-out tree, because
+evaluation may read source files from an eval-time fetch and never from a derivation's output.
+
+`mkPythonApplication` (`lib/mk-python-application.nix`) -- an executable that runs one python
+source file against an environment carrying named dependencies, with the launcher conventions a
+service would otherwise hand-roll on makeWrapper: a working directory, extra programs on PATH,
+prepended PYTHONPATH entries, and environment exported unconditionally or only where the name is
+unset. The environment is published beside the executable, so an image build can peel the
+dependency layer away from the script it runs.
+
+`pythonDualStackIPv6` (`lib/python-dual-stack-ipv6.nix`) -- the one dual-stack IPv6 interposer: an
+`IPV6_V6ONLY=True` setsockopt becomes a no-op, so a `[::]` listener serves both families (asyncio
+and waitress set the flag before any bind). Two shapes, for whether the consumer controls the
+interpreter environment: a directory holding a `sitecustomize.py` for a PYTHONPATH it owns, or the
+same interposer appended to a package file the entrypoint transitively imports.
+
+`warnIfNewerMajor` (`lib/default.nix`) -- a version-numbered nixpkgs package (`postgresql_18`,
+`php83`, `jdk21_headless`, …), returned with an eval warning when a higher major is available.
+
+`depsCore` (`scripts/deps_core.py`) -- the shared python dependency-resolution module, loaded by
+the updater scripts from the environment they are built with.
 
 `source.type` is `pypi`, `github`, `github-release-asset`, `huggingface`, `gitlab`, `mutable-url`, or `oci`. `github`
 hashes the source _tree_ at a release tag (`{ version, sourceRev, sourceHash }`);
-GitHub sources whose release tags have an additional prefix set `tagPrefix`, such as `source = { type = "github"; owner = "openai"; repo = "codex"; tagPrefix = "rust-v"; };`. Pins and version branches use the version without that prefix.
+GitHub sources whose release tags have an additional prefix set `tagPrefix`. Pins and version branches use the version without that prefix.
 A `github` source names its versions in exactly one of two places, and `track` says which: `release` (the default) reads the GitHub Releases API, and `tag` reads the repository's git tags. An upstream that ships tags without opening GitHub Releases for them has an empty releases list, so a producer for one tracks `tag` — otherwise its versions are invisible to both the updater and the orchestrator.
 A `gitlab` source names its versions as the project's git tags, which is also where its updater resolves a release from, so there is no endpoint for `track` to choose between; `mkUpdateBranches` enumerates those tags and refuses a gitlab source that asks for `tag`.
 `github-release-asset` instead prefetches a single prebuilt release asset into a
 `{ version, hash }` pin (`pinSchema = "github-asset"`), for upstreams shipped as a
-ready-to-run binary/jar rather than built from source:
+ready-to-run binary/jar rather than built from source; `lib/mk-update-version.nix` names the
+fields the asset and tag templates take.
 
-```nix
-source = {
-  type = "github-release-asset";
-  owner = "Suwayomi"; repo = "Suwayomi-Server";
-  asset = "Suwayomi-Server-v\${version}.jar";  # tokens: \${version} (tag minus leading v), \${tag}
-  # tag = "\${version}";                        # optional; default "v\${version}"
-};
-```
+`mutable-url` tracks a small artifact whose URL remains stable while its contents change. It is single-branch and has no meaningful upstream version. The updater compares the final response's `Last-Modified` header with the `{ lastModified, hash }` pin and downloads the artifact only when that header changes. `lib/mk-update-version.nix` owns its source fields.
 
-`mutable-url` tracks a small artifact whose URL remains stable while its contents change. It is single-branch and has no meaningful upstream version. The updater compares the final response's `Last-Modified` header with the `{ lastModified, hash }` pin and downloads the artifact only when that header changes.
+`oci` tracks a public registry tag and pins `{ imageDigest, imageHash }`. `imageName` must include the registry hostname. The updater accepts an optional tag or `sha256:...` digest in the configured repository, resolves an image index to one platform manifest, checks its platform, and copies that immutable manifest with its config and layers unchanged. `imageHash` is the recursive Nix hash of the resulting Skopeo directory. `lib/mk-oci-image.nix` and `lib/oci-image.nix` own the source and pin fields.
 
-```nix
-source = {
-  type = "mutable-url";
-  url = "https://downloads.example.test/artifact.bin";
-};
-```
+`tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The returned package is the image directory, with `imageName`, `imageTag`, `imageDigest`, `copyTo`, and `copyToPodman` attributes for loading it. Its local name defaults to `imageName`, and its local tag defaults to the manifest digest without `sha256:`; `finalImageName` and `finalImageTag` can override them. `copyTo` accepts a Skopeo destination and additional copy arguments. Public fetches use isolated registry configuration and an empty authentication file. Pulling and loading preserve the original image manifest, config, and compressed layers rather than rebuilding a base image. OCI updates skip downloads for a matching platform manifest digest and populated hash, preserve dependency locks, and restore the original pin and lock if updating or verification fails. A versioned producer skips only once its pin also names the version being resolved. A legacy `archiveFingerprint` triggers one fetch to migrate the hash to the directory format and remove that field. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
 
-`oci` tracks a public registry tag and pins `{ imageDigest, imageHash }`. `imageName` must include the registry hostname. The updater accepts an optional tag or `sha256:...` digest in the configured repository, resolves an image index to one platform manifest, checks its platform, and copies that immutable manifest with its config and layers unchanged. `imageHash` is the recursive Nix hash of the resulting Skopeo directory.
-
-```nix
-source = {
-  type = "oci";
-  imageName = "docker.io/vendor/runtime";
-  tag = "latest-sm86";
-  os = "linux";
-  arch = "amd64";
-  finalImageName = "vendor/runtime";
-};
-image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
-update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; };
-```
-
-`tag`, `os`, and `arch` default to `latest`, `linux`, and `amd64`; `variant` is optional. The returned package is the image directory, with `imageName`, `imageTag`, `copyTo`, and `copyToPodman` attributes for loading it. Its local name defaults to `imageName`, and its local tag defaults to the manifest digest without `sha256:`; `finalImageName` and `finalImageTag` can override them. `copyTo` accepts a Skopeo destination and additional copy arguments. Public fetches use isolated registry configuration and an empty authentication file. Pulling and loading preserve the original image manifest, config, and compressed layers rather than rebuilding a base image. OCI updates skip downloads for a matching platform manifest digest and populated hash, preserve dependency locks, and restore the original pin and lock if updating or verification fails. A versioned producer skips only once its pin also names the version being resolved. A legacy `archiveFingerprint` triggers one fetch to migrate the hash to the directory format and remove that field. OCI source updates do not support sibling cascades, artifact hooks, or extra hash fields.
-
-An `oci` producer opts into the version tree by adding `versions` to the same spec, whose `type` selects the discovery path already implemented for that vocabulary (`github` reads the endpoint that source's `track` names; a registry-tag source would be a new arm, not a producer-shape change). Its pin is `{ version, imageDigest, imageHash }`; a producer without `versions` keeps pinning exactly `{ imageDigest, imageHash }`. Absence of `versions` is the single-branch signal, so an existing producer is untouched by construction, still rejects a second positional argument, and still pins no version.
-
-```nix
-source = {
-  type = "oci";
-  imageName = "ghcr.io/home-assistant/home-assistant";
-  os = "linux";
-  arch = "amd64";
-  versions = { type = "github"; owner = "home-assistant"; repo = "core"; };
-};
-image = flake-lib.lib.mkOciImage { inherit pkgs source; pin = import ./pin.nix; };
-update-version = flake-lib.lib.mkUpdateVersion { inherit pkgs source; };
-update-branches = flake-lib.lib.mkUpdateBranches { inherit pkgs source; pinSchema = "oci"; };
-```
+An `oci` producer opts into the version tree by adding `versions` to the same spec, whose `type` selects the discovery path already implemented for that vocabulary (`github` reads the endpoint that source's `track` names; a registry-tag source would be a new arm, not a producer-shape change). Its pin is `{ version, imageDigest, imageHash }`; a producer without `versions` keeps pinning exactly `{ imageDigest, imageHash }`. Absence of `versions` is the single-branch signal, so an existing producer is untouched by construction, still rejects a second positional argument, and still pins no version. `lib/oci-image.nix` owns that spec's fields.
 
 A versioned producer pins no `tag`: it publishes its image under its version, so the registry reference is the release version with any GitHub version prefix removed, which is also the version recorded in the pin. Invoking its `update-version` with no arguments resolves the newest upstream release through GitHub's `releases/latest` endpoint, which excludes drafts and prereleases; publish the whole tree with `update-branches`, whose `pinSchema = "oci"` seeds a new exact branch from the base pin's `imageDigest` and `imageHash` alone. A seed claims no version, because `mkOciImage` asserts the digest's shape at evaluation and the branch must not name a release before its image has been resolved. The updater then writes that branch's own version, and reuses the already-pinned content when the resolved image is the one the branch was seeded with. Several releases sharing one image digest is a correct pairing rather than a stale pin, and a version branch counts as unchanged only once its pin names the version it is being resolved for.
 
@@ -177,39 +122,11 @@ A versioned producer pins no `tag`: it publishes its image under its version, so
 
 `huggingface` tracks a model repository revision and writes a `{ version,
 sourceRev }` pin. An optional `files` list adds a `hashes` attribute containing
-the Nix content hash of each selected repository file:
+the Nix content hash of each selected repository file; `lib/mk-update-version.nix` owns the source's fields.
 
-```nix
-source = {
-  type = "huggingface";
-  repo = "BAAI/bge-reranker-v2-m3";
-  files = [ "config.json" "model.safetensors" ];
-};
-```
+For checkpoints too large to import into the Nix store, `manifest` writes immutable blob metadata without downloading the artifacts. `include` and `exclude` contain jq regular expressions matched against repository-relative paths. An empty `include` selects every file. The generated pin records the manifest's SHA256 in `manifestHash` by default; set `hashField` to choose another field name. `lib/mk-update-version.nix` owns the manifest's fields.
 
-For checkpoints too large to import into the Nix store, `manifest` writes immutable blob metadata without downloading the artifacts. `include` and `exclude` contain jq regular expressions matched against repository-relative paths. An empty `include` selects every file. The generated pin records the manifest's SHA256 in `manifestHash` by default; set `hashField` to choose another field name.
-
-```nix
-source = {
-  type = "huggingface";
-  repo = "example/large-model";
-  manifest = {
-    path = "model-manifest.json";
-    exclude = [ "^\\." "\\.complete\\.json$" ];
-  };
-};
-```
-
-`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. `meta` defaults to the MIT license, because the downloader is flake-lib's own script, and a caller passing `meta` replaces it. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing. `download` authenticates against Hugging Face only when the caller's environment exports `HF_TOKEN`; the local HF token store is never picked up implicitly.
-
-```nix
-modelManager = flake-lib.lib.mkHuggingFaceModelManager {
-  inherit pkgs;
-  name = "example-model";
-  manifest = ./model-manifest.json;
-  model = { repository = "example/large-model"; };
-};
-```
+`mkHuggingFaceModelManager` builds the matching runtime downloader from one manifest file path. It exposes the supplied `model` value as `passthru.model`; `stampName` defaults to `.${name}-verified.json`. `meta` defaults to the MIT license, because the downloader is flake-lib's own script, and a caller's `meta` is merged key-wise over it. Its executable accepts `download DIRECTORY`, `verify DIRECTORY`, and `check DIRECTORY`. `download` fetches the manifest files and verifies them, `verify` hashes them, and `check` validates the current manifest stamp plus file sizes without rehashing. `download` authenticates against Hugging Face only when the caller's environment exports `HF_TOKEN`; the local HF token store is never picked up implicitly. `lib/mk-huggingface-model-manager.nix` owns its arguments.
 
 The update machinery and the orchestrator's per-flake bits
 (`list_upstream_versions`, `prepare_new_branch_pin`, and sibling cascades) are all driven from that spec. `version-only` preserves the current complete pin while creating a branch so a bespoke updater can evaluate and atomically replace it with the target version's complete pin. `oci` seeds a content-only placeholder pin, and an `oci` producer discovers its versions from `source.versions` rather than from `source.type`.
@@ -238,7 +155,7 @@ new version branches include it in their placeholder pins.
 Use `pinSchema = "github-pnpm"` for the corresponding `{ version, sourceRev,
 sourceHash, pnpmDepsHash }` branch placeholders.
 
-`buildFailureHashes` declares the set of pin fields the build's hash mismatch may name, for a package whose build fails on whichever of its unprefetchable dependencies is stale first: `{ buildFailureHashes = [ "pnpmDepsHash" "vendorHash" ]; }` covers a `fetchPnpmDeps` tree and a `buildGoModule` vendor tree in one bump. A mismatch is attributed to the declared field already holding the hash the build reported as specified, and while no declared field is resolved yet, to the first declared field. `buildFailureHash` and `buildFailureHashes` combine, and each declared field is resolved at most once, so the build runs at most one more time than there are declared fields. A build that still reports a hash mismatch once every declared field is resolved ends the run, as does a mismatch belonging to a pin field no declaration covers.
+`buildFailureHashes` declares the set of pin fields the build's hash mismatch may name, for a package whose build fails on whichever of its unprefetchable dependencies is stale first: declaring one field per fetcher covers a `fetchPnpmDeps` tree and a `buildGoModule` vendor tree in one bump. A mismatch is attributed to the declared field already holding the hash the build reported as specified, and while no declared field is resolved yet, to the first declared field. `buildFailureHash` and `buildFailureHashes` combine, and each declared field is resolved at most once, so the build runs at most one more time than there are declared fields. A build that still reports a hash mismatch once every declared field is resolved ends the run, as does a mismatch belonging to a pin field no declaration covers.
 
 Both recovery tools take `buildTarget`, the published package the hash is recovered from: `mkRevalidateHash { buildTarget = "caddy"; }`, or the same name on `mkUpdateVersion`. The question a recovery build answers is what a hash fetches, and that is usually one package's build, so a flake whose family publishes more than the package carrying its hash need not build the rest to recover one value. The family stays the default because nothing about a producer has to be correct for the default to work, and naming a target narrows only the recovery build: the rewritten tree is still built whole before it is committed or reported, so the finished pin is proven by the build a pull request is gated by. A name outside the published family is an error rather than a fallback, so a package renamed away leaves a recovery that says so instead of quietly rebuilding what the caller asked to avoid.
 
@@ -293,16 +210,8 @@ from the family it does publish. What it requires instead is that the build be a
 publishing no package this runner builds is told so there rather than finishing a pin whose hashes
 were never resolved.
 
-`buildVerificationSkip` is the way out, and the reason belongs in a comment beside it:
-
-```nix
-flake-lib.lib.mkUpdateBranches {
-  inherit pkgs source;
-  pinSchema = "pypi";
-  # The published package builds a 20-minute CUDA torch; the pin's own hash check is the gate here.
-  buildVerificationSkip = true;
-}
-```
+`buildVerificationSkip` is the way out, and the reason belongs in a comment beside it;
+`lib/mk-update-branches.nix` owns the option.
 
 false (the default) runs the gate. true publishes without running it and logs that verification
 was skipped on every run, so the exception stays visible in the log. Use it only where the gate is
@@ -311,13 +220,8 @@ genuinely prohibitive; it does not make the pin correct.
 ### Split update-branches jobs
 
 `mkUpdateBranches` exposes a machine-readable interface for workflows that split
-maintenance across jobs:
-
-```console
-update-branches list
-update-branches refresh --base-sha SHA --version CANONICAL --upstream-version RAW
-update-branches publish --base-sha SHA --versions-json JSON
-```
+maintenance across jobs; `scripts/update-branches-core.sh` owns the three invocations and
+the arguments each takes.
 
 `list` writes exactly one compact JSON object to stdout; progress goes to stderr:
 
@@ -501,16 +405,16 @@ calling tree rather than anything baked into the workflow, so a package a produc
 gated by the next pull request without a workflow change.
 
 `build-packages` is the build half on its own -- `nix run
-github:jgus-org/flake-lib/v1#build-packages` -- and takes the arguments the gate passes through:
-`--dry-run` prints the installables it would build, which is how a repository is audited before
-adopting; `--system` selects another system's family and `--flake` reads another tree.
-`--only NAME` builds one published package instead of the family, for a caller that needs a build
-from that package and no other: it is built even where `passthru.ciBuildSkip` excuses it from the
-gate, since the name says what to build rather than what to gate, and a name outside the family
-fails instead of quietly building the family.
-`--require-build` makes a family with nothing to build a failure instead of a clean exit, for a
-caller that reads a clean exit as something having been built -- hash discovery does, and a hash
-never built is not a hash validated.
+github:jgus-org/flake-lib/v1#build-packages` -- and does the things the gate asks it to do, each
+of which a caller may ask for directly: it prints the installables it would build instead of
+building them, which is how a repository is audited before adopting; it builds another system's
+family, or another tree; it builds one published package instead of the family, for a caller that
+needs a build from that package and no other -- that package is built even where
+`passthru.ciBuildSkip` excuses it from the gate, since the name says what to build rather than
+what to gate, and a name outside the family fails instead of quietly building the family; and a
+family with nothing to build is a failure rather than a clean exit, for a caller that reads a
+clean exit as something having been built -- hash discovery does, and a hash never built is not a
+hash validated. `scripts/build-packages.sh` owns the spellings.
 
 Adopting it names the template the way every other flake-lib workflow is adopted, and it
 then refreshes with the rest:
@@ -528,17 +432,8 @@ request no secrets at all, so a flake with a private input is gated by pull requ
 the organization. The credential comes with being given nix: every job that uses
 `jgus-org/flake-lib/.github/actions/nix` passes `BUILD_TOKEN`.
 
-A package the runner cannot build excuses itself, with the reason in the comment beside
-the marker:
-
-```nix
-packages.${system}.vm-test =
-  (pkgs.callPackage ./test/vm.nix { }).overrideAttrs (_final: previous: {
-    # This package is the VM run derivation: building it boots two VMs, and a hosted runner
-    # has no nested virtualization.
-    passthru = (previous.passthru or { }) // { ciBuildSkip = true; };
-  });
-```
+A package the runner cannot build excuses itself, with the reason in a comment beside
+the marker -- a boolean on the package's `passthru`, spelled by `scripts/build-packages.sh`.
 
 A VM suite usually does not need the marker. `nixosTest` publishes its driver beside its run
 derivation, and building the driver type-checks the test script and builds every guest system
@@ -571,26 +466,12 @@ through the overlay untested.
 
 The build belongs in the flake's own `checks`, which is the family the gate's second half builds,
 and a check instantiates the package set it needs. The check is the overlaid package itself, named
-as the consumer names it:
+as the consumer names it, taken from a throwaway set built with the overlay applied -- that set is
+where the payload's licence is accepted and where CUDA is selected, and neither election reaches a
+consumer's package set. `scripts/build-and-check.sh` is the gate half that builds the check family:
 
 ```nix
-checks.${system} =
-  let
-    # The gate's throwaway set. This is where the payload's licence is accepted and where CUDA is
-    # selected, and neither election reaches a consumer's package set.
-    checkPkgs = import nixpkgs {
-      inherit system;
-      config = {
-        allowUnfreePackages = [ "emulationstation-de" ];
-        cudaSupport = true;
-      };
-      overlays = [ self.overlays.default ];
-    };
-  in
-  {
-    inherit (checkPkgs) es-de;
-    formatting = orgFormatting.check;
-  };
+checks.${system} = { inherit (checkPkgs) es-de; formatting = orgFormatting.check; };
 ```
 
 No machinery is involved -- the check is an ordinary package in the family `nix flake check`
@@ -609,23 +490,13 @@ vulnerabilities -- cannot be proved this way, and naming it leaves the gate perm
 ### Org-standard formatting (`mkFormatting`)
 
 Every repo in the org formats with the same program set and the same config files, so a
-repo opts in instead of configuring:
+repo opts in instead of configuring. The call publishes a `formatter` and a `check`, which a
+repo wires to its own `formatter` and `checks.formatting`; `lib/mk-formatting.nix` owns the
+arguments.
 
-```nix
-outputs = { self, flake-lib, nixpkgs, ... }:
-  flake-lib.lib.eachDefaultSystem (system:
-    let
-      formatting = flake-lib.lib.mkFormatting { inherit self system; };
-    in
-    {
-      formatter = formatting.formatter;
-      checks.formatting = formatting.check;
-    });
-```
-
-`self` is the tree to format, so a flake-parts module and a plain flake both pass what they
-already have in scope. `excludes` adds the paths only the repo knows about — generated files,
-vendored trees, secrets — on top of the excludes treefmt applies by default.
+The tree formatted is the tree the caller hands it, so a flake-parts module and a plain flake both
+pass what they already have in scope. The paths only the repo knows about — generated files,
+vendored trees, secrets — are excluded on top of the excludes treefmt applies by default.
 
 The program set is a union across the org, and a repo that does not write a language
 simply has no files the matching formatter picks up:
@@ -644,15 +515,14 @@ win in silence: `nixfmt` rather than `deadnix`/`statix`/`alejandra`/`nixpkgs-fmt
 `ruff-format` rather than `black`/`yapf`/`isort` for Python, `shfmt` rather than `beautysh`,
 `prettier` rather than `yamlfmt`/`taplo`/`biome`/`dprint`/`oxfmt`.
 
-Tools resolve from **this flake's own** pinned nixpkgs and from nothing else: the function
-takes no `pkgs`, so a repo cannot resolve the tools elsewhere. Every repo formats identically
-and a repo upgrades its formatter by bumping its flake-lib pin. The same
-drift returns through a `follows` edge on `flake-lib.inputs.nixpkgs`, which is why a consumer
-leaves that edge off: every other flake-lib function takes the caller's `pkgs` as an argument,
-so a consumer that drops the edge changes nothing but its formatter. The two config files reach
-their tools by absolute store path, which means a repo that still carries its own
-`.clang-format` or `pedantix.toml` would keep two copies of one standard: those files are
-removed in consuming repos, not overridden.
+Tools resolve from the `nixpkgs` that the caller's flake-lib input resolves to and from nothing
+else: the function takes no `pkgs`, so a repo's only lever on their version is the `follows` edge
+on `flake-lib.inputs.nixpkgs`, and [AGENTS.md](AGENTS.md) owns that edge. One tree therefore has
+exactly one formatter version -- the one its own root and lock resolve -- which is the only
+context a flake's formatter ever runs in. Which formatter claims a file and the style it applies
+are the same in every repo, because the two config files reach their tools by absolute store
+path: a repo that still carries its own `.clang-format` or `pedantix.toml` would keep two copies
+of one standard, and those files are removed in consuming repos, not overridden.
 
 A dev shell that wants the formatters on its `PATH` adds `formatter`, and the tools a specific
 editor drives, from its own `pkgs`; flake-lib does not build a shell for a repo.

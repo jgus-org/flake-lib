@@ -316,7 +316,7 @@ maintenance across jobs:
 ```console
 update-branches list
 update-branches refresh --base-sha SHA --version CANONICAL --upstream-version RAW
-update-branches publish --base-sha SHA --versions-json JSON [--for-version CANONICAL]
+update-branches publish --base-sha SHA --versions-json JSON
 ```
 
 `list` writes exactly one compact JSON object to stdout; progress goes to stderr:
@@ -326,39 +326,26 @@ update-branches publish --base-sha SHA --versions-json JSON [--for-version CANON
   "baseSha": "<full commit SHA>",
   "versions": [
     { "version": "1.2.3", "upstreamVersion": "1.2.3", "stable": true }
-  ],
-  "newestStable": {
-    "version": "1.2.3",
-    "upstreamVersion": "1.2.3",
-    "stable": true
-  }
+  ]
 }
 ```
 
-`versions` is ordered newest first and `newestStable` is either the first stable
-entry or `null`. Under Actions, where `GITHUB_OUTPUT` names a file, `list` also
-appends that manifest as `base_sha`, `versions`, `newest_stable`, and
-`maintenance` outputs, so the workflow that fans out over it carries no version
-logic of its own. `maintenance` is `versions` without `newestStable`, which is
-refreshed as its own fast path rather than twice.
+`versions` is ordered newest first. Under Actions, where `GITHUB_OUTPUT` names a
+file, `list` also appends that manifest as `base_sha` and `versions` outputs, so
+the workflow that fans out over it carries no version logic of its own.
 
 A refresh invocation does not query upstream: it creates or
 merges exactly one `v<version>` branch from `baseSha`, then updates and pushes
 that branch. Publication consumes the unchanged `versions` array, considers only
 exact refs containing `baseSha`, and updates aggregates independently. When the
 highest candidate is a prerelease but an aggregate is stable, the aggregate
-advances to the highest successful stable candidate. `--for-version` narrows a
-publication pass to the aggregates that version carries: it selects which
-aggregates the pass may move, never which version one moves to, so a publisher
-that runs before the maintenance fan-out has refreshed the other lines reports
-nothing about them. Invoking `update-branches` without arguments retains the
-compatible all-in-one behavior.
+advances to the highest successful stable candidate. Invoking `update-branches`
+without arguments retains the compatible all-in-one behavior.
 
-The workflow template uses the newest stable entry as a fast path, publishing
-the aggregates that entry carries before the matrix starts, refreshes all
-remaining exact versions in a parallel matrix, and runs a final publisher even
-when a maintenance job fails. Both publishers and every exact job reuse the
-discovery SHA and version manifest. Every job restores Nix from the shared
+The workflow template refreshes every tracked exact version in a parallel matrix
+and runs the publisher after it, even when a maintenance job fails. The
+publisher and every exact job reuse the discovery SHA and version manifest.
+Every job restores Nix from the shared
 GitHub Actions cache, so a bump reuses the dependency closure an earlier run
 built, and the maintenance matrix bounds its fan-out so a growing release list
 cannot spawn unbounded parallel refreshes. Ref publication uses bounded retries and

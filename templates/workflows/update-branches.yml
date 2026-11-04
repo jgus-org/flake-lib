@@ -62,8 +62,6 @@ jobs:
     outputs:
       base_sha: ${{ steps.plan.outputs.base_sha }}
       versions: ${{ steps.plan.outputs.versions }}
-      newest_stable: ${{ steps.plan.outputs.newest_stable }}
-      maintenance: ${{ steps.plan.outputs.maintenance }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -82,60 +80,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: nix run .#update-branches -- list
 
-  newest-stable:
-    needs: discover
-    if: "!cancelled() && needs.discover.result == 'success' && needs.discover.outputs.newest_stable != 'null'"
-    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: jgus-org/flake-lib/.github/actions/nix@v1
-        with:
-          token: ${{ secrets.ATTIC_TOKEN }}
-          github-token: ${{ secrets.BUILD_TOKEN }}
-
-      - name: Refresh newest stable
-        env:
-          BASE_SHA: ${{ needs.discover.outputs.base_sha }}
-          VERSION: ${{ fromJSON(needs.discover.outputs.newest_stable).version }}
-          UPSTREAM_VERSION: ${{ fromJSON(needs.discover.outputs.newest_stable).upstreamVersion }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          nix run .#update-branches -- refresh \
-            --base-sha "${BASE_SHA}" \
-            --version "${VERSION}" \
-            --upstream-version "${UPSTREAM_VERSION}"
-
-      # The maintenance matrix runs after this job, so no other line has refreshed its exact
-      # branch since discovery captured the specification. This publisher therefore publishes
-      # only the aggregates the newest stable version carries; the final publisher below
-      # publishes every aggregate the version manifest can reach.
-      - name: Publish newest stable early
-        continue-on-error: true
-        env:
-          BASE_SHA: ${{ needs.discover.outputs.base_sha }}
-          VERSION: ${{ fromJSON(needs.discover.outputs.newest_stable).version }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSIONS: ${{ needs.discover.outputs.versions }}
-        run: |
-          nix run .#update-branches -- publish \
-            --base-sha "${BASE_SHA}" \
-            --versions-json "${VERSIONS}" \
-            --for-version "${VERSION}"
-
   maintenance:
-    needs: [discover, newest-stable]
-    if: "!cancelled() && needs.discover.result == 'success' && needs.discover.outputs.maintenance != '[]'"
+    needs: discover
+    if: "!cancelled() && needs.discover.result == 'success' && needs.discover.outputs.versions != '[]'"
     strategy:
       fail-fast: false
       # Bound the fan-out: the matrix grows with every tracked release, and unbounded
       # parallel refreshes contend for the shared Nix cache and for runners.
       max-parallel: 4
       matrix:
-        entry: ${{ fromJson(needs.discover.outputs.maintenance) }}
+        entry: ${{ fromJson(needs.discover.outputs.versions) }}
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
@@ -161,7 +115,7 @@ jobs:
             --upstream-version "${UPSTREAM_VERSION}"
 
   publish:
-    needs: [discover, newest-stable, maintenance]
+    needs: [discover, maintenance]
     if: "!cancelled() && needs.discover.result == 'success'"
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:

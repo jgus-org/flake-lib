@@ -15,10 +15,6 @@
 # any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate. An aggregate that already contains its
 # target is left where it is without being retained; it is ahead of the target, not stranded from it.
 #
-# A publisher that runs before the rest of the fan-out has refreshed the other exact branches passes `--for-version`, publishing only the aggregates that
-# version carries. Every other line has no refreshed candidate at that point, so an unscoped early publisher would report each of them as retained on every
-# run where the specification moved, minutes before the final publisher moves those same refs.
-#
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
 #   SOURCE_TYPE          pypi | github | github-release-asset | gitlab | oci
 #   VERSION_SOURCE_TYPE  the source whose named versions drive discovery; for an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
@@ -497,7 +493,7 @@ Usage:
   update-branches
   update-branches list
   update-branches refresh --base-sha SHA --version VERSION --upstream-version VERSION
-  update-branches publish --base-sha SHA --versions-json JSON [--for-version VERSION]
+  update-branches publish --base-sha SHA --versions-json JSON
 EOF
 }
 
@@ -792,12 +788,9 @@ aggregate_tip_retained_elsewhere() {
 publish_aggregates() {
   # Aggregate refs move to a commit an exact branch already published, and that
   # refresh built what the branch publishes before pushing it; nothing is built here.
-  # A scope restricts the pass to the aggregates one version carries; it never
-  # changes which version an aggregate moves to.
-  local scope="${1:-}"
-  local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v key
-  local -a keys=() aggregates=() scoped=()
-  local -A highest_any=() highest_stable=() aggregate_set=() scope_keys=()
+  local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v
+  local -a keys=() aggregates=()
+  local -A highest_any=() highest_stable=() aggregate_set=()
   blocked_aggregates=()
   blocked_aggregate_reasons=()
 
@@ -828,14 +821,6 @@ publish_aggregates() {
   echo "=== Updating aggregate pointers from base ${BASE_SHA:0:8}"
   if ((${#aggregate_set[@]} > 0)); then
     mapfile -t aggregates < <(printf '%s\n' "${!aggregate_set[@]}" | sort)
-  fi
-  if [[ -n ${scope} ]]; then
-    mapfile -t keys < <(aggregate_keys_for_version "${scope}")
-    for key in "${keys[@]}"; do scope_keys["${key}"]=1; done
-    for agg in "${aggregates[@]}"; do
-      if [[ -n ${scope_keys[${agg}]+set} ]]; then scoped+=("${agg}"); fi
-    done
-    aggregates=("${scoped[@]}")
   fi
   for agg in "${aggregates[@]}"; do
     if [[ -z ${highest_any[${agg}]+set} ]]; then
@@ -946,26 +931,18 @@ write_failure_summary() {
 }
 
 command_list() {
-  local JSON NEWEST_STABLE
+  local JSON
   capture_base_sha
   discover_versions
   JSON=$(versions_json)
   if [[ ${TRACK_STABLE_ONLY} == "true" ]]; then
     JSON=$(jq -c '[.[] | select(.stable)]' <<<"${JSON}")
   fi
-  NEWEST_STABLE=$(jq -c '[.[] | select(.stable)][0] // null' <<<"${JSON}")
-  JSON=$(jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" --argjson newestStable "${NEWEST_STABLE}" \
-    '{baseSha: $baseSha, versions: $versions, newestStable: $newestStable}')
+  JSON=$(jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" '{baseSha: $baseSha, versions: $versions}')
   # Under Actions the fan-out is the workflow's only input, so it is written in the
   # form the next jobs read rather than having the workflow parse this back apart.
   if [[ -n ${GITHUB_OUTPUT:-} ]]; then
-    jq -r '
-      . as $plan |
-      "base_sha=\(.baseSha)",
-      "versions=\(.versions | tojson)",
-      "newest_stable=\(.newestStable | tojson)",
-      "maintenance=\([.versions[] | select(.version != ($plan.newestStable.version // ""))] | tojson)"
-    ' <<<"${JSON}" >>"${GITHUB_OUTPUT}"
+    jq -r '"base_sha=\(.baseSha)", "versions=\(.versions | tojson)"' <<<"${JSON}" >>"${GITHUB_OUTPUT}"
   fi
   printf '%s\n' "${JSON}"
 }
@@ -1020,7 +997,7 @@ command_refresh() {
 }
 
 command_publish() {
-  local BASE="" JSON="" FOR_VERSION=""
+  local BASE="" JSON=""
   local -a failed=()
   local -A reasons=()
   shift
@@ -1042,14 +1019,6 @@ command_publish() {
       JSON="${2}"
       shift 2
       ;;
-    --for-version)
-      [[ $# -ge 2 ]] || {
-        usage
-        return 2
-      }
-      FOR_VERSION="${2}"
-      shift 2
-      ;;
     *)
       usage
       return 2
@@ -1062,11 +1031,7 @@ command_publish() {
   fi
   use_base_sha "${BASE}"
   load_versions_json "${JSON}"
-  if [[ -n ${FOR_VERSION} ]] && ! printf '%s\n' "${tracked[@]}" | grep -Fxq -- "${FOR_VERSION}"; then
-    echo "error: --for-version ${FOR_VERSION} is not a tracked version in the manifest" >&2
-    return 2
-  fi
-  publish_aggregates "${FOR_VERSION}"
+  publish_aggregates
   write_failure_summary failed reasons
   if ((${#blocked_aggregates[@]} > 0)); then return 1; fi
   echo "Done."

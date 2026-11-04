@@ -469,9 +469,8 @@ BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
 VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
 [[ ${BASE_SHA} == "${SPECIFICATION_SHA}" ]]
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.3.0-rc1","1.2.3","1.2.2","1.2.1"]' ]]
-jq -e '.newestStable == {version:"1.2.3", upstreamVersion:"1.2.3", stable:true}' <<<"${PLAN}" >/dev/null
 
-# A per-version invocation refreshes only the requested exact branch. Publishing can then advance main before the higher prerelease maintenance job has run.
+# A per-version invocation refreshes only the requested exact branch, so a publication between refreshes advances the aggregates only as far as the lines that already have one.
 run_command "${VERSIONS}" refresh \
   --base-sha "${BASE_SHA}" \
   --version 1.2.3 \
@@ -485,7 +484,7 @@ assert_same_ref v1 v1.2.3
 assert_same_ref v1.2 v1.2.3
 assert_missing_ref v1.3.0-rc1
 
-# Even after early publication moves main, the later exact job branches from the discovery SHA, not the live main aggregate. The final publisher guards that same SHA and keeps stable aggregates on the highest successful stable.
+# Even after a publication moves main, the later exact job branches from the discovery SHA, not the live main aggregate. The publisher guards that same SHA and keeps stable aggregates on the highest successful stable.
 STABLE_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/v1.2.3)
 run_command "${VERSIONS}" refresh \
   --base-sha "${BASE_SHA}" \
@@ -493,7 +492,7 @@ run_command "${VERSIONS}" refresh \
   --upstream-version 1.2.1
 assert_contains_specification v1.2.1
 if git --git-dir="${REMOTE}" merge-base --is-ancestor "${STABLE_SHA}" refs/heads/v1.2.1; then
-  echo 'v1.2.1 unexpectedly merged the early-published main target' >&2
+  echo 'v1.2.1 unexpectedly merged the published main target' >&2
   exit 1
 fi
 run_command "${VERSIONS}" refresh \
@@ -502,7 +501,7 @@ run_command "${VERSIONS}" refresh \
   --upstream-version 1.3.0-rc1
 assert_contains_specification v1.3.0-rc1
 if git --git-dir="${REMOTE}" merge-base --is-ancestor "${STABLE_SHA}" refs/heads/v1.3.0-rc1; then
-  echo 'v1.3.0-rc1 unexpectedly branched from the early-published main target' >&2
+  echo 'v1.3.0-rc1 unexpectedly branched from the published main target' >&2
   exit 1
 fi
 run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}"
@@ -511,7 +510,7 @@ assert_same_ref v1 v1.2.3
 assert_same_ref v1.2 v1.2.3
 assert_same_ref v1.3 v1.3.0-rc1
 
-# The publisher that runs before the maintenance matrix scopes itself to the aggregates its own version carries, so the lines that matrix has not refreshed yet are neither moved nor reported.
+# Publication retains an aggregate whose every exact branch predates the specification, and moves the ones the refreshed version carries; the next refresh releases the retained one.
 initialize_repository
 seed_exact_branch 1.2.1
 point_aggregate v1.2 1.2.1
@@ -524,46 +523,24 @@ BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
 VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
 STALE_V121_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/v1.2.1)
 run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.3.0 --upstream-version 1.3.0
-run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" --for-version 1.3.0 >"${CASE_ROOT}/early-publish.log" 2>&1
-assert_same_ref main v1.3.0
-assert_same_ref v1 v1.3.0
-assert_same_ref v1.3 v1.3.0
-assert_ref_sha v1.2 "${STALE_V121_SHA}"
-if grep -Fq 'no candidate for' "${CASE_ROOT}/early-publish.log"; then
-  echo 'the scoped publisher reported an aggregate outside its scope' >&2
-  exit 1
-fi
-
-# Publication without a scope still retains an aggregate whose every exact branch predates the specification, and the next refresh releases it.
 PUBLISH_EXIT=0
 set +e
-run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" >"${CASE_ROOT}/final-publish.log" 2>&1
+run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" >"${CASE_ROOT}/publish.log" 2>&1
 PUBLISH_EXIT=$?
 set -e
-grep -Fq 'No candidate for v1.2 contains discovery base' "${CASE_ROOT}/final-publish.log"
+grep -Fq 'No candidate for v1.2 contains discovery base' "${CASE_ROOT}/publish.log"
 [[ ${PUBLISH_EXIT} == 1 ]]
+assert_same_ref main v1.3.0
+assert_same_ref v1 v1.3.0
+assert_ref_sha v1.2 "${STALE_V121_SHA}"
 run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.2.1 --upstream-version 1.2.1
 run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}"
 assert_same_ref v1.2 v1.2.1
-
-# A scoped publication rejects a version the manifest does not track.
-initialize_repository
-PLAN=$(run_command '1.2.0' list)
-BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
-VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
-SCOPE_EXIT=0
-set +e
-run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" --for-version 9.9.9 >"${CASE_ROOT}/scope.log" 2>&1
-SCOPE_EXIT=$?
-set -e
-[[ ${SCOPE_EXIT} == 2 ]]
-grep -Fq 'not a tracked version in the manifest' "${CASE_ROOT}/scope.log"
 
 # GitHub tags accepted by the existing version grammar are retained even when they are not PEP 440; a final release sorts ahead of its same-core prerelease.
 initialize_repository
 PLAN=$(run_command $'1.2.3-ubuntu1\n1.2.3' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.3","1.2.3-ubuntu1"]' ]]
-jq -e '.newestStable.version == "1.2.3"' <<<"${PLAN}" >/dev/null
 
 # TRACK_STABLE_ONLY removes prereleases from the fan-out the maintenance matrix and publication are built from, so they get neither. Default off keeps them tracked.
 initialize_repository
@@ -572,7 +549,6 @@ VERSIONS=$'1.2.1\n1.2.2\n1.2.3\n1.3.0-rc1'
 commit_specification
 PLAN=$(TRACK_STABLE_ONLY=true run_command "${VERSIONS}" list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.3","1.2.2","1.2.1"]' ]]
-jq -e '.newestStable.version == "1.2.3"' <<<"${PLAN}" >/dev/null
 BASE_SHA=$(jq -r '.baseSha' <<<"${PLAN}")
 VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
 TRACK_STABLE_ONLY=true run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.2.3 --upstream-version 1.2.3
@@ -803,7 +779,7 @@ initialize_repository oci
 export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github
 PLAN=$(run_command $'2026.9.4\n2026.10.0\n2026.10.1' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["2026.10.1","2026.10.0","2026.9.4"]' ]]
-jq -e '.newestStable == {version:"2026.10.1", upstreamVersion:"2026.10.1", stable:true}' <<<"${PLAN}" >/dev/null
+jq -e '.versions[0] == {version:"2026.10.1", upstreamVersion:"2026.10.1", stable:true}' <<<"${PLAN}" >/dev/null
 unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
 
 # A version source the orchestrator cannot enumerate fails discovery by name, whatever the producer's own source type is.
@@ -927,7 +903,7 @@ run_failed_update '' '["v",""]' '' '' list
 grep -Fq -- 'error: gitlab tag enumeration did not end within 2 pages' "${CASE_ROOT}/update.log"
 unset SOURCE_TYPE GITLAB_MAX_PAGES TEST_GITLAB_TAGS TEST_GITLAB_NEXT_PAGE TEST_GITLAB_ALWAYS_NEXT_PAGE
 
-# Under Actions discovery also writes the fan-out the workflow's later jobs read, so the version logic lives here rather than in the workflow file. The newest stable is the one job it excludes: that version is refreshed by itself, not twice.
+# Under Actions discovery also writes the fan-out the workflow's later jobs read, so the version logic lives here rather than in the workflow file.
 initialize_repository
 export GITHUB_OUTPUT="${CASE_ROOT}/outputs"
 OUTPUTS="${GITHUB_OUTPUT}"
@@ -935,8 +911,6 @@ run_command $'1.2.3\n1.3.0' list
 unset GITHUB_OUTPUT
 [[ "$(sed -nE 's/^base_sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
 [[ "$(sed -nE 's/^versions=//p' "${OUTPUTS}" | jq -c '[.[].version]')" == '["1.3.0","1.2.3"]' ]]
-[[ "$(sed -nE 's/^newest_stable=//p' "${OUTPUTS}" | jq -r '.version')" == "1.3.0" ]]
-[[ "$(sed -nE 's/^maintenance=//p' "${OUTPUTS}" | jq -c '[.[].version]')" == '["1.2.3"]' ]]
 
 # A refreshed branch is built before it is pushed, so the pin an unbuildable package comes from is never what a consumer resolves. The refresh is not rolled back by the run, only withheld: the version stays undiscovered and the next run retries it.
 initialize_repository

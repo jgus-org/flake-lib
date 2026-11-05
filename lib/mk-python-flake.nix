@@ -1,10 +1,11 @@
 # Assembles a python producer flake's outputs from what it publishes and the upstream it tracks.
 # The payload states its publishables in three halves: `payload.packages` for artifacts the flake
 # ships, `payload.overlays` for members of the consumer's python set, and `payload.checks` for a
-# gate that is nothing but a gate. Each half reaches exactly one output family: `packages.<system>`
-# is the packages half and nothing else, while `checks.<system>` is the overlay members built in the
-# tree `gate.config` names, the checks half, and `formatting`. A built artifact is never also a
-# check, so a name appears in one family by what it is and not by which builder made it.
+# gate that is nothing but a gate. `packages.<system>` is the packages half and nothing else: a
+# published artifact is never a check, because the build a host needs is this payload resolved in
+# the host's own set, which the flake cannot see and must not guess, and building the system is
+# what verifies it. `checks.<system>` is what the tree `gate.config` names -- the overlay members
+# and the checks half -- plus `formatting`.
 {
   eachDefaultSystem,
   eachSystem,

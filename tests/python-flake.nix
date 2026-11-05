@@ -95,20 +95,15 @@ let
   };
 in
 {
-  testACheckNamedLikeAPublishedAttributeThrows = {
+  testACheckNamedLikeAPublishedAttributeBuildsBoth = {
     expected = {
-      againstAPackage = {
-        success = false;
-        value = false;
-      };
-      againstAnOverlayMember = {
-        success = false;
-        value = false;
-      };
+      checksNameIt = true;
+      packagesNameIt = true;
+      theTwoAreDifferentBuilds = true;
     };
-    expr = {
-      againstAPackage = builtins.tryEval (
-        (producer {
+    expr =
+      let
+        outputs = producer {
           payload = {
             checks =
               { pkgs, ... }:
@@ -117,21 +112,15 @@ in
               };
             packages = packagesPayload;
           };
-        }).checks.${system}
-      );
-      againstAnOverlayMember = builtins.tryEval (
-        (producer {
-          payload = {
-            checks =
-              { pkgs, ... }:
-              {
-                marker = pkgs.writeText "clash" "clash";
-              };
-            overlays = markerPayload;
-          };
-        }).checks.${system}
-      );
-    };
+          upstream = pypi;
+        };
+      in
+      {
+        checksNameIt = outputs.checks.${system} ? six;
+        packagesNameIt = outputs.packages.${system} ? six;
+        theTwoAreDifferentBuilds =
+          outputs.checks.${system}.six.drvPath != outputs.packages.${system}.six.drvPath;
+      };
   };
   testAGitlabSourceFetchesItsSourceFromGitLab = {
     expected = {

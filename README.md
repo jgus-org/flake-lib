@@ -241,11 +241,14 @@ the arguments each takes.
 file, `list` also appends that manifest as `base_sha` and `versions` outputs, so
 the workflow that fans out over it carries no version logic of its own.
 
-A refresh invocation does not query upstream: it creates or
-merges exactly one `v<version>` branch from `baseSha`, then updates and pushes
-that branch. Publication consumes the unchanged `versions` array, considers only
-exact refs containing `baseSha`, and updates aggregates independently. When the
-highest candidate is a prerelease but an aggregate is stable, the aggregate
+A refresh invocation does not query upstream: it brings exactly one
+`v<version>` branch up to `baseSha`, then updates and pushes that branch. The
+refreshed tree is `baseSha` with the branch's own `branchOwnedFiles` on top, so
+a path outside those patterns keeps nothing of the branch's: the base's content
+wins, and where the base has none the branch's copy is dropped and named in a
+workflow warning. Publication consumes the unchanged `versions` array, considers
+only exact refs containing `baseSha`, and updates aggregates independently. When
+the highest candidate is a prerelease but an aggregate is stable, the aggregate
 advances to the highest successful stable candidate. Invoking `update-branches`
 without arguments retains the compatible all-in-one behavior.
 

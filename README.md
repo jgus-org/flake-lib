@@ -14,14 +14,17 @@ and `flake.nix` are executable uses.
 
 `mkPythonFlake` (`lib/mk-python-flake.nix`) -- one call is a whole producer flake: the upstream
 it tracks, the payload it publishes, and the org formatter. It publishes `overlays.default`, and
-per supported system `packages` (the payload, the update tools, and `default` when the payload has
-exactly one package), `checks` (the same payload, so the pull-request gate builds it, plus
-`formatting`) and `formatter`. The update tools appear only when the flake names an upstream to
-track. The tree it formats is the tree the caller hands it, so a flake-parts module and a plain
-flake both pass what they already have in scope. A producer built from the upstream source tree
-rather than a published distribution reads source files from an eval-time fetch, never from a
-derivation's output. The fetch a pin names is `lib/pinned-source.nix`; the recipe defaults,
-including the rule that a wheel is installed rather than built, are `lib/python-builders.nix`.
+per supported system `packages` (the `payload.packages` half, the update tools, and `default` when
+that half has exactly one package), `checks` (the `payload.overlays` members built in the tree
+`gate.config` names, the `payload.checks` half, and `formatting`) and `formatter`. Neither family
+mirrors the other: a published artifact is not also a check, because what a host needs is that
+payload resolved in the host's own set, which the producer cannot see, and building the host is
+what verifies it. The update tools appear only when the flake names an upstream to track. The tree
+it formats is the tree the caller hands it, so a flake-parts module and a plain flake both pass
+what they already have in scope. A producer built from the upstream source tree rather than a
+published distribution reads source files from an eval-time fetch, never from a derivation's
+output. The fetch a pin names is `lib/pinned-source.nix`; the recipe defaults, including the rule
+that a wheel is installed rather than built, are `lib/python-builders.nix`.
 
 `mkFormatting` (`lib/mk-formatting.nix`) -- the org-standard formatter, so a repo carries no
 treefmt config, no treefmt-nix input, and no formatter config files of its own. It publishes a

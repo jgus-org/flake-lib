@@ -104,6 +104,7 @@ hashes the source _tree_ at a release tag (`{ version, sourceRev, sourceHash }`)
 GitHub sources whose release tags have an additional prefix set `tagPrefix`. Pins and version branches use the version without that prefix.
 A `github` source names its versions in exactly one of two places, and `track` says which: `release` (the default) reads the GitHub Releases API, and `tag` reads the repository's git tags. An upstream that ships tags without opening GitHub Releases for them has an empty releases list, so a producer for one tracks `tag` — otherwise its versions are invisible to both the updater and the orchestrator.
 A `gitlab` source names its versions as the project's git tags, which is also where its updater resolves a release from, so there is no endpoint for `track` to choose between; `mkUpdateBranches` enumerates those tags and refuses a gitlab source that asks for `tag`.
+A `gitlab` source on a self-hosted instance names that host with `domain` (e.g. `invent.kde.org`). It defaults to `gitlab.com`, and the source fetch, the updater, and the orchestrator all query the named host.
 `github-release-asset` instead prefetches a single prebuilt release asset into a
 `{ version, hash }` pin (`pinSchema = "github-asset"`), for upstreams shipped as a
 ready-to-run binary/jar rather than built from source; `lib/mk-update-version.nix` names the

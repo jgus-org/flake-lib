@@ -479,3 +479,47 @@ grep -Fq 'publishes no package named not-published' <<<"${STRAY_OUTPUT}"
   echo "expected a build target outside the published family to build nothing" >&2
   exit 1
 }
+
+# A self-hosted instance is named by GITLAB_DOMAIN, so every upstream this updater asks has to be that host: the
+# tag list a release is discovered from, the ref it resolves to, the branch a commit-tracked source follows, and
+# the git remote the source hash is computed from. Naming no domain leaves all of them on gitlab.com, which is
+# what every producer already in the fleet does.
+gitlab_update() {
+  # $1 host (empty names none, so the updater's own default applies), $2 tracking mode, $3 case directory, $4 request log
+  local DOMAIN="${1}" TRACK="${2}" ROOT="${TEST_ROOT}/${3}" URL_LOG="${4}"
+  mkdir -p "${ROOT}"
+  printf '%s\n' '{}' >"${ROOT}/flake.nix"
+  printf '%s\n' '{' '  version = "";' '  sourceRev = "";' '  sourceHash = "";' '}' >"${ROOT}/pin.nix"
+  : >"${URL_LOG}"
+  FLAKE_ROOT="${ROOT}" \
+    SOURCE_TYPE=gitlab \
+    GITLAB_DOMAIN="${DOMAIN}" \
+    GITLAB_OWNER=network \
+    GITLAB_REPO=smb4k \
+    GITLAB_TRACK="${TRACK}" \
+    HASH_MODE=prefetch \
+    EXTRA_HASHES='[]' \
+    PIN_HASHES='[]' \
+    SIBLINGS='[]' \
+    TEST_GITLAB_URL_LOG="${URL_LOG}" \
+    bash "${UPDATE_VERSION}" >/dev/null
+}
+
+GITLAB_URL_LOG="${TEST_ROOT}/gitlab-urls.log"
+
+gitlab_update invent.kde.org release gitlab-release "${GITLAB_URL_LOG}"
+grep -Fqx -- 'https://invent.kde.org/api/v4/projects/network%2Fsmb4k/repository/tags' "${GITLAB_URL_LOG}"
+grep -Fqx -- 'https://invent.kde.org/api/v4/projects/network%2Fsmb4k/repository/commits/v1.2.3' "${GITLAB_URL_LOG}"
+grep -Fqx -- 'https://invent.kde.org/network/smb4k.git' "${GITLAB_URL_LOG}"
+grep -Fq 'version = "1.2.3";' "${TEST_ROOT}/gitlab-release/pin.nix"
+grep -Fq 'sourceRev = "gitlab-revision";' "${TEST_ROOT}/gitlab-release/pin.nix"
+grep -Fq 'sourceHash = "sha256-source";' "${TEST_ROOT}/gitlab-release/pin.nix"
+
+gitlab_update invent.kde.org commit gitlab-commit "${GITLAB_URL_LOG}"
+grep -Fqx -- 'https://invent.kde.org/api/v4/projects/network%2Fsmb4k/repository/branches/master' "${GITLAB_URL_LOG}"
+grep -Fqx -- 'https://invent.kde.org/network/smb4k.git' "${GITLAB_URL_LOG}"
+
+gitlab_update '' commit gitlab-default "${GITLAB_URL_LOG}"
+grep -Fqx -- 'https://gitlab.com/api/v4/projects/network%2Fsmb4k/repository/branches/master' "${GITLAB_URL_LOG}"
+grep -Fqx -- 'https://gitlab.com/network/smb4k.git' "${GITLAB_URL_LOG}"
+grep -Fq 'sourceHash = "sha256-source";' "${TEST_ROOT}/gitlab-default/pin.nix"

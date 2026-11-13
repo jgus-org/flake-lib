@@ -880,6 +880,15 @@ grep -Fqx -- 'https://gitlab.com/api/v4/projects/example%2Fexample/repository/ta
 [[ ! -s "${CASE_ROOT}/gh-endpoints" ]]
 unset SOURCE_TYPE TEST_GITLAB_ENDPOINTS TEST_GITLAB_TAGS
 
+# A self-hosted instance named by GITLAB_DOMAIN is the host discovery queries; naming none keeps it on gitlab.com,
+# which the case above covers.
+initialize_repository
+export SOURCE_TYPE=gitlab GITLAB_DOMAIN=invent.kde.org TEST_GITLAB_ENDPOINTS="${CASE_ROOT}/gitlab-endpoints" TEST_GITLAB_TAGS=$'v4.7.2'
+PLAN=$(run_command '4.7.0' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["4.7.2"]' ]]
+grep -Fqx -- 'https://invent.kde.org/api/v4/projects/example%2Fexample/repository/tags?per_page=100&page=1' "${CASE_ROOT}/gitlab-endpoints"
+unset SOURCE_TYPE GITLAB_DOMAIN TEST_GITLAB_ENDPOINTS TEST_GITLAB_TAGS
+
 # GitLab pages by number and names the page that follows in a response header, so the enumeration ends only when a page stops pointing onward.
 initialize_repository
 export SOURCE_TYPE=gitlab TEST_GITLAB_ENDPOINTS="${CASE_ROOT}/gitlab-endpoints"

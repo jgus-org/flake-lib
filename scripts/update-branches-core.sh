@@ -23,6 +23,7 @@
 #   PYPI_FORMAT          sdist | wheel  [pypi]
 #   GH_OWNER/GH_REPO     [github, github-release-asset, oci with source.versions]
 #   GITLAB_OWNER/GITLAB_REPO  [gitlab] A gitlab source's version names are the project's git tags, which is where its updater resolves a release from too, so tracking mode says nothing about where to look.
+#   GITLAB_DOMAIN             GitLab host (default gitlab.com)  [gitlab]
 #   PIN_SCHEMA           pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
 #   EXTRA_HASHES         JSON array of pin field names the producer's artifact hook resolves; every schema's placeholder carries them
 #   FORMATTER            the repository's formatter binary, which puts a nested pin field in its canonical shape
@@ -40,6 +41,7 @@ VERSION_TRACK="${VERSION_TRACK:-release}"
 TRACK_STABLE_ONLY="${TRACK_STABLE_ONLY:-false}"
 BUILD_VERIFICATION_SKIP="${BUILD_VERIFICATION_SKIP:-false}"
 GH_TAG_PREFIXES="${GH_TAG_PREFIXES:-[\"v\",\"V\",\"\"]}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-gitlab.com}"
 FORMATTER="${FORMATTER:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 
@@ -164,7 +166,7 @@ discovery_endpoint() {
     ;;
   github-release-asset) printf '%s' "/repos/${GH_OWNER}/${GH_REPO}/releases" ;;
   gitlab)
-    printf '%s' "https://gitlab.com/api/v4/projects/${GITLAB_OWNER}%2F${GITLAB_REPO}/repository/tags"
+    printf '%s' "https://${GITLAB_DOMAIN}/api/v4/projects/${GITLAB_OWNER}%2F${GITLAB_REPO}/repository/tags"
     ;;
   *) printf '%s' "the upstream API" ;;
   esac

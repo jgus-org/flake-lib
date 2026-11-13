@@ -119,6 +119,7 @@ pkgs.writeShellApplication {
         ]
     );
     GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0.devDATE+gREV)
+    GITLAB_DOMAIN = source.domain or "gitlab.com"; # GitLab host: a self-hosted instance names its domain, gitlab.com otherwise
     GITLAB_OWNER = source.owner or "";
     GITLAB_REPO = source.repo or "";
     GITLAB_TRACK = source.track or "commit"; # release (tags -> X.Y.Z) | commit (master HEAD -> 0.devDATE+gREV)

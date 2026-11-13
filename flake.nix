@@ -586,12 +586,38 @@
         update-version-test-curl = pkgs.writeShellApplication {
           name = "curl";
           text = ''
+            # Which host a gitlab source was asked about is what the gitlab cases read back off this log.
+            if [[ -n "''${TEST_GITLAB_URL_LOG:-}" ]]; then
+              for argument in "$@"; do
+                if [[ "''${argument}" == *://* ]]; then
+                  printf '%s\n' "''${argument}" >> "''${TEST_GITLAB_URL_LOG}"
+                fi
+              done
+            fi
             case "''${*}" in
               *'downloads.example.test/artifact.bin'*) printf '%s\n' 'HTTP/2 200' 'Last-Modified: Tue, 25 Aug 2026 12:34:56 GMT' ;;
               *'pypi.org/pypi/'*) printf '%s\n' "''${TEST_PYPI_METADATA}" ;;
               *'huggingface.co/api/models/'*) printf '%s\n' "''${TEST_HF_METADATA}" ;;
+              *'api/v4/projects/'*'/repository/branches/'*) printf '%s\n' '{"commit":{"id":"gitlab-revision","committed_date":"2026-08-25T12:34:56+00:00"}}' ;;
+              *'api/v4/projects/'*'/repository/tags'*) printf '%s\n' '[{"name":"v1.2.3"}]' ;;
+              *'api/v4/projects/'*'/repository/commits/'*) printf '%s\n' '{"id":"gitlab-revision","committed_date":"2026-08-25T12:34:56+00:00"}' ;;
               *) exit 1 ;;
             esac
+          '';
+        };
+        # A gitlab source's hash comes from prefetching the project's git remote, so which remote was named is
+        # the same answer the curl fixture records.
+        update-version-test-prefetch-git = pkgs.writeShellApplication {
+          name = "nix-prefetch-git";
+          text = ''
+            if [[ -n "''${TEST_GITLAB_URL_LOG:-}" ]]; then
+              for argument in "$@"; do
+                if [[ "''${argument}" == https://* ]]; then
+                  printf '%s\n' "''${argument}" >> "''${TEST_GITLAB_URL_LOG}"
+                fi
+              done
+            fi
+            printf '%s\n' '{"hash":"sha256-source"}'
           '';
         };
         update-version-test-nix = pkgs.writeShellApplication {
@@ -730,6 +756,7 @@
                 orgFormatting.formatter
                 update-version-test-gh
                 update-version-test-curl
+                update-version-test-prefetch-git
                 update-version-test-nix
                 update-version-test-prefetch
                 update-version-test-store

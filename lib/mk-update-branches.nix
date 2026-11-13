@@ -87,6 +87,7 @@ pkgs.writeShellApplication {
           ""
         ]
     );
+    GITLAB_DOMAIN = versionSource.domain or "gitlab.com"; # GitLab host: a self-hosted instance names its domain, gitlab.com otherwise
     GITLAB_OWNER = versionSource.owner or "";
     GITLAB_REPO = versionSource.repo or "";
     GIT_PUSH_LIB = "${pkgs.copyPathToStore ../scripts/git-push.sh}";

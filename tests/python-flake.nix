@@ -157,6 +157,49 @@ in
         repo = package.src.repo;
       };
   };
+  # A source on a self-hosted instance names that host, and a source naming none is fetched from gitlab.com --
+  # every producer already in the fleet names none, so that default is what they all build on.
+  testAGitlabSourceIsFetchedFromTheDomainItNames = {
+    expected = {
+      namedDomain = "https://invent.kde.org/network/smb4k/";
+      noDomain = "https://gitlab.com/someone/something/";
+    };
+    expr =
+      let
+        pin = {
+          sourceHash = fakeSha256;
+          sourceRev = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+          version = "1.17.0";
+        };
+        fetchedFrom =
+          upstream:
+          (producer {
+            inherit upstream;
+            payload.packages =
+              { buildPackage, ... }:
+              {
+                six = buildPackage {
+                  pname = "six";
+                };
+              };
+          }).packages.${system}.six.src.meta.homepage;
+      in
+      {
+        namedDomain = fetchedFrom {
+          inherit pin;
+          domain = "invent.kde.org";
+          owner = "network";
+          repo = "smb4k";
+          type = "gitlab";
+        };
+        noDomain = fetchedFrom {
+          inherit pin;
+          owner = "someone";
+          repo = "something";
+          type = "gitlab";
+        };
+      };
+  };
   testAPayloadReadingSourceFilesFromAPinWithoutThemThrows = {
     expected = {
       success = false;

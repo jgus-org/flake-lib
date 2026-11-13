@@ -27,14 +27,19 @@ if type == "github" then
     };
   }
 else if type == "gitlab" then
+  let
+    # A self-hosted instance names itself here; gitlab.com is what every producer that names none has always fetched from.
+    domain = source.domain or "gitlab.com";
+  in
   {
     inherit (pin) version;
     sourcePath = builtins.fetchTarball {
       sha256 = pin.sourceHash;
-      url = "https://gitlab.com/${source.owner}/${source.repo}/-/archive/${pin.sourceRev}/${source.repo}-${pin.sourceRev}.tar.gz";
+      url = "https://${domain}/${source.owner}/${source.repo}/-/archive/${pin.sourceRev}/${source.repo}-${pin.sourceRev}.tar.gz";
     };
     src = pkgs.fetchFromGitLab {
       inherit (source) owner repo;
+      inherit domain;
       hash = pin.sourceHash;
       rev = pin.sourceRev;
     };

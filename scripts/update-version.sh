@@ -11,6 +11,7 @@
 #   GH_ASSET                  release-asset filename template; tokens ${version} (tag minus leading v) and ${tag}  [github-release-asset]
 #   GH_TAG                    release-tag template; token ${version} (default: v${version})  [github-release-asset]
 #   GITLAB_OWNER/GITLAB_REPO  GitLab owner/repo              [gitlab]
+#   GITLAB_DOMAIN             GitLab host (default gitlab.com)                       [gitlab]
 #   GITLAB_TRACK              release (tags -> X.Y.Z) | commit (master HEAD -> 0.devDATE+gREV)  [gitlab]
 #   HF_REPO/HF_REVISION       repository and followed revision                    [huggingface]
 #   HF_MANIFEST_*             optional metadata-only artifact manifest settings   [huggingface]
@@ -60,6 +61,7 @@ GH_TAG_PREFIXES="${GH_TAG_PREFIXES:-[\"v\",\"V\",\"\"]}"
 GH_FETCH_SUBMODULES="${GH_FETCH_SUBMODULES:-}" # non-empty: hash the tree with submodules
 GH_ASSET="${GH_ASSET:-}"
 GH_TAG="${GH_TAG:-}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-gitlab.com}"
 GITLAB_TRACK="${GITLAB_TRACK:-commit}"
 HF_REPO="${HF_REPO:-}"
 HF_REVISION="${HF_REVISION:-main}"
@@ -205,7 +207,7 @@ fetch_repo_file() {
   gitlab)
     proj="${GITLAB_OWNER}%2F${GITLAB_REPO}"
     enc=$(jq -rn --arg p "${path}" '$p|@uri')
-    retry curl -sSfL "https://gitlab.com/api/v4/projects/${proj}/repository/files/${enc}/raw?ref=${rev}"
+    retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/files/${enc}/raw?ref=${rev}"
     ;;
   esac
 }
@@ -241,7 +243,7 @@ github_version_from_tag() {
 resolve_gitlab_ref_sha() {
   local proj="$1" ref_base="$2" candidate id
   for candidate in "v${ref_base}" "V${ref_base}" "${ref_base}"; do
-    if id=$(curl -sSfL "https://gitlab.com/api/v4/projects/${proj}/repository/commits/${candidate}" 2>/dev/null | jq -r '.id // ""') && [[ -n ${id} && ${id} != "null" ]]; then
+    if id=$(curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/commits/${candidate}" 2>/dev/null | jq -r '.id // ""') && [[ -n ${id} && ${id} != "null" ]]; then
       echo "${id}"
       return 0
     fi
@@ -971,7 +973,7 @@ gitlab)
       new_version="${requested#[Vv]}"
     else
       echo "Querying GitLab for latest tag of ${GITLAB_OWNER}/${GITLAB_REPO}..."
-      new_version=$(retry curl -sSfL "https://gitlab.com/api/v4/projects/${proj}/repository/tags" | jq -r '[.[].name | select(test("^[vV]?[0-9]"))][0] // ""')
+      new_version=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/tags" | jq -r '[.[].name | select(test("^[vV]?[0-9]"))][0] // ""')
       new_version="${new_version#[Vv]}"
     fi
     if [[ -z ${new_version} ]]; then
@@ -987,10 +989,10 @@ gitlab)
     fi
   else
     if [[ -n ${requested} ]]; then
-      commit=$(retry curl -sSfL "https://gitlab.com/api/v4/projects/${proj}/repository/commits/${requested}")
+      commit=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/commits/${requested}")
     else
       echo "Querying GitLab for latest master commit of ${GITLAB_OWNER}/${GITLAB_REPO}..."
-      commit=$(retry curl -sSfL "https://gitlab.com/api/v4/projects/${proj}/repository/branches/master" | jq -r '.commit')
+      commit=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/branches/master" | jq -r '.commit')
     fi
     new_rev=$(jq -r '.id' <<<"${commit}")
     new_date=$(jq -r '.committed_date' <<<"${commit}" | cut -d'T' -f1)
@@ -1011,7 +1013,7 @@ gitlab)
       new_hash=""
     else
       echo "Computing source hash for ${GITLAB_OWNER}/${GITLAB_REPO}@${new_rev}..."
-      new_hash=$(nix-prefetch-git --quiet --url "https://gitlab.com/${GITLAB_OWNER}/${GITLAB_REPO}.git" --rev "${new_rev}" | jq -r '.hash')
+      new_hash=$(nix-prefetch-git --quiet --url "https://${GITLAB_DOMAIN}/${GITLAB_OWNER}/${GITLAB_REPO}.git" --rev "${new_rev}" | jq -r '.hash')
     fi
     echo "Writing pin.nix (-> ${new_version})..."
     write_source_pin "${new_version}" "${new_rev}" "${new_hash}"

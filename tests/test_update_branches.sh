@@ -666,6 +666,33 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock' run_update '1.2.0'
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:.gitattributes'
 assert_ref_version v1.2.0 1.2.0
 
+# A version branch keeps only its owned files as its own: its copy of a file main dropped, and a file main never had,
+# are both stale. Dropping them must advance the branch and name what went, because a refresh that reported each one
+# as a conflict failed every night until a human cleared every branch by hand.
+initialize_repository
+printf '%s\n' ancestor >"${CHECKOUT}/requirements.in"
+git -C "${CHECKOUT}" add requirements.in
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'wheelhouse inputs'
+git -C "${CHECKOUT}" push -q origin main
+seed_exact_branch 1.2.0
+git -C "${CHECKOUT}" switch -q v1.2.0
+printf '%s\n' branch >"${CHECKOUT}/requirements.in"
+printf '%s\n' backport >"${CHECKOUT}/backport.patch"
+git -C "${CHECKOUT}" add requirements.in backport.patch
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'branch edits the wheelhouse inputs'
+git -C "${CHECKOUT}" push -q origin v1.2.0
+git -C "${CHECKOUT}" switch -q main
+git -C "${CHECKOUT}" rm -q requirements.in
+git -C "${CHECKOUT}" -c user.name=test -c user.email=test@example.com commit -qm 'build without a wheelhouse'
+git -C "${CHECKOUT}" push -q origin main
+BASE_SHA=$(git -C "${CHECKOUT}" rev-parse HEAD)
+BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock' run_update '1.2.0' 2>&1 | tee "${CASE_ROOT}/stale.log"
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:requirements.in'
+! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:backport.patch'
+grep -Fq 'dropped stale files::backport.patch requirements.in' "${CASE_ROOT}/stale.log"
+git --git-dir="${REMOTE}" merge-base --is-ancestor "${BASE_SHA}" refs/heads/v1.2.0
+assert_ref_version v1.2.0 1.2.0
+
 initialize_repository
 printf '%s\n' ancestor >"${CHECKOUT}/owned-modified.txt"
 printf '%s\n' ancestor >"${CHECKOUT}/owned-deleted.txt"

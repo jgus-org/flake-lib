@@ -431,7 +431,7 @@ matching_owned_paths() {
 }
 
 merge_preserving_owned() {
-  local base="${1}" branch_tree temp_index tree synthetic pattern candidate metadata
+  local base="${1}" branch="${2}" branch_tree temp_index tree merged stale pattern candidate metadata
   local -a owned_patterns=() paths=()
   if git merge-base --is-ancestor "${base}" HEAD; then
     return 0
@@ -469,12 +469,19 @@ merge_preserving_owned() {
     rm -f "${temp_index}"
     return 1
   fi
-  if ! synthetic=$(printf '%s\n' "overlay owned files from ${branch_tree}" | git commit-tree "${tree}" -p "${base}"); then
-    rm -f "${temp_index}"
+  rm -f "${temp_index}"
+  # The tree is the contract: the base outside the owned patterns, the branch inside them. A
+  # three-way merge re-derives it from the fork point instead and reports modify/delete for
+  # every path main has dropped since the branch diverged, so commit it and follow it.
+  if ! merged=$(printf '%s\n' "Merge discovery base ${base}, preserving owned files (${BRANCH_OWNED_FILES})" | git commit-tree "${tree}" -p "${branch_tree}" -p "${base}"); then
     return 1
   fi
-  rm -f "${temp_index}"
-  git merge --no-edit "${synthetic}"
+  # Content the branch carried that this tree has no room for is stale, and it has to be seen:
+  # a three-way merge reported every one of these as a conflict, and this does not.
+  if stale=$(git diff --name-only --diff-filter=D "${branch_tree}" "${tree}") && [[ -n ${stale} ]]; then
+    printf '::warning title=Branch %s dropped stale files::%s\n' "${branch}" "${stale//$'\n'/ }"
+  fi
+  git reset --hard --quiet "${merged}"
 }
 
 VERSION_OVERRIDES="${VERSION_OVERRIDES:-}"
@@ -677,7 +684,7 @@ refresh_version() {
     fi
     # Never merge a live aggregate: every exact job uses the specification SHA
     # captured by discovery, even if an earlier publisher has advanced main.
-    if ! (cd "${wt}" && merge_preserving_owned "${BASE_SHA}"); then
+    if ! (cd "${wt}" && merge_preserving_owned "${BASE_SHA}" "${branch}"); then
       LAST_FAILURE_REASON="merge of discovery base ${BASE_SHA} failed"
       remove_worktree "${wt}"
       return 1

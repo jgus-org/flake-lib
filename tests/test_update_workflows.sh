@@ -4,7 +4,9 @@ set -euo pipefail
 
 # The workflow refresher is exercised against a local bare remote, a flake.lock naming
 # flake-lib, and the fake nix that advances the lock to whatever revision it is told to.
-# The templates come from a synthetic flake-lib source tree, because what matters is the
+# The templates come from a synthetic flake-lib source tree, handed over as the built
+# output the refresher reads them from rather than as a source path, because a flake's
+# source path says nothing about what is on disk. What matters is the
 # repository's own state afterwards: which files a run installs, which values it carries,
 # what it reports having committed, and which notes it raises about what it cannot refresh.
 
@@ -425,6 +427,21 @@ fi
 grep -Fq 'templates/workflows/nightly-scan.yml' <<<"${REFUSAL}"
 [[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${BEFORE_SHA}" ]]
 [[ ! -e "${CHECKOUT}/.github/workflows/nightly-scan.yml" ]]
+
+# A revision publishing no templates output is refused by name. The templates cannot be read
+# out of the revision's source path instead: nix reports that path whether or not the tree is
+# in the store, so a run would otherwise install whatever that machine happened to have.
+initialize_repository
+already_follows_schedule
+BEFORE_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)
+ADVANCE_TO_REV=$(rev_of m)
+OUTPUTS="${CASE_ROOT}/outputs"
+if REFUSAL=$(TEST_NIX_NO_TEMPLATES=1 run_refresher 2>&1 >/dev/null); then
+  echo 'a revision with no templates output should have been refused' >&2
+  exit 1
+fi
+grep -Fq 'publishes no packages.x86_64-linux.workflow-templates' <<<"${REFUSAL}"
+[[ "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" == "${BEFORE_SHA}" ]]
 
 # The push goes out with the credential the job's checkout configured, whatever shape that
 # takes: checkout@v7 writes it to a separate file and reaches it with an includeIf keyed to

@@ -22,7 +22,6 @@ set -euo pipefail
 FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
 cd "${FLAKE_ROOT}"
 
-TEMPLATE_DIR="templates/workflows"
 WORKFLOW_DIR=".github/workflows"
 REFRESHER_WORKFLOW="${WORKFLOW_DIR}/update-workflows.yml"
 
@@ -80,9 +79,13 @@ current_url=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
   | select(.type == "github") | "\(.owner)/\(.repo)/\(.rev)"' flake.lock)
 [[ -n ${current_url} ]] || die "advancing flake-lib left a lock whose flake-lib input is no longer a github input"
 
-flake_lib_src=$(nix flake metadata --no-write-lock-file --json "github:${current_url}" | jq -r .path)
-if [[ ! -d "${flake_lib_src}/${TEMPLATE_DIR}" ]]; then
-  die "flake-lib ${current_url} ships no ${TEMPLATE_DIR}, so the installed workflows cannot be refreshed from it"
+system=$(nix config show system) || die "this nix does not report the system it builds for"
+templates_ref="github:${current_url}#packages.${system}.workflow-templates"
+stderr=$(mktemp)
+trap 'rm -f "${stderr}"' EXIT
+if ! templates_src=$(nix build --no-link --no-write-lock-file --print-out-paths "${templates_ref}" 2>"${stderr}"); then
+  cat "${stderr}" >&2
+  die "flake-lib ${current_url} publishes no packages.${system}.workflow-templates, so the installed workflows cannot be refreshed from it"
 fi
 
 install_from_template() {
@@ -99,10 +102,10 @@ carries_schedule() {
 
 declare -a installed=()
 if [[ ${MODE} == adopt ]]; then
-  template="${flake_lib_src}/${TEMPLATE_DIR}/${ADOPT_TARGET}"
+  template="${templates_src}/${ADOPT_TARGET}"
   if [[ ! -s ${template} ]]; then
-    available=$(cd "${flake_lib_src}/${TEMPLATE_DIR}" && printf '%s ' *.yml *.yaml 2>/dev/null || true)
-    die "flake-lib ${current_url##*/} ships no ${TEMPLATE_DIR}/${ADOPT_TARGET}; it ships ${available}"
+    available=$(cd "${templates_src}" && printf '%s ' *.yml *.yaml 2>/dev/null || true)
+    die "flake-lib ${current_url##*/} ships no templates/workflows/${ADOPT_TARGET}; it ships ${available}"
   fi
   destination="${WORKFLOW_DIR}/${ADOPT_TARGET}"
   mkdir -p "${WORKFLOW_DIR}"
@@ -112,7 +115,7 @@ if [[ ${MODE} == adopt ]]; then
   # so the adopted template is current the day it lands rather than after someone installs the
   # schedule by hand.
   if [[ ${destination} != "${REFRESHER_WORKFLOW}" ]]; then
-    install_from_template "${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    install_from_template "${templates_src}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
     installed+=("${REFRESHER_WORKFLOW}")
   fi
   # A workflow flake-lib has no template for is invisible to every later refresh, and a
@@ -135,7 +138,7 @@ if [[ ${MODE} == adopt ]]; then
 else
   for destination in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
     [[ -e ${destination} ]] || continue
-    template="${flake_lib_src}/${TEMPLATE_DIR}/${destination##*/}"
+    template="${templates_src}/${destination##*/}"
     [[ -f ${template} ]] || continue
     install_from_template "${template}" "${destination}"
     installed+=("${destination}")
@@ -146,11 +149,11 @@ else
   # is a repository whose only flake-lib workflow is the pull-request gate, which has nothing else
   # that would ever update it.
   if ((${#installed[@]} == 0)); then
-    echo "no workflow here matched flake-lib's ${TEMPLATE_DIR}; this run installs the schedule that runs it and advances the input."
+    echo "no workflow here matched flake-lib's templates/workflows; this run installs the schedule that runs it and advances the input."
   fi
   if [[ ! -e ${REFRESHER_WORKFLOW} ]]; then
     mkdir -p "${WORKFLOW_DIR}"
-    install_from_template "${flake_lib_src}/${TEMPLATE_DIR}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    install_from_template "${templates_src}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
     installed+=("${REFRESHER_WORKFLOW}")
   fi
 fi

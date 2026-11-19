@@ -79,10 +79,6 @@ current_url=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
   | select(.type == "github") | "\(.owner)/\(.repo)/\(.rev)"' flake.lock)
 [[ -n ${current_url} ]] || die "advancing flake-lib left a lock whose flake-lib input is no longer a github input"
 
-# The templates are read from what the resolved revision publishes, not from its source
-# path: `nix flake metadata` reports that path without realizing it, so whether the tree
-# is on disk is a fact about the machine, not about the revision. A build realizes what
-# it prints.
 system=$(nix config show system) || die "this nix does not report the system it builds for"
 templates_ref="github:${current_url}#packages.${system}.workflow-templates"
 stderr=$(mktemp)

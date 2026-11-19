@@ -59,10 +59,6 @@
           runtimeEnv.GIT_PUSH_LIB = pkgs.copyPathToStore ./scripts/git-push.sh;
           text = ''exec ${./scripts/update-workflows.sh} "$@"'';
         };
-        # The workflow templates as a buildable output, which is how the refresher reads the
-        # templates of the revision its lock advanced to. A revision's source path is reported
-        # whether or not that tree is on disk, so the templates have to be published rather
-        # than read out of it.
         workflow-templates = pkgs.runCommand "workflow-templates" { } ''
           cp --recursive ${./templates/workflows} "$out"
         '';

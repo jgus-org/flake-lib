@@ -18,7 +18,7 @@ if type == "github" then
     # Evaluation may read a source file only from an eval-time fetch, never from a derivation output; the same pin hash covers both because a pinned tree is hashed by content.
     sourcePath = builtins.fetchTarball {
       sha256 = pin.sourceHash;
-      url = "https://codeload.github.com/${source.owner}/${source.repo}/tarball/${pin.sourceRev}";
+      url = "https://github.com/${source.owner}/${source.repo}/archive/${pin.sourceRev}.tar.gz";
     };
     src = pkgs.fetchFromGitHub {
       inherit (source) owner repo;

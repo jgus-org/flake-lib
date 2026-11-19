@@ -466,9 +466,6 @@
               exit 0
             fi
             if [[ "''${1}" == "build" && "''${*}" == *workflow-templates* ]]; then
-              # The refresher reads the templates of the revision it advanced the lock to out of
-              # what that revision publishes, because a flake's source path is reported whether
-              # or not it is on disk. The fixture's templates are that published output.
               if [[ -n "''${TEST_NIX_NO_TEMPLATES:-}" ]]; then
                 printf '%s\n' "error: fixture: this revision publishes no workflow templates" >&2
                 exit 1

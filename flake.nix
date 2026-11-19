@@ -59,6 +59,13 @@
           runtimeEnv.GIT_PUSH_LIB = pkgs.copyPathToStore ./scripts/git-push.sh;
           text = ''exec ${./scripts/update-workflows.sh} "$@"'';
         };
+        # The workflow templates as a buildable output, which is how the refresher reads the
+        # templates of the revision its lock advanced to. A revision's source path is reported
+        # whether or not that tree is on disk, so the templates have to be published rather
+        # than read out of it.
+        workflow-templates = pkgs.runCommand "workflow-templates" { } ''
+          cp --recursive ${./templates/workflows} "$out"
+        '';
         # A flake's published packages are what its consumers build and `nix flake check`
         # only evaluates them, so the build is a tool of its own: what to build is read from
         # the tree it runs in, exactly as the refresher reads the tree it rewrites.
@@ -426,10 +433,6 @@
             pkgs.jq
           ];
           text = ''
-            if [[ "''${1}" == "flake" && "''${2:-}" == "metadata" ]]; then
-              printf '{ "path": "%s" }\n' "''${TEST_NIX_TEMPLATE_SOURCE:?fixture: no template source}"
-              exit 0
-            fi
             if [[ "''${1}" == "flake" && "''${2:-}" == "update" && "''${3:-}" == "flake-lib" ]]; then
               node=$(jq -r '.nodes.root.inputs["flake-lib"]' flake.lock)
               # Real nix leaves the lock byte-identical when nothing moved. Rewriting it anyway
@@ -464,6 +467,17 @@
               else
                 printf '%s\n' '{"build":["fixture"],"skip":[]}'
               fi
+              exit 0
+            fi
+            if [[ "''${1}" == "build" && "''${*}" == *workflow-templates* ]]; then
+              # The refresher reads the templates of the revision it advanced the lock to out of
+              # what that revision publishes, because a flake's source path is reported whether
+              # or not it is on disk. The fixture's templates are that published output.
+              if [[ -n "''${TEST_NIX_NO_TEMPLATES:-}" ]]; then
+                printf '%s\n' "error: fixture: this revision publishes no workflow templates" >&2
+                exit 1
+              fi
+              printf '%s\n' "''${TEST_NIX_TEMPLATE_SOURCE:?fixture: no template source}/templates/workflows"
               exit 0
             fi
             if [[ "''${1}" == "build" ]]; then
@@ -914,9 +928,10 @@
             update-version-pypi-cargo
             update-workflows
             wait-for-deps
+            workflow-templates
             ;
         };
-        workflow-templates =
+        workflow-templates-check =
           pkgs.runCommand "workflow-templates-check"
             {
               PUBLISHED_TOOLS = pkgs.writeText "published-tools" (
@@ -1024,7 +1039,7 @@
             revalidate-hash-tests
             update-workflows-tests
             wait-for-deps-tests
-            workflow-templates
+            workflow-templates-check
             ;
           inherit oci-image-tests;
           composed-hook = hookCheck "composed-hook" composed-hook;

@@ -85,9 +85,7 @@ jobs:
     if: "!cancelled() && needs.discover.result == 'success' && needs.discover.outputs.versions != '[]'"
     strategy:
       fail-fast: false
-      # Bound the fan-out: the matrix grows with every tracked release, and unbounded
-      # parallel refreshes contend for the shared Nix cache and for runners.
-      max-parallel: 4
+      max-parallel: 16
       matrix:
         entry: ${{ fromJson(needs.discover.outputs.versions) }}
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}

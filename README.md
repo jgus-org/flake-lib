@@ -54,6 +54,12 @@ fixed-output hash pin from a build's hash mismatch, for a hash nothing can prefe
 offline-dependency hash at the pinned revision and prints it for the updater to capture into the
 pin.
 
+`mkPnpmDeclarationHook` (`lib/mk-pnpm-declaration-hook.nix`): an artifact hook that reads the pnpm
+major a workspace declares at the pinned revision and prints it for the updater to capture into the
+pin, so a pin states which major the lockfile was written for rather than carrying a version and a
+tarball hash for a tool nothing vouches for. A manifest declaring no manager, or a manager other
+than pnpm, ends the run: a pin field the hook does not fill is written empty.
+
 `mkComposedHook` (`lib/mk-composed-hook.nix`): several artifact hooks composed into the one
 executable a single hook slot takes.
 

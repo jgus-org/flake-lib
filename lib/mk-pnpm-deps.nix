@@ -18,7 +18,7 @@
   pname,
   # The pnpm that fetches the tree and installs it offline. Its major is what the store path records. Mutually exclusive with `pnpmMajor`.
   pnpm ? null,
-  # The pnpm major upstream declares, where `mkPnpmToolchainHook` recorded it. Resolves the toolchain and adapts the workspace where that major is no longer in the package set.
+  # The pnpm major upstream declares, where `mkPnpmDeclarationHook` recorded it. Resolves the toolchain and adapts the workspace where that major is no longer in the package set.
   pnpmMajor ? null,
   # String that changes whenever the fetched tree's input does, the source hash already in the pin being the usual one. It reaches the store name and nothing else, so declaring it costs a refetch on any source change. With none, the name carries the major alone and a source change under an unchanged hash pin reuses whatever tree the store already holds.
   sourceFingerprint ? null,

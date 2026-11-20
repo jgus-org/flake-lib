@@ -4,7 +4,7 @@
 #
 # A retired major keeps its attribute in the package set and throws when forced, and a major never published throws at the selection itself, which `tryEval` does not catch. Both cases are therefore tested before one is chosen.
 #
-#   declaredMajor : the pnpm major upstream declares at the revision the pin resolved to, as `mkPnpmToolchainHook` records it. With none, the package set's default is taken and the tree is handed back untouched.
+#   declaredMajor : the pnpm major upstream declares at the revision the pin resolved to, as `mkPnpmDeclarationHook` records it. With none, the package set's default is taken and the tree is handed back untouched.
 #   workspaceDir  : the workspace whose manifest is adapted, relative to `src`, for an upstream repository that keeps its app in a subdirectory.
 #
 # The nearest major above the declaration is substituted rather than the newest available: the lockfile was written one release line away rather than as far away as the package set permits, and the newest major moves again every time nixpkgs publishes one, which would re-resolve every substituted producer with it.

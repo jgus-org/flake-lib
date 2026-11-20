@@ -233,6 +233,9 @@
           inherit pkgs;
           manager = "yarn";
         };
+        pnpm-toolchain-hook = lib.mkPnpmToolchainHook {
+          inherit pkgs;
+        };
         composed-hook = lib.mkComposedHook {
           inherit pkgs;
           hooks = [
@@ -1039,6 +1042,7 @@
           formatting = orgFormatting.check;
           npm-generated-hook = hookCheck "npm-generated-hook" npm-generated-hook;
           npm-shipped-hook = hookCheck "npm-shipped-hook" npm-shipped-hook;
+          pnpm-toolchain-hook = hookCheck "pnpm-toolchain-hook" pnpm-toolchain-hook;
           yarn-hook = hookCheck "yarn-hook" yarn-hook;
         };
         formatter = orgFormatting.formatter;

@@ -56,6 +56,13 @@ fixed-output hash pin from a build's hash mismatch, for a hash nothing can prefe
 offline-dependency hash at the pinned revision and prints it for the updater to capture into the
 pin.
 
+`mkPnpmToolchainHook` (`lib/mk-pnpm-toolchain-hook.nix`) -- an artifact hook that reads the pnpm
+version a workspace declares at the pinned revision and prints the nixpkgs attribute supplying it,
+so a pin names a package set entry rather than a tarball hash and the derivation selects
+`pkgs.${pin.pnpmPackage}`. A workspace declaring no manager pins the top-level attribute. A
+declaration for a major nixpkgs no longer carries selects an absent attribute, so the build fails
+where the version is needed rather than building with a different major.
+
 `mkComposedHook` (`lib/mk-composed-hook.nix`) -- several artifact hooks composed into the one
 executable a single hook slot takes.
 

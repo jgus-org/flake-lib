@@ -12,6 +12,7 @@ let
   mkUpdateBranches = import ./mk-update-branches.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
   mkJsDepsHook = import ./mk-js-deps-hook.nix;
+  mkPnpmToolchainHook = import ./mk-pnpm-toolchain-hook.nix;
   mkComposedHook = import ./mk-composed-hook.nix;
   mkHuggingFaceModelManager = import ./mk-huggingface-model-manager.nix;
   mkOciImage = import ./mk-oci-image.nix;
@@ -75,6 +76,7 @@ in
     mkHuggingFaceModelManager
     mkJsDepsHook
     mkOciImage
+    mkPnpmToolchainHook
     mkPythonApplication
     mkPythonFlake
     mkRevalidateHash

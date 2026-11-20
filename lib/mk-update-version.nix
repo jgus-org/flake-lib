@@ -29,7 +29,17 @@ with builtins;
   source,
 }:
 assert artifactFingerprint == "" || artifactHook != null;
-assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
+assert
+  !(source ? versions)
+  || (
+    source.type == "oci"
+    && builtins.elem source.versions.type [
+      "github"
+      "registry"
+    ]
+  );
+# A registry names its own tags, so a version source that reads them has no endpoint to choose.
+assert !(source ? versions) || source.versions.type != "registry" || !(source.versions ? track);
 let
   oci = if source.type == "oci" then import ./oci-image.nix { inherit pkgs source; } else null;
   versionSource = source.versions or source;
@@ -135,15 +145,20 @@ pkgs.writeShellApplication {
     );
     PYPI_FORMAT = source.format or "sdist";
     PYPI_NAME = source.pname or "";
+    REGISTRY_TAGS_LIB = "${pkgs.copyPathToStore ../scripts/registry-tags.sh}";
     SIBLINGS = toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     SOURCE_TYPE = source.type;
     VERSION_SOURCE_TYPE = source.versions.type or "";
+    # The prefix a registry puts on the tag it publishes a version under, which is the only way a bare version argument names an image in that registry.
+    VERSION_TAG_PREFIX = versionSource.tagPrefix or "";
   };
   runtimeInputs = [
     pkgs.git
   ]
-  ++ pkgs.lib.optional (siblings != [ ]) (pkgs.python3.withPackages (p: [ p.packaging ]))
+  ++ pkgs.lib.optional (siblings != [ ] || (source.versions or { }).type or "" == "registry") (
+    pkgs.python3.withPackages (p: [ p.packaging ])
+  )
   ++ pkgs.lib.optional (formatter != null) formatter;
   text = ''exec ${../scripts/update-version.sh} "$@"'';
 }

@@ -557,6 +557,15 @@ assert_same_ref main v1.2.3
 assert_missing_ref v1.3.0-rc1
 assert_missing_ref v1.3
 
+# The all-in-one run tracks the same set, so a prerelease there gets no branch, no maintenance job, and no publication either.
+initialize_repository
+VERSIONS=$'1.2.1\n1.2.2\n1.2.3\n1.3.0-rc1'
+TRACK_STABLE_ONLY=true run_update "${VERSIONS}"
+assert_ref_version v1.2.2 1.2.2
+assert_same_ref main v1.2.3
+assert_missing_ref v1.3.0-rc1
+assert_missing_ref v1.3
+
 # A temporary server-side push failure makes the publisher retry without rebuilding the branch.
 initialize_repository
 install_push_wrapper
@@ -785,6 +794,32 @@ export PIN_SCHEMA=oci SOURCE_TYPE=github VERSION_SOURCE_TYPE=oci
 run_failed_update '1.2.0'
 grep -Fq 'error: update-branches cannot enumerate versions for source type oci' "${CASE_ROOT}/update.log"
 unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
+
+# A registry's tag list names the images it publishes, so an oci producer whose version tree is that registry discovers from it, tracks the version each tag spells, and hands its updater the tag rather than the version, because the tag is the name that image has.
+initialize_repository oci
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=registry OCI_IMAGE_NAME=registry.example/image
+export TEST_REGISTRY_TAGS=$'v1.2.3\nv1.2.2\nnightly'
+PLAN=$(run_update '9.9.9' '["v"]' '' '' list)
+[[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.3","1.2.2"]' ]]
+jq -e '.versions[0] == {version:"1.2.3", upstreamVersion:"v1.2.3", stable:true}' <<<"${PLAN}" >/dev/null
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE OCI_IMAGE_NAME TEST_REGISTRY_TAGS
+
+# The exact refresh job carries the registry's own tag to the version updater, which is the name it has to fetch: the canonical version is a branch name and a pin field, not an image.
+initialize_repository oci
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=registry OCI_IMAGE_NAME=registry.example/image
+export TEST_REGISTRY_TAGS=$'v1.2.3' TEST_EXPECTED_UPSTREAM_VERSION='v1.2.3'
+run_update '9.9.9' '["v"]'
+assert_ref_oci_pin v1.2.3 '1.2.3' "${UPDATED_IMAGE_DIGEST}" "${UPDATED_IMAGE_HASH}"
+[[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.3' ]]
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE OCI_IMAGE_NAME TEST_REGISTRY_TAGS TEST_EXPECTED_UPSTREAM_VERSION
+
+# A registry publishing a version under two spellings has no single name for its image, so discovery stops instead of picking one of them by page order.
+initialize_repository oci
+export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=registry OCI_IMAGE_NAME=registry.example/image
+export TEST_REGISTRY_TAGS=$'v1.2.3\n1.2.3'
+run_failed_update '9.9.9' '["v",""]' '' '' list
+grep -Fq 'are both tags of 1.2.3, so its image has no single name' "${CASE_ROOT}/update.log"
+unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE OCI_IMAGE_NAME TEST_REGISTRY_TAGS
 
 # The orchestrator seeds a new oci branch with the base pin's image content alone, even when the base branch already claims a version. The branch's own updater resolves that version's image and only then writes it.
 initialize_repository oci-versioned

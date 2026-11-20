@@ -12,13 +12,15 @@
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
 #   SOURCE_TYPE          pypi | github | github-release-asset | gitlab | oci
-#   VERSION_SOURCE_TYPE  the source whose named versions drive discovery. For an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
+#   VERSION_SOURCE_TYPE  the source whose named versions drive discovery. For an oci producer, its upstream release tree or the registry its image lives in. Defaults to SOURCE_TYPE.
 #   VERSION_TRACK        github vocabulary: release (GitHub Releases) | tag (git tags). A github source's versions live in exactly one of those, and only the flake knows which. Defaults to release.
 #   PYPI_NAME            [pypi]
 #   PYPI_FORMAT          sdist | wheel  [pypi]
 #   GH_OWNER/GH_REPO     [github, github-release-asset, oci with source.versions]
 #   GITLAB_OWNER/GITLAB_REPO  [gitlab] A gitlab source's version names are the project's git tags, which is where its updater resolves a release from too, so tracking mode says nothing about where to look.
 #   GITLAB_DOMAIN             GitLab host (default gitlab.com)  [gitlab]
+#   OCI_IMAGE_NAME       the image reference whose registry tag list holds an oci producer's version names  [registry]
+#   REGISTRY_TAGS_LIB    the sourced helper that lists a registry's tags  [registry]
 #   PIN_SCHEMA           pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
 #   EXTRA_HASHES         JSON array of pin field names the producer's artifact hook resolves. Every schema's placeholder carries them
 #   FORMATTER            the repository's formatter binary, which puts a nested pin field in its canonical shape
@@ -61,6 +63,11 @@ GITHUB_PAGE_SIZE="${GITHUB_PAGE_SIZE:-30}"
 
 # shellcheck source=/dev/null
 source "${GIT_PUSH_LIB:?required env var}"
+
+if [[ ${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}} == "registry" ]]; then
+  # shellcheck source=/dev/null
+  source "${REGISTRY_TAGS_LIB:?required env var}"
+fi
 
 # Buffers output and emits it only on success, so a consumer never sees partial data from an attempt that died mid-stream (e.g. gh --paginate failing between pages).
 retry() {
@@ -153,6 +160,10 @@ discovery_endpoint() {
   gitlab)
     printf '%s' "https://${GITLAB_DOMAIN}/api/v4/projects/${GITLAB_OWNER}%2F${GITLAB_REPO}/repository/tags"
     ;;
+  registry)
+    registry_api_target "${OCI_IMAGE_NAME:?an oci version source names its image}" || exit 1
+    printf '%s' "https://${REGISTRY_API_HOST}/v2/${REGISTRY_API_PATH}/tags/list"
+    ;;
   *) printf '%s' "the upstream API" ;;
   esac
 }
@@ -232,6 +243,9 @@ list_upstream_versions() {
     ;;
   gitlab)
     list_gitlab_tags "${ENDPOINT}"
+    ;;
+  registry)
+    retry registry_tag_names "${OCI_IMAGE_NAME:?an oci version source names its image}"
     ;;
   *)
     echo "error: update-branches cannot enumerate versions for source type ${DISCOVERY_TYPE}" >&2
@@ -455,6 +469,8 @@ VERSION_OVERRIDES="${VERSION_OVERRIDES:-}"
 VERSION_CANON="${VERSION_CANON:-}"
 VERSION_RE="^[0-9]+(\.[0-9]+){$((MIN_VERSION_COMPONENTS - 1)),2}([-+a-zA-Z0-9.]+)?$"
 SAFE_VERSION_RE='^[0-9]+(\.[0-9]+)*([-+a-zA-Z0-9.]+)?$'
+# The name upstream publishes a version under is not necessarily a version: a registry publishes a release under whatever tag it likes, and that name is what the version updater has to fetch. It only has to be spellable as a tag and safe as an argument.
+SAFE_REF_RE='^[A-Za-z0-9_][A-Za-z0-9_.+-]*$'
 declare -a TRACKED=()
 declare -A ORIG_OF=()
 BASE_SHA=""
@@ -510,9 +526,9 @@ use_base_sha() {
 }
 
 discover_versions() {
-  local V CANON RAW_OUTPUT
+  local V CANON RAW RAW_OUTPUT
   local -a RAW_VERSIONS=() ALL_VERSIONS=() SORTED_VERSIONS=()
-  local -A SEEN=()
+  local -A SEEN=() STRIPPED_OF=()
   TRACKED=()
   ORIG_OF=()
 
@@ -528,21 +544,34 @@ discover_versions() {
     echo "error: upstream discovery found no version names at $(discovery_endpoint) for source type ${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}} tracking ${VERSION_TRACK}" >&2
     return 1
   fi
-  # Canonical versions drive sorting and branch naming. The upstream version is retained in the discovery manifest for the exact refresh job.
-  for V in "${RAW_VERSIONS[@]}"; do
-    V=$(github_version_from_tag "${V}" || true)
+  # Canonical versions drive sorting and branch naming. The name the version updater has to fetch is retained for the exact refresh job: a registry's tag list names the images it publishes, so its tag is that name, while a release tree only names versions, which is what the artifact behind each one is published under.
+  local REGISTRY_NAMES=false
+  if [[ ${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}} == "registry" ]]; then
+    REGISTRY_NAMES=true
+  fi
+  for RAW in "${RAW_VERSIONS[@]}"; do
+    V=$(github_version_from_tag "${RAW}" || true)
     if [[ ${V} =~ ${VERSION_RE} ]]; then
       CANON=$(canonicalize_version "${V}")
       if [[ ! ${CANON} =~ ${SAFE_VERSION_RE} ]]; then
         echo "error: upstream version ${V} canonicalizes to unsafe branch version ${CANON}" >&2
         return 1
       fi
-      if [[ -n ${ORIG_OF[${CANON}]+set} && ${ORIG_OF[${CANON}]} != "${V}" ]]; then
-        echo "error: upstream versions ${ORIG_OF[${CANON}]} and ${V} canonicalize to ${CANON}" >&2
+      if [[ -n ${STRIPPED_OF[${CANON}]+set} && ${STRIPPED_OF[${CANON}]} != "${V}" ]]; then
+        echo "error: upstream versions ${STRIPPED_OF[${CANON}]} and ${V} canonicalize to ${CANON}" >&2
+        return 1
+      fi
+      STRIPPED_OF["${CANON}"]="${V}"
+      if [[ ${REGISTRY_NAMES} == true && -n ${ORIG_OF[${CANON}]+set} && ${ORIG_OF[${CANON}]} != "${RAW}" ]]; then
+        echo "error: ${RAW} and ${ORIG_OF[${CANON}]} are both tags of ${CANON}, so its image has no single name" >&2
         return 1
       fi
       ALL_VERSIONS+=("${CANON}")
-      ORIG_OF["${CANON}"]="${V}"
+      if [[ ${REGISTRY_NAMES} == true ]]; then
+        ORIG_OF["${CANON}"]="${RAW}"
+      else
+        ORIG_OF["${CANON}"]="${V}"
+      fi
     fi
   done
 
@@ -558,8 +587,9 @@ discover_versions() {
   fi
   for V in "${SORTED_VERSIONS[@]}"; do
     if [[ -z ${SEEN[${V}]+set} ]]; then
-      TRACKED+=("${V}")
       SEEN["${V}"]=1
+      if [[ ${TRACK_STABLE_ONLY} == "true" ]] && is_prerelease "${V}"; then continue; fi
+      TRACKED+=("${V}")
     fi
   done
 
@@ -598,7 +628,7 @@ load_versions_json() {
   mapfile -t ROWS < <(jq -r '.[] | [.version, .upstreamVersion] | @tsv' <<<"${JSON}")
   for ROW in "${ROWS[@]}"; do
     IFS=$'\t' read -r V UPSTREAM <<<"${ROW}"
-    if [[ ! ${V} =~ ${SAFE_VERSION_RE} || ! ${UPSTREAM} =~ ${SAFE_VERSION_RE} ]]; then
+    if [[ ! ${V} =~ ${SAFE_VERSION_RE} || ! ${UPSTREAM} =~ ${SAFE_REF_RE} ]]; then
       echo "error: discovery manifest contains an unsafe version" >&2
       return 2
     fi
@@ -623,7 +653,7 @@ refresh_version() {
   local EXPECTED_REMOTE_SHA=""
   local -a OWNED_PATHS=()
   LAST_FAILURE_REASON=""
-  if [[ ! ${VERSION} =~ ${SAFE_VERSION_RE} || ! ${UPSTREAM} =~ ${SAFE_VERSION_RE} ]]; then
+  if [[ ! ${VERSION} =~ ${SAFE_VERSION_RE} || ! ${UPSTREAM} =~ ${SAFE_REF_RE} ]]; then
     LAST_FAILURE_REASON="unsafe version argument"
     return 2
   fi
@@ -893,9 +923,6 @@ command_list() {
   capture_base_sha
   discover_versions
   JSON=$(versions_json)
-  if [[ ${TRACK_STABLE_ONLY} == "true" ]]; then
-    JSON=$(jq -c '[.[] | select(.stable)]' <<<"${JSON}")
-  fi
   JSON=$(jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" '{baseSha: $baseSha, versions: $versions}')
   # Under Actions the fan-out is the workflow's only input, so it is written in the form the next jobs read rather than having the workflow parse this back apart.
   if [[ -n ${GITHUB_OUTPUT:-} ]]; then

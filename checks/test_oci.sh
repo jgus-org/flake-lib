@@ -100,3 +100,37 @@ fi
 if bash "${UPDATE_VERSION}" 2026.10.0 v2026.10.0; then
   exit 1
 fi
+
+# A registry publishes a version under the tag it chooses, so the orchestrator's canonical
+# version names the pin while the tag it hands over names the image.
+write_seeded_pin "sha256:$(printf 'a%.0s' {1..64})"
+VERSION_SOURCE_TYPE=registry VERSION_TAG_PREFIX=v bash "${UPDATE_VERSION}" 1.2.3 v1.2.3
+[[ "$(tail -1 "${TEST_OCI_INSPECT_LOG}")" == 'docker://registry.example/image:v1.2.3' ]]
+grep -Fq '  version = "1.2.3";' "${TEST_ROOT}/pin.nix"
+
+# A version named without a tag is fetched under the prefix the registry puts on it, which is
+# the only way a bare version argument names an image there.
+write_seeded_pin "sha256:$(printf 'a%.0s' {1..64})"
+VERSION_SOURCE_TYPE=registry VERSION_TAG_PREFIX=v bash "${UPDATE_VERSION}" 1.2.3
+[[ "$(tail -1 "${TEST_OCI_INSPECT_LOG}")" == 'docker://registry.example/image:v1.2.3' ]]
+grep -Fq '  version = "1.2.3";' "${TEST_ROOT}/pin.nix"
+
+# With nothing asked for, the registry's own tag list is the answer: it is paged, its tags are
+# not in version order, a tag that is not a version is not a version, and a prerelease is not
+# the newest stable thing the registry published.
+write_seeded_pin "sha256:$(printf 'b%.0s' {1..64})"
+TEST_REGISTRY_TAGS=$'nightly\nv0.9.0\nv0.11.0rc1' TEST_REGISTRY_TAGS_NEXT=$'v0.10.0' \
+  VERSION_SOURCE_TYPE=registry VERSION_TAG_PREFIX=v bash "${UPDATE_VERSION}"
+[[ "$(tail -1 "${TEST_OCI_INSPECT_LOG}")" == 'docker://registry.example/image:v0.10.0' ]]
+grep -Fq '  version = "0.10.0";' "${TEST_ROOT}/pin.nix"
+grep -Fq "imageDigest = \"sha256:$(printf 'a%.0s' {1..64})\";" "${TEST_ROOT}/pin.nix"
+
+# A registry publishing nothing that names a version leaves the pin and the lock untouched.
+write_empty_pin
+cp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"
+cp "${TEST_ROOT}/flake.lock" "${TEST_ROOT}/expected-lock"
+if TEST_REGISTRY_TAGS=$'nightly\nlatest' VERSION_SOURCE_TYPE=registry VERSION_TAG_PREFIX=v bash "${UPDATE_VERSION}"; then
+  exit 1
+fi
+cmp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"
+cmp "${TEST_ROOT}/flake.lock" "${TEST_ROOT}/expected-lock"

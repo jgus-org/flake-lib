@@ -39,7 +39,15 @@ assert elem minVersionComponents [
 assert isString minimumTrackingVersion;
 assert isBool buildVerificationSkip;
 assert formatter != null || !pkgs.lib.any (name: pkgs.lib.hasInfix "." name) extraHashes;
-assert !(source ? versions) || (source.type == "oci" && source.versions.type == "github");
+assert
+  !(source ? versions)
+  || (
+    source.type == "oci"
+    && builtins.elem source.versions.type [
+      "github"
+      "registry"
+    ]
+  );
 let
   versionSource = source.versions or source;
   versionSourceTrack = versionSource.track or "release";
@@ -49,8 +57,9 @@ assert elem versionSourceTrack [
   "tag"
 ];
 assert versionSource.type != "github-release-asset" || versionSourceTrack == "release";
-# Where a source's version names live is a github-only choice: a gitlab project names its versions as its git tags, which is also where its updater resolves a release from.
+# Where a source's version names live is a github-only choice: a gitlab project names its versions as its git tags, which is also where its updater resolves a release from, and a registry has one tag list to read.
 assert versionSourceTrack != "tag" || versionSource.type == "github";
+assert versionSource.type != "registry" || !(versionSource ? track);
 pkgs.writeShellApplication {
   inherit meta;
   # VERSION_OVERRIDES is JSON, so the generated export carries quotes and braces that shellcheck reads as a quoting error (SC2089/SC2090).
@@ -90,9 +99,11 @@ pkgs.writeShellApplication {
     GIT_PUSH_LIB = "${pkgs.copyPathToStore ../scripts/git-push.sh}";
     MINIMUM_TRACKING_VERSION = minimumTrackingVersion;
     MIN_VERSION_COMPONENTS = toString minVersionComponents;
+    OCI_IMAGE_NAME = if source.type == "oci" then source.imageName else "";
     PIN_SCHEMA = pinSchema;
     PYPI_FORMAT = source.format or "sdist";
     PYPI_NAME = source.pname or "";
+    REGISTRY_TAGS_LIB = "${pkgs.copyPathToStore ../scripts/registry-tags.sh}";
     SOURCE_TYPE = source.type;
     TRACK_STABLE_ONLY = pkgs.lib.boolToString trackStableOnly;
     VERSION_CANON = pkgs.lib.concatStringsSep "\n" versionCanon;

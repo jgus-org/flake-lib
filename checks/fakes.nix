@@ -12,6 +12,62 @@ let
     text = ''exec ${pkgs.lib.getExe pkgs.bash} ${../scripts/build-and-check.sh} "$@"'';
   };
 
+  # A registry answers an anonymous request for its tags with a bearer challenge naming the realm to exchange it at, and pages the list it then serves with a Link header. Both curl fakes hand that exchange here, so one fixture describes the API for both suites.
+  registry-test-curl = pkgs.writeShellApplication {
+    name = "registry-test-curl";
+    runtimeInputs = [ pkgs.jq ];
+    text = ''
+      url=""
+      body=""
+      headers=""
+      auth=""
+      while [[ $# -gt 0 ]]; do
+        case "''${1}" in
+        -o)
+          body="''${2:-}"
+          shift 2
+          ;;
+        -D)
+          headers="''${2:-}"
+          shift 2
+          ;;
+        -H)
+          auth="''${2:-}"
+          shift 2
+          ;;
+        *)
+          if [[ "''${1}" == http* ]]; then
+            url="''${1}"
+          fi
+          shift
+          ;;
+        esac
+      done
+      if [[ "''${url}" == *'/token'* ]]; then
+        printf '%s' '{"token":"fixture-token"}'
+        exit 0
+      fi
+      if [[ "''${auth}" != "Authorization: Bearer "* ]]; then
+        printf 'HTTP/2 401\r\nwww-authenticate: Bearer realm="https://auth.example.test/token",service="registry.example.test",scope="repository:example/image:pull"\r\n\r\n' > "''${headers}"
+        printf '%s' 401
+        exit 0
+      fi
+      tags="''${TEST_REGISTRY_TAGS:-}"
+      page=1
+      if [[ "''${url}" == *'last='* ]]; then
+        tags="''${TEST_REGISTRY_TAGS_NEXT:-}"
+        page=2
+      fi
+      jq -Rs 'split("\n") | map(select(length > 0)) | {tags: .}' <<<"''${tags}" > "''${body}"
+      link=""
+      if [[ "''${page}" == "1" && -n "''${TEST_REGISTRY_TAGS_NEXT:-}" ]]; then
+        link='link: <https://registry.example.test/v2/example/image/tags/list?n=2&last=fixture>; rel="next"'$'\r'$'\n'
+      fi
+      printf 'HTTP/2 200\r\n%s\r\n' "''${link}" > "''${headers}"
+      printf '%s' 200
+    '';
+  };
+
   update-branches-test-nix = pkgs.writeShellApplication {
     name = "nix";
     runtimeInputs = [
@@ -175,6 +231,7 @@ in
   inherit
     build-and-check-test-shim
     build-packages-test-shim
+    registry-test-curl
     update-branches-test-nix
     ;
 }

@@ -480,8 +480,10 @@ grep -Fq 'publishes no package named not-published' <<<"${STRAY_OUTPUT}"
 
 # A self-hosted instance is named by GITLAB_DOMAIN, so every upstream this updater asks has to be that host: the tag list a release is discovered from, the ref it resolves to, the branch a commit-tracked source follows, and the git remote the source hash is computed from. Naming no domain leaves all of them on gitlab.com, which is what every producer already in the fleet does.
 gitlab_update() {
-  # $1 host (empty names none, so the updater's own default applies), $2 tracking mode, $3 case directory, $4 request log
+  # $1 host (empty names none, so the updater's own default applies), $2 tracking mode, $3 case directory, $4 request log,
+  # $5 the tag prefixes the source declares (empty names none), $6 the tags the project publishes (empty names the fixture's own)
   local DOMAIN="${1}" TRACK="${2}" ROOT="${TEST_ROOT}/${3}" URL_LOG="${4}"
+  local PREFIXES="${5:-}" TAGS="${6:-}"
   mkdir -p "${ROOT}"
   printf '%s\n' '{}' >"${ROOT}/flake.nix"
   printf '%s\n' '{' '  version = "";' '  sourceRev = "";' '  sourceHash = "";' '}' >"${ROOT}/pin.nix"
@@ -492,6 +494,8 @@ gitlab_update() {
     GITLAB_OWNER=network \
     GITLAB_REPO=smb4k \
     GITLAB_TRACK="${TRACK}" \
+    GH_TAG_PREFIXES="${PREFIXES}" \
+    TEST_GITLAB_TAGS="${TAGS}" \
     HASH_MODE=prefetch \
     EXTRA_HASHES='[]' \
     PIN_HASHES='[]' \
@@ -518,3 +522,54 @@ gitlab_update '' commit gitlab-default "${GITLAB_URL_LOG}"
 grep -Fqx -- 'https://gitlab.com/api/v4/projects/network%2Fsmb4k/repository/branches/master' "${GITLAB_URL_LOG}"
 grep -Fqx -- 'https://gitlab.com/network/smb4k.git' "${GITLAB_URL_LOG}"
 grep -Fq 'sourceHash = "sha256-source";' "${TEST_ROOT}/gitlab-default/pin.nix"
+
+# A project whose tags carry a prefix other than v is discovered and resolved under the prefix its
+# source declares, so a tag that does not carry it is not one of its releases and the ref resolved
+# is the tag upstream actually spells.
+gitlab_update invent.kde.org release gitlab-prefixed "${GITLAB_URL_LOG}" '["release-"]' '[{"name":"latest"},{"name":"release-1.2.3"}]'
+grep -Fqx -- 'https://invent.kde.org/api/v4/projects/network%2Fsmb4k/repository/commits/release-1.2.3' "${GITLAB_URL_LOG}"
+grep -Fq 'version = "1.2.3";' "${TEST_ROOT}/gitlab-prefixed/pin.nix"
+
+# A release asset is downloaded by its tag, so the prefix a source declares is what names the file
+# it is published under. Without a declared prefix the spelling stays the one most of GitHub uses.
+asset_update() {
+  # $1 case directory, $2 the tag prefixes the source declares, $3 the latest release tag,
+  # $4 the asset filename template, $5 the tag template, $6 the requested version, $7 request log
+  local ROOT="${TEST_ROOT}/${1}" PREFIXES="${2}" RELEASE_TAG="${3}" ASSET="${4}" TAG="${5}"
+  local REQUESTED="${6}" URL_LOG="${7}"
+  local -a ARGS=()
+  if [[ -n ${REQUESTED} ]]; then
+    ARGS+=("${REQUESTED}")
+  fi
+  mkdir -p "${ROOT}"
+  printf '%s\n' '{}' >"${ROOT}/flake.nix"
+  printf '%s\n' '{' '  version = "";' '  hash = "";' '}' >"${ROOT}/pin.nix"
+  : >"${URL_LOG}"
+  FLAKE_ROOT="${ROOT}" \
+    SOURCE_TYPE=github-release-asset \
+    GH_OWNER=example \
+    GH_REPO=tool \
+    GH_TAG_PREFIXES="${PREFIXES}" \
+    GH_ASSET="${ASSET}" \
+    GH_TAG="${TAG}" \
+    TEST_RELEASE_TAG="${RELEASE_TAG}" \
+    SIBLINGS='[]' \
+    TEST_PREFETCH_LOG="${URL_LOG}" \
+    bash "${UPDATE_VERSION}" "${ARGS[@]}" >/dev/null
+  grep -Fq 'hash = "sha256-asset";' "${ROOT}/pin.nix"
+}
+
+ASSET_URL_LOG="${TEST_ROOT}/asset-urls.log"
+
+asset_update asset-prefixed '["rust-v"]' rust-v1.2.3 'tool-${version}.tar.gz' '' '' "${ASSET_URL_LOG}"
+grep -Fqx -- 'https://github.com/example/tool/releases/download/rust-v1.2.3/tool-1.2.3.tar.gz' "${ASSET_URL_LOG}"
+grep -Fq 'version = "1.2.3";' "${TEST_ROOT}/asset-prefixed/pin.nix"
+
+asset_update asset-default '' '' 'tool-${version}.tar.gz' '' 1.2.3 "${ASSET_URL_LOG}"
+grep -Fqx -- 'https://github.com/example/tool/releases/download/v1.2.3/tool-1.2.3.tar.gz' "${ASSET_URL_LOG}"
+grep -Fq 'version = "1.2.3";' "${TEST_ROOT}/asset-default/pin.nix"
+
+# A tag template of the flake's own says how upstream spells its releases, whatever prefix it declares.
+asset_update asset-template '["v"]' '' 'tool-${tag}.tar.gz' 'release-${version}' 1.2.3 "${ASSET_URL_LOG}"
+grep -Fqx -- 'https://github.com/example/tool/releases/download/release-1.2.3/tool-release-1.2.3.tar.gz' "${ASSET_URL_LOG}"
+grep -Fq 'version = "1.2.3";' "${TEST_ROOT}/asset-template/pin.nix"

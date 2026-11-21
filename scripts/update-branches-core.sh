@@ -1,23 +1,18 @@
 #!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#curl nixpkgs#gh nixpkgs#jq nixpkgs#gnused nixpkgs#gnugrep nixpkgs#nix nixpkgs#coreutils --command bash
 
-# Per-version branch orchestrator. It supports both a backwards-compatible
-# all-in-one invocation and job-splittable discovery, exact-refresh, and
-# aggregate-publication commands.
+# Per-version branch orchestrator. It supports both a backwards-compatible all-in-one invocation and job-splittable discovery, exact-refresh, and aggregate-publication commands.
 #
 # For each upstream version >= $MINIMUM_TRACKING_VERSION, ensures:
 #   - an exact branch `v<M>.<m>.<p>` exists and its pin is hash-validated
-#   - aggregate pointer branches `v<M>.<m>`, `v<M>`, `main` are force-pushed to the highest matching exact branch (only the levels shorter than a version's component count; `main` always)
+#   - aggregate pointer branches `v<M>.<m>`, `v<M>`, `main` are force-pushed to the highest matching exact branch (only the levels shorter than a version's component count, and `main` always)
 #
-# Single knob: $MINIMUM_TRACKING_VERSION. Permanent pins are done via git tags (which the action never touches); there is no in-band freeze list.
+# Single knob: $MINIMUM_TRACKING_VERSION. Permanent pins are git tags, which the action never touches, so there is no in-band freeze list.
 #
-# Failures: per-branch input-refresh or update-version failures and aggregate targets missing the discovery base commit are surfaced as GH Actions ::warning::
-# annotations + a step summary, and cause a non-zero exit at the end of the run. An aggregate whose current tip is reachable from neither the new target nor
-# any tracked exact branch is likewise retained: advancing it would orphan commits that exist only on the aggregate. An aggregate that already contains its
-# target is left where it is without being retained; it is ahead of the target, not stranded from it.
+# Failures: the run surfaces per-branch input-refresh or update-version failures, and aggregate targets missing the discovery base commit, as GH Actions ::warning:: annotations plus a step summary, and exits non-zero at the end of the run. An aggregate whose current tip is reachable from neither the new target nor any tracked exact branch is likewise retained. Advancing it would orphan commits that exist only on the aggregate. An aggregate that already contains its target is left where it is without being retained. It is ahead of the target, not stranded from it.
 #
 # Per-flake variation is driven by env vars injected by flake-lib's mkUpdateBranches:
 #   SOURCE_TYPE          pypi | github | github-release-asset | gitlab | oci
-#   VERSION_SOURCE_TYPE  the source whose named versions drive discovery; for an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
+#   VERSION_SOURCE_TYPE  the source whose named versions drive discovery. For an oci producer, its upstream release tree. Defaults to SOURCE_TYPE.
 #   VERSION_TRACK        github vocabulary: release (GitHub Releases) | tag (git tags). A github source's versions live in exactly one of those, and only the flake knows which. Defaults to release.
 #   PYPI_NAME            [pypi]
 #   PYPI_FORMAT          sdist | wheel  [pypi]
@@ -25,7 +20,7 @@
 #   GITLAB_OWNER/GITLAB_REPO  [gitlab] A gitlab source's version names are the project's git tags, which is where its updater resolves a release from too, so tracking mode says nothing about where to look.
 #   GITLAB_DOMAIN             GitLab host (default gitlab.com)  [gitlab]
 #   PIN_SCHEMA           pypi | github | github-npm | github-pnpm | github-yarn | github-asset | oci | version-only
-#   EXTRA_HASHES         JSON array of pin field names the producer's artifact hook resolves; every schema's placeholder carries them
+#   EXTRA_HASHES         JSON array of pin field names the producer's artifact hook resolves. Every schema's placeholder carries them
 #   FORMATTER            the repository's formatter binary, which puts a nested pin field in its canonical shape
 #   BRANCH_OWNED_FILES   space-separated files update-version mutates per branch
 #   VERSION_OVERRIDES    JSON map raw version -> canonical version
@@ -57,15 +52,10 @@ if [[ ! ${TRANSIENT_MAX_ATTEMPTS} =~ ^[1-9][0-9]*$ || ! ${GITHUB_REF_MAX_ATTEMPT
   exit 2
 fi
 
-# GitLab pages by number and names the page that follows in a response header, so there is
-# no --paginate equivalent to hand the enumeration to. The cap bounds how many pages are
-# fetched, whatever the API keeps naming.
+# GitLab pages by number and names the page that follows in a response header, so there is no --paginate equivalent to hand the enumeration to. The cap bounds how many pages are fetched, whatever the API keeps naming.
 GITLAB_MAX_PAGES="${GITLAB_MAX_PAGES:-20}"
 
-# GitHub's release and tag lists answer one page per request and name nothing that follows,
-# so a short page ends the enumeration and this cap bounds it. A release page carries every
-# release's note body, and GitHub stops answering before it finishes sending a hundred of
-# them for an upstream with a long release history, so the page is deliberately small.
+# GitHub's release and tag lists answer one page per request and name nothing that follows, so a short page ends the enumeration and this cap bounds it. A release page carries every release's note body, and GitHub stops answering before it finishes sending a hundred of them for an upstream with a long release history, so the page is deliberately small.
 GITHUB_MAX_PAGES="${GITHUB_MAX_PAGES:-500}"
 GITHUB_PAGE_SIZE="${GITHUB_PAGE_SIZE:-30}"
 
@@ -74,14 +64,14 @@ source "${GIT_PUSH_LIB:?required env var}"
 
 # Buffers output and emits it only on success, so a consumer never sees partial data from an attempt that died mid-stream (e.g. gh --paginate failing between pages).
 retry() {
-  local attempt output
-  for attempt in 1 2 3 4 5; do
-    if output=$("$@"); then
-      [[ -z ${output} ]] || printf '%s\n' "${output}"
+  local ATTEMPT OUTPUT
+  for ATTEMPT in 1 2 3 4 5; do
+    if OUTPUT=$("${@}"); then
+      [[ -z ${OUTPUT} ]] || printf '%s\n' "${OUTPUT}"
       return 0
     fi
-    if ((attempt < 5)); then
-      echo "  ${1} failed (attempt ${attempt}/5); retrying in ${TRANSIENT_RETRY_DELAY_SECONDS}s..." >&2
+    if ((ATTEMPT < 5)); then
+      echo "  ${1} failed (attempt ${ATTEMPT}/5). Retrying in ${TRANSIENT_RETRY_DELAY_SECONDS}s..." >&2
       sleep "${TRANSIENT_RETRY_DELAY_SECONDS}"
     fi
   done
@@ -90,70 +80,65 @@ retry() {
 }
 
 transient_failure_kind() {
-  local log="${1}"
-  if grep -Fqi 'No commit found for SHA' "${log}"; then
+  local LOG="${1}"
+  if grep -Fqi 'No commit found for SHA' "${LOG}"; then
     echo github-ref
     return 0
   fi
-  if grep -Eiq '(requested URL returned error: (429|5[0-9]{2})|HTTP[^[:space:]]* (429|5[0-9]{2})|Internal Server Error|Could not resolve host|Failed to connect|Connection reset by peer|Operation timed out|TLS connect error|UNEXPECTED_EOF_WHILE_READING|Temporary failure in name resolution)' "${log}"; then
+  if grep -Eiq '(requested URL returned error: (429|5[0-9]{2})|HTTP[^[:space:]]* (429|5[0-9]{2})|Internal Server Error|Could not resolve host|Failed to connect|Connection reset by peer|Operation timed out|TLS connect error|UNEXPECTED_EOF_WHILE_READING|Temporary failure in name resolution)' "${LOG}"; then
     echo network
     return 0
   fi
   return 1
 }
 
-# Branch updates run in disposable worktrees, so retrying the whole command is
-# safe. Keep this deliberately narrow: explicit transient network errors get one
-# fast retry; GitHub's "No commit found for SHA" (the commits API lagging behind
-# a just-pushed ref) gets a longer bounded wait; deterministic build/update
-# failures return at once.
+# Branch updates run in disposable worktrees, so retrying the whole command is safe. Keep this deliberately narrow. Explicit transient network errors get one fast retry. GitHub's "No commit found for SHA" (the commits API lagging behind a just-pushed ref) gets a longer bounded wait. Deterministic build/update failures return at once.
 run_with_transient_retry() {
-  local label="${1}" kind exit_code=0 log
-  local -i network_failures=0 github_ref_failures=0
-  local attempt_count attempt_limit delay_seconds failure_text
+  local LABEL="${1}" KIND EXIT_CODE=0 LOG
+  local -i NETWORK_FAILURES=0 GITHUB_REF_FAILURES=0
+  local ATTEMPT_COUNT ATTEMPT_LIMIT DELAY_SECONDS FAILURE_TEXT
   shift
-  log=$(mktemp)
+  LOG=$(mktemp)
   while :; do
-    : >"${log}"
+    : >"${LOG}"
     set +e
-    "$@" 2>&1 | tee "${log}"
-    exit_code=${PIPESTATUS[0]}
+    "${@}" 2>&1 | tee "${LOG}"
+    EXIT_CODE=${PIPESTATUS[0]}
     set -e
-    if ((exit_code == 0)); then
-      rm -f "${log}"
+    if ((EXIT_CODE == 0)); then
+      rm -f "${LOG}"
       return 0
     fi
-    if ! kind=$(transient_failure_kind "${log}"); then
-      rm -f "${log}"
-      return "${exit_code}"
+    if ! KIND=$(transient_failure_kind "${LOG}"); then
+      rm -f "${LOG}"
+      return "${EXIT_CODE}"
     fi
-    rm -f "${log}"
-    case "${kind}" in
+    rm -f "${LOG}"
+    case "${KIND}" in
     network)
-      network_failures+=1
-      attempt_count="${network_failures}"
-      attempt_limit="${TRANSIENT_MAX_ATTEMPTS}"
-      delay_seconds="${TRANSIENT_RETRY_DELAY_SECONDS}"
-      failure_text="a transient network error"
+      NETWORK_FAILURES+=1
+      ATTEMPT_COUNT="${NETWORK_FAILURES}"
+      ATTEMPT_LIMIT="${TRANSIENT_MAX_ATTEMPTS}"
+      DELAY_SECONDS="${TRANSIENT_RETRY_DELAY_SECONDS}"
+      FAILURE_TEXT="a transient network error"
       ;;
     github-ref)
-      github_ref_failures+=1
-      attempt_count="${github_ref_failures}"
-      attempt_limit="${GITHUB_REF_MAX_ATTEMPTS}"
-      delay_seconds="${GITHUB_REF_RETRY_DELAY_SECONDS}"
-      failure_text="a not-yet-visible GitHub ref"
+      GITHUB_REF_FAILURES+=1
+      ATTEMPT_COUNT="${GITHUB_REF_FAILURES}"
+      ATTEMPT_LIMIT="${GITHUB_REF_MAX_ATTEMPTS}"
+      DELAY_SECONDS="${GITHUB_REF_RETRY_DELAY_SECONDS}"
+      FAILURE_TEXT="a not-yet-visible GitHub ref"
       ;;
     esac
-    if ((attempt_count >= attempt_limit)); then
-      return "${exit_code}"
+    if ((ATTEMPT_COUNT >= ATTEMPT_LIMIT)); then
+      return "${EXIT_CODE}"
     fi
-    echo "  ${label} hit ${failure_text} (attempt ${attempt_count}/${attempt_limit}); retrying in ${delay_seconds}s..." >&2
-    sleep "${delay_seconds}"
+    echo "  ${LABEL} hit ${FAILURE_TEXT} (attempt ${ATTEMPT_COUNT}/${ATTEMPT_LIMIT}). Retrying in ${DELAY_SECONDS}s..." >&2
+    sleep "${DELAY_SECONDS}"
   done
 }
 
-# The API holding a source's version names. Derived rather than remembered across
-# the enumeration, which runs in a subshell and so cannot report it back.
+# The API holding a source's version names. Derived rather than remembered across the enumeration, which runs in a subshell and so cannot report it back.
 discovery_endpoint() {
   case "${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}" in
   pypi) printf '%s' "https://pypi.org/pypi/${PYPI_NAME}/json" ;;
@@ -173,88 +158,80 @@ discovery_endpoint() {
 }
 
 list_gitlab_tags() {
-  local endpoint="${1}" page=1 next headers_file pages=0
-  headers_file=$(mktemp)
+  local ENDPOINT="${1}" PAGE=1 NEXT HEADERS_FILE PAGES=0
+  HEADERS_FILE=$(mktemp)
   while :; do
-    pages=$((pages + 1))
-    if ((pages > GITLAB_MAX_PAGES)); then
-      rm -f "${headers_file}"
+    PAGES=$((PAGES + 1))
+    if ((PAGES > GITLAB_MAX_PAGES)); then
+      rm -f "${HEADERS_FILE}"
       echo "error: gitlab tag enumeration did not end within ${GITLAB_MAX_PAGES} pages" >&2
       exit 1
     fi
-    # curl truncates the dump as it opens it, so clear it the same way: a next-page
-    # named by the previous response must not be read as this response's.
-    : >"${headers_file}"
-    retry curl -sSfL -D "${headers_file}" \
-      "${endpoint}?per_page=100&page=${page}" | jq -r '.[].name'
-    # curl -L dumps every response's headers into the file, so the page the last one
-    # names is the one to follow.
-    next=$(sed -nE 's/^[Xx]-[Nn]ext-[Pp]age:[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' "${headers_file}" | tail -1)
-    if [[ -z ${next} ]]; then
-      rm -f "${headers_file}"
+    # curl truncates the dump as it opens it, so clear it the same way: a next-page named by the previous response must not be read as this response's.
+    : >"${HEADERS_FILE}"
+    retry curl -sSfL -D "${HEADERS_FILE}" \
+      "${ENDPOINT}?per_page=100&page=${PAGE}" | jq -r '.[].name'
+    # curl -L dumps every response's headers into the file, so the page the last one names is the one to follow.
+    NEXT=$(sed -nE 's/^[Xx]-[Nn]ext-[Pp]age:[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' "${HEADERS_FILE}" | tail -1)
+    if [[ -z ${NEXT} ]]; then
+      rm -f "${HEADERS_FILE}"
       return 0
     fi
-    page="${next}"
+    PAGE="${NEXT}"
   done
 }
 
-# GitHub answers one page per request and names nothing that follows it, so a short page
-# ends the enumeration. A page is retried on its own because an upstream with a long
-# release history has pages that fail by themselves: retrying the whole enumeration
-# re-rolls every page already fetched, so a list that stops partway is what a run with any
-# flaky page produces. A page that never answers fails the enumeration instead.
+# GitHub answers one page per request and names nothing that follows it, so a short page ends the enumeration. A page is retried on its own because an upstream with a long release history has pages that fail by themselves: retrying the whole enumeration re-rolls every page already fetched, so a list that stops partway is what a run with any flaky page produces. A page that never answers fails the enumeration instead.
 list_github_pages() {
-  local endpoint="${1}" jq_filter="${2}" page=1 pages=0 names count
+  local ENDPOINT="${1}" JQ_FILTER="${2}" PAGE=1 PAGES=0 NAMES COUNT
   while :; do
-    pages=$((pages + 1))
-    if ((pages > GITHUB_MAX_PAGES)); then
-      echo "error: github enumeration of ${endpoint} did not end within ${GITHUB_MAX_PAGES} pages" >&2
+    PAGES=$((PAGES + 1))
+    if ((PAGES > GITHUB_MAX_PAGES)); then
+      echo "error: github enumeration of ${ENDPOINT} did not end within ${GITHUB_MAX_PAGES} pages" >&2
       return 1
     fi
-    if ! names=$(retry gh api "${endpoint}?per_page=${GITHUB_PAGE_SIZE}&page=${page}" --jq "${jq_filter}"); then
+    if ! NAMES=$(retry gh api "${ENDPOINT}?per_page=${GITHUB_PAGE_SIZE}&page=${PAGE}" --jq "${JQ_FILTER}"); then
       return 1
     fi
-    if [[ -z ${names} ]]; then
+    if [[ -z ${NAMES} ]]; then
       return 0
     fi
-    printf '%s\n' "${names}"
-    count=$(wc -l <<<"${names}")
-    if ((count < GITHUB_PAGE_SIZE)); then
+    printf '%s\n' "${NAMES}"
+    COUNT=$(wc -l <<<"${NAMES}")
+    if ((COUNT < GITHUB_PAGE_SIZE)); then
       return 0
     fi
-    page=$((page + 1))
+    PAGE=$((PAGE + 1))
   done
 }
 
 list_upstream_versions() {
-  local DISCOVERY_TYPE="${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}" endpoint
-  endpoint=$(discovery_endpoint)
+  local DISCOVERY_TYPE="${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}}" ENDPOINT
+  ENDPOINT=$(discovery_endpoint)
   case "${DISCOVERY_TYPE}" in
   pypi)
-    # Only enumerate releases the flake can actually fetch: sdist -> a source tarball; wheel -> a universal py3-none-any wheel (the one mk-pypi-package builds). Releases lacking it are skipped.
+    # Only enumerate releases the flake can actually fetch. For sdist that is a source tarball, and for wheel a universal py3-none-any wheel (the one mk-pypi-package builds). Releases lacking it are skipped.
     if [ "${PYPI_FORMAT:-sdist}" = "wheel" ]; then
-      retry curl -sSfL "${endpoint}" |
+      retry curl -sSfL "${ENDPOINT}" |
         jq -r '.releases | to_entries[] | select(.value | any(.packagetype == "bdist_wheel" and (.filename | endswith("-py3-none-any.whl")))) | .key'
     else
-      retry curl -sSfL "${endpoint}" |
+      retry curl -sSfL "${ENDPOINT}" |
         jq -r '.releases | to_entries[] | select(.value | any(.packagetype == "sdist")) | .key'
     fi
     ;;
   github)
-    # A github source names its versions either as GitHub Releases or as plain git
-    # tags, and an upstream that ships tags without Releases has an empty releases
-    # list. Only the flake's tracking mode says which endpoint holds its names.
+    # A github source names its versions either as GitHub Releases or as plain git tags, and an upstream that ships tags without Releases has an empty releases list. Only the flake's tracking mode says which endpoint holds its names.
     if [[ ${VERSION_TRACK} == "tag" ]]; then
-      list_github_pages "${endpoint}" '.[].name'
+      list_github_pages "${ENDPOINT}" '.[].name'
     else
-      list_github_pages "${endpoint}" '.[].tag_name'
+      list_github_pages "${ENDPOINT}" '.[].tag_name'
     fi
     ;;
   github-release-asset)
-    list_github_pages "${endpoint}" '.[].tag_name'
+    list_github_pages "${ENDPOINT}" '.[].tag_name'
     ;;
   gitlab)
-    list_gitlab_tags "${endpoint}"
+    list_gitlab_tags "${ENDPOINT}"
     ;;
   *)
     echo "error: update-branches cannot enumerate versions for source type ${DISCOVERY_TYPE}" >&2
@@ -264,17 +241,14 @@ list_upstream_versions() {
 }
 
 format_pin() {
-  # $1 pin path, relative to the working tree. The placeholder is written as flat lines, and a dotted
-  # field name asks for a nested attribute whose shape only the org formatter defines.
+  # $1 pin path, relative to the working tree. The placeholder is written as flat lines, and a dotted field name asks for a nested attribute whose shape only the org formatter defines.
   [[ -z ${FORMATTER} ]] && return 0
   # One file per run, and treefmt's evaluation cache lives under a HOME the updater may not have.
   (cd "$(dirname "${1}")" && "${FORMATTER}" --no-cache "$(basename "${1}")")
 }
 
 seed_declared_pin_fields() {
-  # A declared extra hash is a pin field the producer's artifact hook resolves, so every schema's placeholder
-  # carries every declared field: a consumer reads one pin shape at each point in a branch's life instead of
-  # testing whether a field is there yet, and an empty field is what re-runs the hook.
+  # A declared extra hash is a pin field the producer's artifact hook resolves, so every schema's placeholder carries every declared field: a consumer reads one pin shape at each point in a branch's life instead of testing whether a field is there yet, and an empty field is what re-runs the hook.
   local FIELD
   while IFS= read -r FIELD; do
     [[ -n ${FIELD} ]] || continue
@@ -339,7 +313,7 @@ EOF
 EOF
     ;;
   github-asset)
-    # Prebuilt release asset; URL is a GitHub release download (SOURCE_TYPE=github-release-asset in update-version.sh).
+    # Prebuilt release asset. The URL is a GitHub release download (SOURCE_TYPE=github-release-asset in update-version.sh).
     cat >pin.nix <<EOF
 # Auto-managed by \`nix run .#update-version\`. Manual edits will be overwritten by the next bump.
 {
@@ -375,7 +349,7 @@ EOF
   seed_declared_pin_fields
 }
 
-version_lt() { [[ $1 != "$2" ]] && [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]; }
+version_lt() { [[ ${1} != "${2}" ]] && [[ "$(printf '%s\n%s\n' "${1}" "${2}" | sort -V | head -1)" == "${1}" ]]; }
 
 is_prerelease() {
   local VERSION="${1}"
@@ -383,19 +357,19 @@ is_prerelease() {
 }
 
 canonicalize_version() {
-  local v="$1" canon rule
-  canon=$(jq -r --arg v "${v}" '.[$v] // ""' <<<"${VERSION_OVERRIDES}")
-  if [[ -n ${canon} ]]; then
-    printf '%s' "${canon}"
+  local VERSION="${1}" CANON RULE
+  CANON=$(jq -r --arg v "${VERSION}" '.[$v] // ""' <<<"${VERSION_OVERRIDES}")
+  if [[ -n ${CANON} ]]; then
+    printf '%s' "${CANON}"
     return
   fi
-  canon="${v}"
-  while IFS= read -r rule; do
-    if [[ -n ${rule} ]]; then
-      canon=$(sed -E "${rule}" <<<"${canon}")
+  CANON="${VERSION}"
+  while IFS= read -r RULE; do
+    if [[ -n ${RULE} ]]; then
+      CANON=$(sed -E "${RULE}" <<<"${CANON}")
     fi
   done <<<"${VERSION_CANON}"
-  printf '%s' "${canon}"
+  printf '%s' "${CANON}"
 }
 
 github_version_from_tag() {
@@ -415,8 +389,7 @@ git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
 matching_owned_paths() {
-  # Owned patterns that match something in the current worktree. Unmatched
-  # patterns must not reach git: they are fatal pathspec errors there.
+  # Unmatched patterns must not reach git: they are fatal pathspec errors there.
   local PATTERN
   local -a MATCHES=() OWNED_PATTERNS=()
   read -r -a OWNED_PATTERNS <<<"${BRANCH_OWNED_FILES}"
@@ -431,63 +404,63 @@ matching_owned_paths() {
 }
 
 merge_preserving_owned() {
-  local base="${1}" branch_tree temp_index tree synthetic pattern candidate metadata
-  local -a owned_patterns=() paths=()
-  if git merge-base --is-ancestor "${base}" HEAD; then
+  local BASE="${1}" BRANCH_TREE TEMP_INDEX TREE SYNTHETIC PATTERN CANDIDATE METADATA
+  local -a OWNED_PATTERNS=() PATHS=()
+  if git merge-base --is-ancestor "${BASE}" HEAD; then
     return 0
   fi
-  if ! branch_tree=$(git rev-parse HEAD); then
+  if ! BRANCH_TREE=$(git rev-parse HEAD); then
     return 1
   fi
-  if ! temp_index=$(mktemp); then
+  if ! TEMP_INDEX=$(mktemp); then
     return 1
   fi
-  rm -f "${temp_index}"
-  if ! GIT_INDEX_FILE="${temp_index}" git read-tree "${base}"; then
-    rm -f "${temp_index}"
+  rm -f "${TEMP_INDEX}"
+  if ! GIT_INDEX_FILE="${TEMP_INDEX}" git read-tree "${BASE}"; then
+    rm -f "${TEMP_INDEX}"
     return 1
   fi
-  read -r -a owned_patterns <<<"${BRANCH_OWNED_FILES}"
-  for pattern in "${owned_patterns[@]}"; do
-    mapfile -t paths < <(GIT_INDEX_FILE="${temp_index}" git ls-files -- "${pattern}")
-    if ((${#paths[@]} > 0)); then
-      if ! GIT_INDEX_FILE="${temp_index}" git update-index --force-remove -- "${paths[@]}"; then
-        rm -f "${temp_index}"
+  read -r -a OWNED_PATTERNS <<<"${BRANCH_OWNED_FILES}"
+  for PATTERN in "${OWNED_PATTERNS[@]}"; do
+    mapfile -t PATHS < <(GIT_INDEX_FILE="${TEMP_INDEX}" git ls-files -- "${PATTERN}")
+    if ((${#PATHS[@]} > 0)); then
+      if ! GIT_INDEX_FILE="${TEMP_INDEX}" git update-index --force-remove -- "${PATHS[@]}"; then
+        rm -f "${TEMP_INDEX}"
         return 1
       fi
     fi
-    if ! while IFS=$'\t' read -r metadata candidate; do
-      if [[ ${candidate} == ${pattern} || ${candidate} == ${pattern%/}/* ]]; then
-        printf '%s\t%s\n' "${metadata}" "${candidate}"
+    if ! while IFS=$'\t' read -r METADATA CANDIDATE; do
+      if [[ ${CANDIDATE} == ${PATTERN} || ${CANDIDATE} == ${PATTERN%/}/* ]]; then
+        printf '%s\t%s\n' "${METADATA}" "${CANDIDATE}"
       fi
-    done < <(git ls-tree -r "${branch_tree}") | GIT_INDEX_FILE="${temp_index}" git update-index --index-info; then
-      rm -f "${temp_index}"
+    done < <(git ls-tree -r "${BRANCH_TREE}") | GIT_INDEX_FILE="${TEMP_INDEX}" git update-index --index-info; then
+      rm -f "${TEMP_INDEX}"
       return 1
     fi
   done
-  if ! tree=$(GIT_INDEX_FILE="${temp_index}" git write-tree); then
-    rm -f "${temp_index}"
+  if ! TREE=$(GIT_INDEX_FILE="${TEMP_INDEX}" git write-tree); then
+    rm -f "${TEMP_INDEX}"
     return 1
   fi
-  if ! synthetic=$(printf '%s\n' "overlay owned files from ${branch_tree}" | git commit-tree "${tree}" -p "${base}"); then
-    rm -f "${temp_index}"
+  if ! SYNTHETIC=$(printf '%s\n' "overlay owned files from ${BRANCH_TREE}" | git commit-tree "${TREE}" -p "${BASE}"); then
+    rm -f "${TEMP_INDEX}"
     return 1
   fi
-  rm -f "${temp_index}"
-  git merge --no-edit "${synthetic}"
+  rm -f "${TEMP_INDEX}"
+  git merge --no-edit "${SYNTHETIC}"
 }
 
 VERSION_OVERRIDES="${VERSION_OVERRIDES:-}"
 [[ -n ${VERSION_OVERRIDES} ]] || VERSION_OVERRIDES='{}'
 VERSION_CANON="${VERSION_CANON:-}"
-version_re="^[0-9]+(\.[0-9]+){$((MIN_VERSION_COMPONENTS - 1)),2}([-+a-zA-Z0-9.]+)?$"
-safe_version_re='^[0-9]+(\.[0-9]+)*([-+a-zA-Z0-9.]+)?$'
-declare -a tracked=()
-declare -A orig_of=()
+VERSION_RE="^[0-9]+(\.[0-9]+){$((MIN_VERSION_COMPONENTS - 1)),2}([-+a-zA-Z0-9.]+)?$"
+SAFE_VERSION_RE='^[0-9]+(\.[0-9]+)*([-+a-zA-Z0-9.]+)?$'
+declare -a TRACKED=()
+declare -A ORIG_OF=()
 BASE_SHA=""
 LAST_FAILURE_REASON=""
-declare -a blocked_aggregates=()
-declare -A blocked_aggregate_reasons=()
+declare -a BLOCKED_AGGREGATES=()
+declare -A BLOCKED_AGGREGATE_REASONS=()
 
 usage() {
   cat >&2 <<'EOF'
@@ -500,24 +473,21 @@ EOF
 }
 
 sort_versions_descending() {
-  local v numeric stable
+  local V NUMERIC STABLE
   if (($# == 0)); then
     return
   fi
   if [[ ${SOURCE_TYPE} == "pypi" ]]; then
-    printf '%s\n' "$@" | python3 "${CASCADE_PY}" sort "${MINIMUM_TRACKING_VERSION}" all | tac
+    printf '%s\n' "${@}" | python3 "${CASCADE_PY}" sort "${MINIMUM_TRACKING_VERSION}" all | tac
     return
   fi
-  # GitHub's accepted version grammar is broader than PEP 440, so retain GNU
-  # version sorting there. The explicit stability rank corrects sort -V's
-  # treatment of 1.2.3-rc1 as newer than the final 1.2.3 with the same numeric
-  # core, without dropping non-PEP tags such as 1.2.3-ubuntu1.
-  for v in "$@"; do
-    [[ ${v} =~ ^([0-9]+(\.[0-9]+)*)(.*)$ ]]
-    numeric="${BASH_REMATCH[1]}"
-    stable=1
-    if is_prerelease "${v}"; then stable=0; fi
-    printf '%s\t%s\t%s\n' "${numeric}" "${stable}" "${v}"
+  # GitHub's accepted version grammar is broader than PEP 440, so retain GNU version sorting there. The explicit stability rank corrects sort -V's treatment of 1.2.3-rc1 as newer than the final 1.2.3 with the same numeric core, without dropping non-PEP tags such as 1.2.3-ubuntu1.
+  for V in "${@}"; do
+    [[ ${V} =~ ^([0-9]+(\.[0-9]+)*)(.*)$ ]]
+    NUMERIC="${BASH_REMATCH[1]}"
+    STABLE=1
+    if is_prerelease "${V}"; then STABLE=0; fi
+    printf '%s\t%s\t%s\n' "${NUMERIC}" "${STABLE}" "${V}"
   done | sort -t $'\t' -k1,1Vr -k2,2nr -k3,3Vr | cut -f3-
 }
 
@@ -540,110 +510,107 @@ use_base_sha() {
 }
 
 discover_versions() {
-  local v canon raw_output
-  local -a raw_versions=() all_versions=() sorted_versions=()
-  local -A seen=()
-  tracked=()
-  orig_of=()
+  local V CANON RAW_OUTPUT
+  local -a RAW_VERSIONS=() ALL_VERSIONS=() SORTED_VERSIONS=()
+  local -A SEEN=()
+  TRACKED=()
+  ORIG_OF=()
 
   echo "Querying upstream..." >&2
-  # A process substitution's failure is invisible to mapfile, so capture the output
-  # instead: an enumeration that stops partway would otherwise be taken for upstream's
-  # whole version list, and the versions it never reached would go unbranched.
-  if ! raw_output=$(list_upstream_versions); then
+  # A process substitution's failure is invisible to mapfile, so capture the output instead: an enumeration that stops partway would otherwise be taken for upstream's whole version list, and the versions it never reached would go unbranched.
+  if ! RAW_OUTPUT=$(list_upstream_versions); then
     return 1
   fi
-  if [[ -n ${raw_output} ]]; then
-    mapfile -t raw_versions <<<"${raw_output}"
+  if [[ -n ${RAW_OUTPUT} ]]; then
+    mapfile -t RAW_VERSIONS <<<"${RAW_OUTPUT}"
   fi
-  if ((${#raw_versions[@]} == 0)); then
+  if ((${#RAW_VERSIONS[@]} == 0)); then
     echo "error: upstream discovery found no version names at $(discovery_endpoint) for source type ${VERSION_SOURCE_TYPE:-${SOURCE_TYPE}} tracking ${VERSION_TRACK}" >&2
     return 1
   fi
-  # Canonical versions drive sorting and branch naming. The upstream version is
-  # retained in the discovery manifest for the exact refresh job.
-  for v in "${raw_versions[@]}"; do
-    v=$(github_version_from_tag "${v}" || true)
-    if [[ ${v} =~ ${version_re} ]]; then
-      canon=$(canonicalize_version "${v}")
-      if [[ ! ${canon} =~ ${safe_version_re} ]]; then
-        echo "error: upstream version ${v} canonicalizes to unsafe branch version ${canon}" >&2
+  # Canonical versions drive sorting and branch naming. The upstream version is retained in the discovery manifest for the exact refresh job.
+  for V in "${RAW_VERSIONS[@]}"; do
+    V=$(github_version_from_tag "${V}" || true)
+    if [[ ${V} =~ ${VERSION_RE} ]]; then
+      CANON=$(canonicalize_version "${V}")
+      if [[ ! ${CANON} =~ ${SAFE_VERSION_RE} ]]; then
+        echo "error: upstream version ${V} canonicalizes to unsafe branch version ${CANON}" >&2
         return 1
       fi
-      if [[ -n ${orig_of[${canon}]+set} && ${orig_of[${canon}]} != "${v}" ]]; then
-        echo "error: upstream versions ${orig_of[${canon}]} and ${v} canonicalize to ${canon}" >&2
+      if [[ -n ${ORIG_OF[${CANON}]+set} && ${ORIG_OF[${CANON}]} != "${V}" ]]; then
+        echo "error: upstream versions ${ORIG_OF[${CANON}]} and ${V} canonicalize to ${CANON}" >&2
         return 1
       fi
-      all_versions+=("${canon}")
-      orig_of["${canon}"]="${v}"
+      ALL_VERSIONS+=("${CANON}")
+      ORIG_OF["${CANON}"]="${V}"
     fi
   done
 
   if [[ ${SOURCE_TYPE} == "pypi" ]]; then
-    mapfile -t sorted_versions < <(sort_versions_descending "${all_versions[@]}")
+    mapfile -t SORTED_VERSIONS < <(sort_versions_descending "${ALL_VERSIONS[@]}")
   else
-    for v in "${all_versions[@]}"; do
-      if ! version_lt "${v}" "${MINIMUM_TRACKING_VERSION}"; then
-        sorted_versions+=("${v}")
+    for V in "${ALL_VERSIONS[@]}"; do
+      if ! version_lt "${V}" "${MINIMUM_TRACKING_VERSION}"; then
+        SORTED_VERSIONS+=("${V}")
       fi
     done
-    mapfile -t sorted_versions < <(sort_versions_descending "${sorted_versions[@]}")
+    mapfile -t SORTED_VERSIONS < <(sort_versions_descending "${SORTED_VERSIONS[@]}")
   fi
-  for v in "${sorted_versions[@]}"; do
-    if [[ -z ${seen[${v}]+set} ]]; then
-      tracked+=("${v}")
-      seen["${v}"]=1
+  for V in "${SORTED_VERSIONS[@]}"; do
+    if [[ -z ${SEEN[${V}]+set} ]]; then
+      TRACKED+=("${V}")
+      SEEN["${V}"]=1
     fi
   done
 
-  if ((${#tracked[@]} == 0)); then
+  if ((${#TRACKED[@]} == 0)); then
     echo "No upstream versions >= ${MINIMUM_TRACKING_VERSION}." >&2
   else
-    echo "Tracking ${#tracked[@]} upstream versions (newest first): ${tracked[*]}" >&2
+    echo "Tracking ${#TRACKED[@]} upstream versions (newest first): ${TRACKED[*]}" >&2
   fi
 }
 
 versions_json() {
-  local v stable
+  local V STABLE
   {
-    for v in "${tracked[@]}"; do
-      stable=true
-      if is_prerelease "${v}"; then stable=false; fi
+    for V in "${TRACKED[@]}"; do
+      STABLE=true
+      if is_prerelease "${V}"; then STABLE=false; fi
       jq -cn \
-        --arg version "${v}" \
-        --arg upstreamVersion "${orig_of[${v}]}" \
-        --argjson stable "${stable}" \
+        --arg version "${V}" \
+        --arg upstreamVersion "${ORIG_OF[${V}]}" \
+        --argjson stable "${STABLE}" \
         '{version: $version, upstreamVersion: $upstreamVersion, stable: $stable}'
     done
   } | jq -sc '.'
 }
 
 load_versions_json() {
-  local JSON="${1}" row v upstream
-  local -a rows=() sorted_versions=()
-  local -A seen=()
+  local JSON="${1}" ROW V UPSTREAM
+  local -a ROWS=() SORTED_VERSIONS=()
+  local -A SEEN=()
   if ! jq -e 'type == "array" and all(.[]; type == "object" and (.version | type == "string") and (.upstreamVersion | type == "string") and (.stable | type == "boolean"))' <<<"${JSON}" >/dev/null; then
     echo "error: --versions-json must be the versions array emitted by update-branches list" >&2
     return 2
   fi
-  tracked=()
-  orig_of=()
-  mapfile -t rows < <(jq -r '.[] | [.version, .upstreamVersion] | @tsv' <<<"${JSON}")
-  for row in "${rows[@]}"; do
-    IFS=$'\t' read -r v upstream <<<"${row}"
-    if [[ ! ${v} =~ ${safe_version_re} || ! ${upstream} =~ ${safe_version_re} ]]; then
+  TRACKED=()
+  ORIG_OF=()
+  mapfile -t ROWS < <(jq -r '.[] | [.version, .upstreamVersion] | @tsv' <<<"${JSON}")
+  for ROW in "${ROWS[@]}"; do
+    IFS=$'\t' read -r V UPSTREAM <<<"${ROW}"
+    if [[ ! ${V} =~ ${SAFE_VERSION_RE} || ! ${UPSTREAM} =~ ${SAFE_VERSION_RE} ]]; then
       echo "error: discovery manifest contains an unsafe version" >&2
       return 2
     fi
-    if [[ -n ${seen[${v}]+set} ]]; then
-      echo "error: discovery manifest contains duplicate version ${v}" >&2
+    if [[ -n ${SEEN[${V}]+set} ]]; then
+      echo "error: discovery manifest contains duplicate version ${V}" >&2
       return 2
     fi
-    seen["${v}"]=1
-    sorted_versions+=("${v}")
-    orig_of["${v}"]="${upstream}"
+    SEEN["${V}"]=1
+    SORTED_VERSIONS+=("${V}")
+    ORIG_OF["${V}"]="${UPSTREAM}"
   done
-  mapfile -t tracked < <(sort_versions_descending "${sorted_versions[@]}")
+  mapfile -t TRACKED < <(sort_versions_descending "${SORTED_VERSIONS[@]}")
 }
 
 remove_worktree() {
@@ -652,135 +619,130 @@ remove_worktree() {
 }
 
 refresh_version() {
-  local v="${1}" upstream="${2}" branch="v${1}" wt update_phase update_exit
-  local expected_remote_sha=""
+  local VERSION="${1}" UPSTREAM="${2}" BRANCH="v${1}" WT UPDATE_PHASE UPDATE_EXIT
+  local EXPECTED_REMOTE_SHA=""
   local -a OWNED_PATHS=()
   LAST_FAILURE_REASON=""
-  if [[ ! ${v} =~ ${safe_version_re} || ! ${upstream} =~ ${safe_version_re} ]]; then
+  if [[ ! ${VERSION} =~ ${SAFE_VERSION_RE} || ! ${UPSTREAM} =~ ${SAFE_VERSION_RE} ]]; then
     LAST_FAILURE_REASON="unsafe version argument"
     return 2
   fi
-  wt=$(mktemp -d)
-  if git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
+  WT=$(mktemp -d)
+  if git rev-parse --verify --quiet "origin/${BRANCH}" >/dev/null; then
     echo
-    echo "=== Refreshing existing branch ${branch} from base ${BASE_SHA:0:8}"
-    if ! retry git fetch --quiet origin "${branch}:refs/remotes/origin/${branch}"; then
-      LAST_FAILURE_REASON="fetching ${branch} failed"
-      remove_worktree "${wt}"
+    echo "=== Refreshing existing branch ${BRANCH} from base ${BASE_SHA:0:8}"
+    if ! retry git fetch --quiet origin "${BRANCH}:refs/remotes/origin/${BRANCH}"; then
+      LAST_FAILURE_REASON="fetching ${BRANCH} failed"
+      remove_worktree "${WT}"
       return 1
     fi
-    expected_remote_sha=$(git rev-parse --verify "origin/${branch}^{commit}")
-    if ! git worktree add -B "${branch}" "${wt}" "origin/${branch}" >/dev/null; then
+    EXPECTED_REMOTE_SHA=$(git rev-parse --verify "origin/${BRANCH}^{commit}")
+    if ! git worktree add -B "${BRANCH}" "${WT}" "origin/${BRANCH}" >/dev/null; then
       LAST_FAILURE_REASON="git worktree add failed"
-      remove_worktree "${wt}"
+      remove_worktree "${WT}"
       return 1
     fi
-    # Never merge a live aggregate: every exact job uses the specification SHA
-    # captured by discovery, even if an earlier publisher has advanced main.
-    if ! (cd "${wt}" && merge_preserving_owned "${BASE_SHA}"); then
+    # Never merge a live aggregate: every exact job uses the specification SHA captured by discovery, even if an earlier publisher has advanced main.
+    if ! (cd "${WT}" && merge_preserving_owned "${BASE_SHA}"); then
       LAST_FAILURE_REASON="merge of discovery base ${BASE_SHA} failed"
-      remove_worktree "${wt}"
+      remove_worktree "${WT}"
       return 1
     fi
   else
     echo
-    echo "=== Creating new branch ${branch} from base ${BASE_SHA:0:8}"
-    if ! git worktree add -B "${branch}" "${wt}" "${BASE_SHA}" >/dev/null; then
+    echo "=== Creating new branch ${BRANCH} from base ${BASE_SHA:0:8}"
+    if ! git worktree add -B "${BRANCH}" "${WT}" "${BASE_SHA}" >/dev/null; then
       LAST_FAILURE_REASON="git worktree add failed"
-      remove_worktree "${wt}"
+      remove_worktree "${WT}"
       return 1
     fi
-    if ! (cd "${wt}" && prepare_new_branch_pin "${v}"); then
+    if ! (cd "${WT}" && prepare_new_branch_pin "${VERSION}"); then
       LAST_FAILURE_REASON="preparing the new branch pin failed"
-      remove_worktree "${wt}"
+      remove_worktree "${WT}"
       return 1
     fi
   fi
 
-  pushd "${wt}" >/dev/null
-  update_phase="nix flake update"
-  update_exit=0
-  if run_with_transient_retry "nix flake update for ${branch}" nix flake update; then
-    update_phase="update-version"
-    run_with_transient_retry "update-version for ${branch}" env FLAKE_ROOT="${wt}" ORCHESTRATED_OWNED_FILES="${BRANCH_OWNED_FILES}" nix run .#update-version -- "${v}" "${upstream}" || update_exit=$?
+  pushd "${WT}" >/dev/null
+  UPDATE_PHASE="nix flake update"
+  UPDATE_EXIT=0
+  if run_with_transient_retry "nix flake update for ${BRANCH}" nix flake update; then
+    UPDATE_PHASE="update-version"
+    run_with_transient_retry "update-version for ${BRANCH}" env FLAKE_ROOT="${WT}" ORCHESTRATED_OWNED_FILES="${BRANCH_OWNED_FILES}" nix run .#update-version -- "${VERSION}" "${UPSTREAM}" || UPDATE_EXIT=${?}
   else
-    update_exit=$?
+    UPDATE_EXIT=${?}
   fi
-  if ((update_exit != 0)); then
-    LAST_FAILURE_REASON="${update_phase} failed (exit ${update_exit})"
-    echo "::warning title=Branch ${branch} skipped::${update_phase} failed for ${v} (exit ${update_exit}); see the orchestrator log above."
-    echo "  WARN: ${update_phase} failed for ${branch} (exit ${update_exit}); skipping." >&2
+  if ((UPDATE_EXIT != 0)); then
+    LAST_FAILURE_REASON="${UPDATE_PHASE} failed (exit ${UPDATE_EXIT})"
+    echo "::warning title=Branch ${BRANCH} skipped::${UPDATE_PHASE} failed for ${VERSION} (exit ${UPDATE_EXIT}). See the orchestrator log above."
+    echo "  WARN: ${UPDATE_PHASE} failed for ${BRANCH} (exit ${UPDATE_EXIT}). Skipping." >&2
     popd >/dev/null
-    remove_worktree "${wt}"
+    remove_worktree "${WT}"
     return 1
   fi
-  # A machine commit that is not formatted leaves the branch failing its own formatting
-  # check until a human formats the tree.
+  # A machine commit that is not formatted leaves the branch failing its own formatting check until a human formats the tree.
   if ! nix fmt; then
-    LAST_FAILURE_REASON="formatting ${branch} failed"
-    echo "::warning title=Branch ${branch} not published::nix fmt failed; nothing was committed on ${branch}."
-    echo "  ERROR: nix fmt failed for ${branch}; ${branch} not published." >&2
+    LAST_FAILURE_REASON="formatting ${BRANCH} failed"
+    echo "::warning title=Branch ${BRANCH} not published::nix fmt failed, so nothing was committed on ${BRANCH}."
+    echo "  ERROR: nix fmt failed for ${BRANCH}, so ${BRANCH} was not published." >&2
     popd >/dev/null
-    remove_worktree "${wt}"
+    remove_worktree "${WT}"
     return 1
   fi
-  # The pull-request gate, run here against the worktree this branch is about to push: one
-  # definition of what a runner verifies, so a producer publishes exactly what a pull request would
-  # have gated. The gate builds the packages this flake publishes and checks the flake, which
-  # builds the checks that realize what an overlay produces.
+  # The pull-request gate, run here against the worktree this branch is about to push: one definition of what a runner verifies, so a producer publishes exactly what a pull request would have gated. The gate builds the packages this flake publishes and checks the flake, which builds the checks that realize what an overlay produces.
   if [[ ${BUILD_VERIFICATION_SKIP} == "true" ]]; then
     echo "  publication verification skipped"
-  elif ! run_with_transient_retry "gate for ${branch}" "${BUILD_AND_CHECK_SCRIPT:?required env var}"; then
-    LAST_FAILURE_REASON="a build or check failed at ${v}"
-    echo "::warning title=Branch ${branch} not published::a build or check failed at ${v}; no commit was pushed to ${branch}."
-    echo "  ERROR: a build or check failed at ${v}; ${branch} not published." >&2
+  elif ! run_with_transient_retry "gate for ${BRANCH}" "${BUILD_AND_CHECK_SCRIPT:?required env var}"; then
+    LAST_FAILURE_REASON="a build or check failed at ${VERSION}"
+    echo "::warning title=Branch ${BRANCH} not published::a build or check failed at ${VERSION}, so no commit was pushed to ${BRANCH}."
+    echo "  ERROR: a build or check failed at ${VERSION}, so ${BRANCH} was not published." >&2
     popd >/dev/null
-    remove_worktree "${wt}"
+    remove_worktree "${WT}"
     return 1
   fi
   mapfile -t OWNED_PATHS < <(matching_owned_paths || true)
   if ((${#OWNED_PATHS[@]} > 0)) && { ! git diff --quiet HEAD -- "${OWNED_PATHS[@]}" || [[ -n "$(git ls-files --others --exclude-standard -- "${OWNED_PATHS[@]}")" ]]; }; then
-    if ! git add -A -- "${OWNED_PATHS[@]}" || ! git commit -q -m "auto: ${v} pin"; then
-      LAST_FAILURE_REASON="committing ${branch} failed"
+    if ! git add -A -- "${OWNED_PATHS[@]}" || ! git commit -q -m "auto: ${VERSION} pin"; then
+      LAST_FAILURE_REASON="committing ${BRANCH} failed"
       popd >/dev/null
-      remove_worktree "${wt}"
+      remove_worktree "${WT}"
       return 1
     fi
-    if ! push_ref HEAD "${branch}" "${expected_remote_sha}" normal; then
-      LAST_FAILURE_REASON="pushing ${branch} failed"
+    if ! push_ref HEAD "${BRANCH}" "${EXPECTED_REMOTE_SHA}" normal; then
+      LAST_FAILURE_REASON="pushing ${BRANCH} failed"
       popd >/dev/null
-      remove_worktree "${wt}"
+      remove_worktree "${WT}"
       return 1
     fi
   else
-    echo "  no change on ${branch}"
+    echo "  no change on ${BRANCH}"
     # Merge may have advanced HEAD without touching the branch-owned files.
-    if [[ "$(git rev-parse HEAD)" != "${expected_remote_sha}" ]]; then
-      if ! push_ref HEAD "${branch}" "${expected_remote_sha}" normal; then
-        LAST_FAILURE_REASON="pushing ${branch} failed"
+    if [[ "$(git rev-parse HEAD)" != "${EXPECTED_REMOTE_SHA}" ]]; then
+      if ! push_ref HEAD "${BRANCH}" "${EXPECTED_REMOTE_SHA}" normal; then
+        LAST_FAILURE_REASON="pushing ${BRANCH} failed"
         popd >/dev/null
-        remove_worktree "${wt}"
+        remove_worktree "${WT}"
         return 1
       fi
     fi
   fi
   popd >/dev/null
-  remove_worktree "${wt}"
+  remove_worktree "${WT}"
 }
 
 aggregate_keys_for_version() {
-  local v="${1}" M m p
+  local VERSION="${1}" MAJOR MINOR PATCH
   printf '%s\n' main
-  IFS='.' read -r M m p <<<"${v}"
-  if [[ -n ${m} ]]; then printf 'v%s\n' "${M}"; fi
-  if [[ -n ${p} ]]; then printf 'v%s.%s\n' "${M}" "${m}"; fi
+  IFS='.' read -r MAJOR MINOR PATCH <<<"${VERSION}"
+  if [[ -n ${MINOR} ]]; then printf 'v%s\n' "${MAJOR}"; fi
+  if [[ -n ${PATCH} ]]; then printf 'v%s.%s\n' "${MAJOR}" "${MINOR}"; fi
 }
 
 aggregate_tip_retained_elsewhere() {
-  local TIP_SHA="${1}" v
-  for v in "${tracked[@]}"; do
-    if git rev-parse --verify --quiet "origin/v${v}^{commit}" >/dev/null &&
-      git merge-base --is-ancestor "${TIP_SHA}" "origin/v${v}^{commit}"; then
+  local TIP_SHA="${1}" V
+  for V in "${TRACKED[@]}"; do
+    if git rev-parse --verify --quiet "origin/v${V}^{commit}" >/dev/null &&
+      git merge-base --is-ancestor "${TIP_SHA}" "origin/v${V}^{commit}"; then
       return 0
     fi
   done
@@ -788,114 +750,108 @@ aggregate_tip_retained_elsewhere() {
 }
 
 publish_aggregates() {
-  # Aggregate refs move to a commit an exact branch already published, and that
-  # refresh built what the branch publishes before pushing it; nothing is built here.
-  local v branch target_sha stable agg target_v target_branch cur_sha current_v current_branch current_branch_sha current_is_safe stable_v
-  local -a keys=() aggregates=()
-  local -A highest_any=() highest_stable=() aggregate_set=()
-  blocked_aggregates=()
-  blocked_aggregate_reasons=()
+  # Aggregate refs move to a commit an exact branch already published, and that refresh built what the branch publishes before pushing it. Nothing is built here.
+  local V BRANCH TARGET_SHA STABLE AGG TARGET_V TARGET_BRANCH CUR_SHA CURRENT_V CURRENT_BRANCH CURRENT_BRANCH_SHA CURRENT_IS_SAFE STABLE_V
+  local -a KEYS=() AGGREGATES=()
+  local -A HIGHEST_ANY=() HIGHEST_STABLE=() AGGREGATE_SET=()
+  BLOCKED_AGGREGATES=()
+  BLOCKED_AGGREGATE_REASONS=()
 
   git fetch --prune --quiet origin || return
-  for v in "${tracked[@]}"; do
-    branch="v${v}"
-    if ! git rev-parse --verify --quiet "origin/${branch}" >/dev/null; then
+  for V in "${TRACKED[@]}"; do
+    BRANCH="v${V}"
+    if ! git rev-parse --verify --quiet "origin/${BRANCH}" >/dev/null; then
       continue
     fi
-    target_sha=$(git rev-parse --verify "origin/${branch}^{commit}")
-    stable=true
-    if is_prerelease "${v}"; then stable=false; fi
-    mapfile -t keys < <(aggregate_keys_for_version "${v}")
-    if ! git merge-base --is-ancestor "${BASE_SHA}" "${target_sha}"; then
-      for agg in "${keys[@]}"; do
-        aggregate_set["${agg}"]=1
+    TARGET_SHA=$(git rev-parse --verify "origin/${BRANCH}^{commit}")
+    STABLE=true
+    if is_prerelease "${V}"; then STABLE=false; fi
+    mapfile -t KEYS < <(aggregate_keys_for_version "${V}")
+    if ! git merge-base --is-ancestor "${BASE_SHA}" "${TARGET_SHA}"; then
+      for AGG in "${KEYS[@]}"; do
+        AGGREGATE_SET["${AGG}"]=1
       done
       continue
     fi
-    for agg in "${keys[@]}"; do
-      aggregate_set["${agg}"]=1
-      if [[ -z ${highest_any[${agg}]+set} ]]; then highest_any["${agg}"]="${v}"; fi
-      if [[ ${stable} == true && -z ${highest_stable[${agg}]+set} ]]; then highest_stable["${agg}"]="${v}"; fi
+    for AGG in "${KEYS[@]}"; do
+      AGGREGATE_SET["${AGG}"]=1
+      if [[ -z ${HIGHEST_ANY[${AGG}]+set} ]]; then HIGHEST_ANY["${AGG}"]="${V}"; fi
+      if [[ ${STABLE} == true && -z ${HIGHEST_STABLE[${AGG}]+set} ]]; then HIGHEST_STABLE["${AGG}"]="${V}"; fi
     done
   done
 
   echo
   echo "=== Updating aggregate pointers from base ${BASE_SHA:0:8}"
-  if ((${#aggregate_set[@]} > 0)); then
-    mapfile -t aggregates < <(printf '%s\n' "${!aggregate_set[@]}" | sort)
+  if ((${#AGGREGATE_SET[@]} > 0)); then
+    mapfile -t AGGREGATES < <(printf '%s\n' "${!AGGREGATE_SET[@]}" | sort)
   fi
-  for agg in "${aggregates[@]}"; do
-    if [[ -z ${highest_any[${agg}]+set} ]]; then
-      blocked_aggregates+=("${agg}")
-      blocked_aggregate_reasons["${agg}"]="no candidate for ${agg} contains discovery base ${BASE_SHA}"
-      echo "::warning title=Aggregate ${agg} skipped::No candidate for ${agg} contains discovery base ${BASE_SHA}; retaining ${agg}."
+  for AGG in "${AGGREGATES[@]}"; do
+    if [[ -z ${HIGHEST_ANY[${AGG}]+set} ]]; then
+      BLOCKED_AGGREGATES+=("${AGG}")
+      BLOCKED_AGGREGATE_REASONS["${AGG}"]="no candidate for ${AGG} contains discovery base ${BASE_SHA}"
+      echo "::warning title=Aggregate ${AGG} skipped::No candidate for ${AGG} contains discovery base ${BASE_SHA}. Retaining ${AGG}."
       continue
     fi
-    target_v="${highest_any[${agg}]}"
-    target_branch="v${target_v}"
-    target_sha=$(git rev-parse --verify "origin/${target_branch}^{commit}")
-    cur_sha=$(git rev-parse --verify "origin/${agg}^{commit}" 2>/dev/null || true)
+    TARGET_V="${HIGHEST_ANY[${AGG}]}"
+    TARGET_BRANCH="v${TARGET_V}"
+    TARGET_SHA=$(git rev-parse --verify "origin/${TARGET_BRANCH}^{commit}")
+    CUR_SHA=$(git rev-parse --verify "origin/${AGG}^{commit}" 2>/dev/null || true)
 
-    # Prereleases may advance an absent/prerelease aggregate. A currently stable
-    # aggregate instead advances to the highest successful stable candidate,
-    # which need not be the stable counterpart of the highest prerelease.
-    if is_prerelease "${target_v}" && [[ -n ${cur_sha} ]]; then
-      current_v=$(git show "${cur_sha}:pin.nix" 2>/dev/null | sed -nE 's/^[[:space:]]*version = "([^"]+)";$/\1/p' | head -1 || true)
-      if ! is_prerelease "${current_v}"; then
-        stable_v="${highest_stable[${agg}]:-}"
-        current_branch="v${current_v}"
-        current_branch_sha=""
-        current_is_safe=false
-        if [[ -n ${current_v} ]] && git rev-parse --verify --quiet "origin/${current_branch}" >/dev/null; then
-          current_branch_sha=$(git rev-parse --verify "origin/${current_branch}^{commit}")
-          if git merge-base --is-ancestor "${BASE_SHA}" "${current_branch_sha}"; then current_is_safe=true; fi
+    # Prereleases may advance an absent/prerelease aggregate. A currently stable aggregate instead advances to the highest successful stable candidate, which need not be the stable counterpart of the highest prerelease.
+    if is_prerelease "${TARGET_V}" && [[ -n ${CUR_SHA} ]]; then
+      CURRENT_V=$(git show "${CUR_SHA}:pin.nix" 2>/dev/null | sed -nE 's/^[[:space:]]*version = "([^"]+)";$/\1/p' | head -1 || true)
+      if ! is_prerelease "${CURRENT_V}"; then
+        STABLE_V="${HIGHEST_STABLE[${AGG}]:-}"
+        CURRENT_BRANCH="v${CURRENT_V}"
+        CURRENT_BRANCH_SHA=""
+        CURRENT_IS_SAFE=false
+        if [[ -n ${CURRENT_V} ]] && git rev-parse --verify --quiet "origin/${CURRENT_BRANCH}" >/dev/null; then
+          CURRENT_BRANCH_SHA=$(git rev-parse --verify "origin/${CURRENT_BRANCH}^{commit}")
+          if git merge-base --is-ancestor "${BASE_SHA}" "${CURRENT_BRANCH_SHA}"; then CURRENT_IS_SAFE=true; fi
         fi
-        if [[ -n ${stable_v} ]] && { [[ ${current_is_safe} == false ]] || version_lt "${current_v}" "${stable_v}"; }; then
-          target_v="${stable_v}"
-          target_branch="v${target_v}"
-          target_sha=$(git rev-parse --verify "origin/${target_branch}^{commit}")
-        elif [[ ${current_is_safe} == true ]]; then
-          target_branch="${current_branch}"
-          target_sha="${current_branch_sha}"
-        elif [[ -z ${stable_v} && -n ${current_branch_sha} ]]; then
-          target_branch="${current_branch}"
-          target_sha="${current_branch_sha}"
+        if [[ -n ${STABLE_V} ]] && { [[ ${CURRENT_IS_SAFE} == false ]] || version_lt "${CURRENT_V}" "${STABLE_V}"; }; then
+          TARGET_V="${STABLE_V}"
+          TARGET_BRANCH="v${TARGET_V}"
+          TARGET_SHA=$(git rev-parse --verify "origin/${TARGET_BRANCH}^{commit}")
+        elif [[ ${CURRENT_IS_SAFE} == true ]]; then
+          TARGET_BRANCH="${CURRENT_BRANCH}"
+          TARGET_SHA="${CURRENT_BRANCH_SHA}"
+        elif [[ -z ${STABLE_V} && -n ${CURRENT_BRANCH_SHA} ]]; then
+          TARGET_BRANCH="${CURRENT_BRANCH}"
+          TARGET_SHA="${CURRENT_BRANCH_SHA}"
         else
-          echo "  ${agg} remains at its current stable target"
+          echo "  ${AGG} remains at its current stable target"
           continue
         fi
       fi
     fi
-    if [[ ${cur_sha} == "${target_sha}" ]]; then
-      echo "  ${agg} already at ${target_branch}"
+    if [[ ${CUR_SHA} == "${TARGET_SHA}" ]]; then
+      echo "  ${AGG} already at ${TARGET_BRANCH}"
       continue
     fi
-    # A commit merged onto the aggregate after discovery captured the base leaves it ahead of the
-    # target rather than behind it; the next run discovers that tip and carries it into the exact branches.
-    if [[ -n ${cur_sha} ]] && git merge-base --is-ancestor "${target_sha}" "${cur_sha}"; then
-      echo "  ${agg} is ahead of ${target_branch} (tip ${cur_sha:0:8} carries it)"
+    # A commit merged onto the aggregate after discovery captured the base leaves it ahead of the target rather than behind it. The next run discovers that tip and carries it into the exact branches.
+    if [[ -n ${CUR_SHA} ]] && git merge-base --is-ancestor "${TARGET_SHA}" "${CUR_SHA}"; then
+      echo "  ${AGG} is ahead of ${TARGET_BRANCH} (tip ${CUR_SHA:0:8} carries it)"
       continue
     fi
-    if ! git merge-base --is-ancestor "${BASE_SHA}" "${target_sha}"; then
-      blocked_aggregates+=("${agg}")
-      blocked_aggregate_reasons["${agg}"]="${target_branch} does not contain discovery base ${BASE_SHA}"
-      echo "::warning title=Aggregate ${agg} skipped::${target_branch} does not contain discovery base ${BASE_SHA}; retaining ${agg}."
+    if ! git merge-base --is-ancestor "${BASE_SHA}" "${TARGET_SHA}"; then
+      BLOCKED_AGGREGATES+=("${AGG}")
+      BLOCKED_AGGREGATE_REASONS["${AGG}"]="${TARGET_BRANCH} does not contain discovery base ${BASE_SHA}"
+      echo "::warning title=Aggregate ${AGG} skipped::${TARGET_BRANCH} does not contain discovery base ${BASE_SHA}. Retaining ${AGG}."
       continue
     fi
-    # Advancing past a tip reachable from no tracked exact branch would discard
-    # commits that exist only on the aggregate (e.g. a specification merged to
-    # main after discovery captured its base).
-    if [[ -n ${cur_sha} ]] &&
-      ! git merge-base --is-ancestor "${cur_sha}" "${target_sha}" &&
-      ! aggregate_tip_retained_elsewhere "${cur_sha}"; then
-      blocked_aggregates+=("${agg}")
-      blocked_aggregate_reasons["${agg}"]="current tip ${cur_sha:0:8} is reachable from neither ${target_branch} nor any tracked exact branch"
-      echo "::warning title=Aggregate ${agg} skipped::Advancing ${agg} to ${target_branch} would orphan its current tip ${cur_sha:0:8}; retaining ${agg}."
+    # Advancing past a tip reachable from no tracked exact branch would discard commits that exist only on the aggregate (e.g. a specification merged to main after discovery captured its base).
+    if [[ -n ${CUR_SHA} ]] &&
+      ! git merge-base --is-ancestor "${CUR_SHA}" "${TARGET_SHA}" &&
+      ! aggregate_tip_retained_elsewhere "${CUR_SHA}"; then
+      BLOCKED_AGGREGATES+=("${AGG}")
+      BLOCKED_AGGREGATE_REASONS["${AGG}"]="current tip ${CUR_SHA:0:8} is reachable from neither ${TARGET_BRANCH} nor any tracked exact branch"
+      echo "::warning title=Aggregate ${AGG} skipped::Advancing ${AGG} to ${TARGET_BRANCH} would orphan its current tip ${CUR_SHA:0:8}. Retaining ${AGG}."
       continue
     fi
-    echo "  ${agg} -> ${target_branch} (${target_sha:0:8})"
-    if ! push_ref "${target_sha}" "${agg}" "${cur_sha}" lease; then
-      echo "error: aggregate ${agg} could not be published; rerun publication" >&2
+    echo "  ${AGG} -> ${TARGET_BRANCH} (${TARGET_SHA:0:8})"
+    if ! push_ref "${TARGET_SHA}" "${AGG}" "${CUR_SHA}" lease; then
+      echo "error: aggregate ${AGG} could not be published" >&2
       return 1
     fi
   done
@@ -903,30 +859,30 @@ publish_aggregates() {
 
 write_failure_summary() {
   local -n FAILED_REF="${1}" REASONS_REF="${2}"
-  local v agg
+  local V AGG
   if ((${#FAILED_REF[@]} > 0)); then
     echo "=== ${#FAILED_REF[@]} branch(es) failed: ${FAILED_REF[*]}"
     if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
       {
         echo "## :warning: ${#FAILED_REF[@]} branch(es) failed to update"
         echo
-        echo "These upstream versions failed during input refresh or package update. Their exact branches were left unchanged; aggregate pointers were checked separately before publication."
+        echo "These upstream versions failed during input refresh or package update. Their exact branches were left unchanged. Aggregate pointers were checked separately before publication."
         echo
-        for v in "${FAILED_REF[@]}"; do echo "- \`v${v}\`: ${REASONS_REF[$v]}"; done
+        for V in "${FAILED_REF[@]}"; do echo "- \`v${V}\`: ${REASONS_REF[${V}]}"; done
         echo
         echo "See the orchestrator log for the underlying error per version."
       } >>"${GITHUB_STEP_SUMMARY}"
     fi
   fi
-  if ((${#blocked_aggregates[@]} > 0)); then
-    echo "=== ${#blocked_aggregates[@]} aggregate pointer(s) retained: ${blocked_aggregates[*]}"
+  if ((${#BLOCKED_AGGREGATES[@]} > 0)); then
+    echo "=== ${#BLOCKED_AGGREGATES[@]} aggregate pointer(s) retained: ${BLOCKED_AGGREGATES[*]}"
     if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
       {
-        echo "## :warning: ${#blocked_aggregates[@]} aggregate pointer(s) retained"
+        echo "## :warning: ${#BLOCKED_AGGREGATES[@]} aggregate pointer(s) retained"
         echo
         echo "Their selected exact branches were not safe publication targets."
         echo
-        for agg in "${blocked_aggregates[@]}"; do echo "- \`${agg}\`: ${blocked_aggregate_reasons[${agg}]:-unspecified reason}"; done
+        for AGG in "${BLOCKED_AGGREGATES[@]}"; do echo "- \`${AGG}\`: ${BLOCKED_AGGREGATE_REASONS[${AGG}]:-unspecified reason}"; done
       } >>"${GITHUB_STEP_SUMMARY}"
     fi
   fi
@@ -941,8 +897,7 @@ command_list() {
     JSON=$(jq -c '[.[] | select(.stable)]' <<<"${JSON}")
   fi
   JSON=$(jq -cn --arg baseSha "${BASE_SHA}" --argjson versions "${JSON}" '{baseSha: $baseSha, versions: $versions}')
-  # Under Actions the fan-out is the workflow's only input, so it is written in the
-  # form the next jobs read rather than having the workflow parse this back apart.
+  # Under Actions the fan-out is the workflow's only input, so it is written in the form the next jobs read rather than having the workflow parse this back apart.
   if [[ -n ${GITHUB_OUTPUT:-} ]]; then
     jq -r '"base_sha=\(.baseSha)", "versions=\(.versions | tojson)"' <<<"${JSON}" >>"${GITHUB_OUTPUT}"
   fi
@@ -990,9 +945,9 @@ command_refresh() {
   fi
   use_base_sha "${BASE}"
   if ! refresh_version "${VERSION}" "${UPSTREAM}"; then
-    local -a failed=("${VERSION}")
-    local -A reasons=(["${VERSION}"]="${LAST_FAILURE_REASON}")
-    write_failure_summary failed reasons
+    local -a FAILED=("${VERSION}")
+    local -A REASONS=(["${VERSION}"]="${LAST_FAILURE_REASON}")
+    write_failure_summary FAILED REASONS
     return 1
   fi
   echo "Done."
@@ -1000,8 +955,8 @@ command_refresh() {
 
 command_publish() {
   local BASE="" JSON=""
-  local -a failed=()
-  local -A reasons=()
+  local -a FAILED=()
+  local -A REASONS=()
   shift
   while (($# > 0)); do
     case "${1}" in
@@ -1034,33 +989,33 @@ command_publish() {
   use_base_sha "${BASE}"
   load_versions_json "${JSON}"
   publish_aggregates
-  write_failure_summary failed reasons
-  if ((${#blocked_aggregates[@]} > 0)); then return 1; fi
+  write_failure_summary FAILED REASONS
+  if ((${#BLOCKED_AGGREGATES[@]} > 0)); then return 1; fi
   echo "Done."
 }
 
 command_all() {
-  local JSON v publish_exit=0
-  local -a failed=()
-  local -A failure_reason=()
+  local JSON V PUBLISH_EXIT=0
+  local -a FAILED=()
+  local -A FAILURE_REASON=()
   capture_base_sha
   discover_versions
-  if ((${#tracked[@]} == 0)); then
+  if ((${#TRACKED[@]} == 0)); then
     echo "Done."
     return
   fi
   JSON=$(versions_json)
-  for v in "${tracked[@]}"; do
-    if ! refresh_version "${v}" "${orig_of[${v}]}"; then
-      failed+=("${v}")
-      failure_reason["${v}"]="${LAST_FAILURE_REASON}"
+  for V in "${TRACKED[@]}"; do
+    if ! refresh_version "${V}" "${ORIG_OF[${V}]}"; then
+      FAILED+=("${V}")
+      FAILURE_REASON["${V}"]="${LAST_FAILURE_REASON}"
     fi
   done
   load_versions_json "${JSON}"
-  publish_aggregates || publish_exit=$?
+  publish_aggregates || PUBLISH_EXIT=${?}
   echo
-  write_failure_summary failed failure_reason
-  if ((${#failed[@]} > 0 || ${#blocked_aggregates[@]} > 0 || publish_exit != 0)); then return 1; fi
+  write_failure_summary FAILED FAILURE_REASON
+  if ((${#FAILED[@]} > 0 || ${#BLOCKED_AGGREGATES[@]} > 0 || PUBLISH_EXIT != 0)); then return 1; fi
   echo "Done."
 }
 
@@ -1073,8 +1028,8 @@ list)
   }
   command_list
   ;;
-refresh) command_refresh "$@" ;;
-publish) command_publish "$@" ;;
+refresh) command_refresh "${@}" ;;
+publish) command_publish "${@}" ;;
 *)
   usage
   exit 2

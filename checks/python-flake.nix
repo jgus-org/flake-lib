@@ -1,3 +1,4 @@
+with builtins;
 {
   self,
   mkPythonApplication,
@@ -29,14 +30,6 @@ let
       };
     };
 
-  bumpPayload =
-    { python, ... }:
-    {
-      six = python.six.overridePythonAttrs (_: {
-        version = "999.0";
-      });
-    };
-
   producer =
     extra:
     mkPythonFlake (
@@ -58,40 +51,13 @@ let
     );
 
   overlayOutputs = producer {
-    payload.overlays = bumpPayload;
-  };
-  overlaidTree = import nixpkgs {
-    inherit system;
-    overlays = [ overlayOutputs.overlays.default ];
-  };
-
-  # The marker carries the package-set configuration of the tree that built it, so reading the
-  # attribute says which tree did. It is stated as an overlay member because a member is what the
-  # gate materializes; a published artifact is never a check.
-  markerPayload =
-    { pkgs, python, ... }:
-    {
-      marker = python.six.overridePythonAttrs (old: {
-        passthru = (old.passthru or { }) // {
-          cudaSupport = pkgs.config.cudaSupport;
-        };
-      });
-    };
-
-  gatedOutputs = producer {
-    gate.config.cudaSupport = true;
-    payload = {
-      overlays = markerPayload;
-      packages = packagesPayload;
-    };
-    upstream = pypi;
-  };
-  ungatedOutputs = producer {
-    payload = {
-      overlays = markerPayload;
-      packages = packagesPayload;
-    };
-    upstream = pypi;
+    payload.overlays =
+      { python, ... }:
+      {
+        six = python.six.overridePythonAttrs (_: {
+          version = "999.0";
+        });
+      };
   };
 in
 {
@@ -157,8 +123,7 @@ in
         repo = package.src.repo;
       };
   };
-  # A source on a self-hosted instance names that host, and a source naming none is fetched from gitlab.com --
-  # every producer already in the fleet names none, so that default is what they all build on.
+  # A source on a self-hosted instance names that host, and a source naming none is fetched from gitlab.com. Every producer already in the fleet names none, so that default is what they all build on.
   testAGitlabSourceIsFetchedFromTheDomainItNames = {
     expected = {
       namedDomain = "https://invent.kde.org/network/smb4k/";
@@ -205,7 +170,7 @@ in
       success = false;
       value = false;
     };
-    expr = builtins.tryEval (
+    expr = tryEval (
       (producer {
         payload.packages =
           { pkgs, sourcePath, ... }:
@@ -221,7 +186,7 @@ in
       success = false;
       value = false;
     };
-    expr = builtins.tryEval (
+    expr = tryEval (
       (producer {
         payload.packages = { buildPackage, ... }: {
           six = buildPackage {
@@ -277,8 +242,8 @@ in
       packages = [ ];
     };
     expr = {
-      checks = builtins.attrNames overlayOutputs.checks.${system};
-      packages = builtins.attrNames overlayOutputs.packages.${system};
+      checks = attrNames overlayOutputs.checks.${system};
+      packages = attrNames overlayOutputs.packages.${system};
     };
   };
   testBranchesFalseLeavesTheBranchUpdaterOut = {
@@ -287,7 +252,7 @@ in
       "six"
       "update-version"
     ];
-    expr = builtins.attrNames (packagesProducer { branches = false; }).packages.${system};
+    expr = attrNames (packagesProducer { branches = false; }).packages.${system};
   };
   testCheckInputsNeverInheritTheSuite = {
     expected = false;
@@ -373,15 +338,12 @@ in
             payload.checks =
               { pkgs, ... }:
               {
-                gate = pkgs.writeText "marker" (builtins.toString pkgs.config.cudaSupport);
+                gate = pkgs.writeText "marker" (toString pkgs.config.cudaSupport);
               };
           }).checks.${system}.gate;
       in
-      check.drvPath == (gatedTree.writeText "marker" (builtins.toString gatedTree.config.cudaSupport))
-      .drvPath
-      &&
-        check.drvPath != (plainTree.writeText "marker" (builtins.toString plainTree.config.cudaSupport))
-        .drvPath;
+      check.drvPath == (gatedTree.writeText "marker" (toString gatedTree.config.cudaSupport)).drvPath
+      && check.drvPath != (plainTree.writeText "marker" (toString plainTree.config.cudaSupport)).drvPath;
   };
   testTheChecksHalfIsCheckedBesideThePublishedFamily = {
     expected = {
@@ -411,8 +373,8 @@ in
         };
       in
       {
-        checks = builtins.attrNames outputs.checks.${system};
-        packages = builtins.attrNames outputs.packages.${system};
+        checks = attrNames outputs.checks.${system};
+        packages = attrNames outputs.packages.${system};
       };
   };
   testTheChecksHalfIsCheckedWithoutBeingPublished = {
@@ -434,8 +396,8 @@ in
         };
       in
       {
-        checks = builtins.attrNames outputs.checks.${system};
-        packages = builtins.attrNames outputs.packages.${system};
+        checks = attrNames outputs.checks.${system};
+        packages = attrNames outputs.packages.${system};
       };
   };
   testTheFleetTestDefaultKeepsADeclaredImportCheck = {
@@ -460,18 +422,50 @@ in
       gateChangesTheCheck = true;
       gateLeavesThePublishedPackage = true;
     };
-    expr = {
-      checksAreNamedByTheOverlayHalf = builtins.attrNames gatedOutputs.checks.${system};
-      gateChangesTheCheck =
-        gatedOutputs.checks.${system}.marker.passthru.cudaSupport
-        != ungatedOutputs.checks.${system}.marker.passthru.cudaSupport;
-      gateLeavesThePublishedPackage =
-        gatedOutputs.packages.${system}.six.drvPath == ungatedOutputs.packages.${system}.six.drvPath;
-    };
+    expr =
+      let
+        # The marker carries the package-set configuration of the tree that built it, so reading the attribute says which tree did. It is stated as an overlay member because a member is what the gate materializes. A published artifact is never a check.
+        markerPayload =
+          { pkgs, python, ... }:
+          {
+            marker = python.six.overridePythonAttrs (old: {
+              passthru = (old.passthru or { }) // {
+                cudaSupport = pkgs.config.cudaSupport;
+              };
+            });
+          };
+        gatedOutputs = producer {
+          gate.config.cudaSupport = true;
+          payload = {
+            overlays = markerPayload;
+            packages = packagesPayload;
+          };
+          upstream = pypi;
+        };
+        ungatedOutputs = producer {
+          payload = {
+            overlays = markerPayload;
+            packages = packagesPayload;
+          };
+          upstream = pypi;
+        };
+      in
+      {
+        checksAreNamedByTheOverlayHalf = attrNames gatedOutputs.checks.${system};
+        gateChangesTheCheck =
+          gatedOutputs.checks.${system}.marker.passthru.cudaSupport
+          != ungatedOutputs.checks.${system}.marker.passthru.cudaSupport;
+        gateLeavesThePublishedPackage =
+          gatedOutputs.packages.${system}.six.drvPath == ungatedOutputs.packages.${system}.six.drvPath;
+      };
   };
   testTheOverlayHalfReachesTheConsumersPythonSet = {
     expected = "999.0";
-    expr = overlaidTree.python3Packages.six.version;
+    expr =
+      (import nixpkgs {
+        inherit system;
+        overlays = [ overlayOutputs.overlays.default ];
+      }).python3Packages.six.version;
   };
   testThePackagesHalfIsPublishedAndNotChecked = {
     expected = {
@@ -488,8 +482,8 @@ in
         outputs = packagesProducer { };
       in
       {
-        checks = builtins.attrNames outputs.checks.${system};
-        packages = builtins.attrNames outputs.packages.${system};
+        checks = attrNames outputs.checks.${system};
+        packages = attrNames outputs.packages.${system};
       };
   };
   testTheProducerPublishesTheFormatter = {
@@ -498,7 +492,7 @@ in
   };
   testThePublishedPackageBuildsThePinnedSource = {
     expected = "mirror://pypi/s/six/six-1.17.0.tar.gz";
-    expr = builtins.head (packagesProducer { }).packages.${system}.six.src.urls;
+    expr = head (packagesProducer { }).packages.${system}.six.src.urls;
   };
   testThePythonApplicationCarriesItsDependencyLayerAsBaseLayer = {
     expected = true;
@@ -534,6 +528,6 @@ in
       "default"
       "six"
     ];
-    expr = builtins.attrNames (producer { payload.packages = packagesPayload; }).packages.${system};
+    expr = attrNames (producer { payload.packages = packagesPayload; }).packages.${system};
   };
 }

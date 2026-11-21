@@ -2,13 +2,9 @@
 
 set -euo pipefail
 
-# The gate is the one command every path runs, so what this suite owes is that it runs both steps
-# whatever the first one reported: a tree with a package that does not build and a check that does
-# not pass is a tree with two problems, and a gate that stops at the first costs a runner a second
-# round trip to learn the second one.
+# The gate is the one command every path runs, so this suite checks that both steps run whatever the first one reported. A tree with a package that does not build and a check that does not pass has two problems. A gate that stops at the first costs a runner a second round trip to learn the second one.
 
-# This suite runs the script through bash for determinism; flake.nix's package wrapper execs it
-# directly, so a missing executable bit breaks every producer's run and nothing here would notice.
+# This suite runs the script through bash for determinism, so nothing else here would notice a missing executable bit. flake.nix's package wrapper execs the script directly, so a missing bit breaks every producer's run.
 [[ -x ${BUILD_AND_CHECK:?} ]] || {
   printf 'gate script is not executable, so the package wrapper cannot exec it: %s\n' "${BUILD_AND_CHECK}" >&2
   exit 1
@@ -18,20 +14,18 @@ CASES=$(mktemp -d)
 STUBS=$(mktemp -d)
 trap 'rm -rf "${CASES}" "${STUBS}"' EXIT
 mkdir -p "${STUBS}/bin"
-# The stubs are scripts the gate invokes, so their shebangs have to resolve where the test runs:
-# the bash already on PATH is the one that does. The build step is a script text handed in through
-# the environment, the same text the published tool wraps.
+# The stubs are scripts the gate invokes, so their shebangs have to resolve where the test runs. The bash already on PATH is the one that does. The build step is a script text handed in through the environment, the same text the published tool wraps.
 {
   printf '#!%s\n' "$(command -v bash)"
   cat <<'STUB'
-printf '%s\n' "$*" >>"${STEP_LOG:?}"
+printf '%s\n' "${*}" >>"${STEP_LOG:?}"
 exit "${STUB_BUILD_STATUS:-0}"
 STUB
 } >"${STUBS}/bin/build-step"
 {
   printf '#!%s\n' "$(command -v bash)"
   cat <<'STUB'
-printf '%s\n' "$*" >>"${STEP_LOG:?}"
+printf '%s\n' "${*}" >>"${STEP_LOG:?}"
 exit "${STUB_CHECK_STATUS:-0}"
 STUB
 } >"${STUBS}/bin/nix"
@@ -55,16 +49,14 @@ run_gate() {
 
 steps() { cat "${CASE}/steps"; }
 
-# A tree with nothing wrong in it runs both steps, in order, and each is asked about the working
-# directory: the gate verifies the tree it is run in, which is where both paths put it.
+# A tree with nothing wrong in it runs both steps, in order, and the gate asks each about the working directory. The gate verifies the tree it is run in, which is where both paths put it.
 run_gate
 [[ "$(steps)" == "$(
   printf '%s\n' '' 'flake check --no-write-lock-file'
 )" ]]
 grep -Fq 'checking the flake' "${OUT}"
 
-# A package that does not build does not hide a check that also fails: the run names the failure it
-# saw, runs the rest anyway, and does not pass.
+# A package that does not build does not hide a check that also fails. The run names the failure it saw, runs the rest anyway, and does not pass.
 STUB_BUILD_STATUS=1 run_gate && {
   printf 'a published package that does not build must fail the gate\n' >&2
   exit 1
@@ -73,16 +65,14 @@ STUB_BUILD_STATUS=1 run_gate && {
   printf '%s\n' '' 'flake check --no-write-lock-file'
 )" ]]
 
-# A check that does not pass fails the run on its own, and the build step is what a producer sees
-# first.
+# A check that does not pass fails the run on its own, and the build step is what a producer sees first.
 STUB_CHECK_STATUS=1 run_gate && {
   printf 'a check that fails must fail the gate\n' >&2
   exit 1
 }
 [[ "$(steps | grep -c -F 'flake check')" == 1 ]]
 
-# The gate reaches its build step through the environment the package installs, so a caller that
-# runs the script text without it has to be told rather than quietly check the flake alone.
+# The gate reaches its build step through the environment the package installs. A caller that runs the script text without it gets an error instead of a quiet flake-only check.
 CASE=$(mktemp -d -p "${CASES}")
 (
   cd "${CASE}"

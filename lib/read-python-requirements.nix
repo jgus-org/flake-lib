@@ -1,19 +1,10 @@
 # The distribution names a requirements file asks for, in the shape a python package set names its members.
+with builtins;
 { lib }:
 requirementsFile:
 let
-  inherit (builtins)
-    attrNames
-    filter
-    head
-    listToAttrs
-    match
-    replaceStrings
-    sort
-    ;
-
   askedLines = filter (line: match "^[A-Za-z0-9].*" line != null) (
-    lib.splitString "\n" (builtins.readFile requirementsFile)
+    lib.splitString "\n" (readFile requirementsFile)
   );
 
   bareNames = map (line: head (match "^([^<>=!~;[ ]*).*" line)) askedLines;

@@ -5,15 +5,15 @@ input owned by this repository's own owner is a producer whose published refs th
 about to consume. Edges are therefore never declared twice, and the graph cannot cycle,
 because a flake's inputs are acyclic by construction.
 
-Ordering is observed, not announced. A producer knows its dependencies and nothing knows its
-consumers, so no dependency can report its own completion to the repository waiting on it:
-this reads each dependency's update runs and waits. A dependency that has finished within the
-freshness window is done; one that is running is waited for; one that is neither is started
-and then waited for. Every failure to establish ordering ends in continuing without waiting,
-because a dependency that will not or cannot report its state must not stop the fleet. The
-one exception is a credential the API refuses: nothing can be observed or started through it,
-so a wait that could see nothing through the credential at all is an error rather than a
-result.
+No producer announces its completion. A producer knows its dependencies and nothing knows its
+consumers, so no dependency can report its own completion to the repository waiting on it.
+This script reads each dependency's update runs and waits. A dependency that finished within
+the freshness window is done. It waits for a dependency that is running, and starts one that
+is neither before waiting. Every failure to establish ordering ends in continuing without
+waiting, because a dependency that will not or cannot report its state must not stop the
+fleet. The one exception is a credential the API refuses. Nothing can be observed or started
+through it, so a wait that could see nothing through the credential at all is an error rather
+than a result.
 """
 
 from __future__ import annotations
@@ -44,20 +44,20 @@ WORKFLOW_CANDIDATES = (
     "update.yml",
 )
 # The only Actions state a workflow can still run in. `inactive` means no file is behind the
-# path at all; `disabled_manually` and `disabled_inactivity` leave the file on the default
-# branch but run no more, the latter once GitHub has seen sixty days without a run. A
-# dispatch on either disabled workflow is refused, and its schedule will not fire again.
+# path at all. `disabled_manually` and `disabled_inactivity` leave the file on the default
+# branch but run no more, the latter once GitHub has seen sixty days without a run. GitHub
+# refuses a dispatch on either disabled workflow, and its schedule will not fire again.
 ACTIVE_STATE = "active"
-# The library every producer takes as an input, and the one dependency that is not a
-# dependency: its revision is advanced by the workflow that refreshes workflow files, which
-# publishes no version for this run to order itself after.
+# The library every producer takes as an input. This wait skips it as a dependency: the
+# workflow that refreshes workflow files advances its revision, and that workflow publishes
+# no version for this run to order itself after.
 LIBRARY_REPO = "flake-lib"
 REQUEST_TIMEOUT_S = 30.0
 # A repository whose state cannot be read at all. Polling it again for the whole budget would
 # spend the wait and report nothing new.
 UNOBSERVABLE = (401, 403, 404, 451)
 # The members of UNOBSERVABLE that say the credential is what is missing rather than the
-# repository being out of sight: through them no run can be read and none can be started.
+# repository being out of sight. Through them this script can read no run and start none.
 REFUSED = (401, 403)
 INFLIGHT = frozenset(
     {"queued", "requested", "waiting", "pending", "in_progress"}
@@ -275,11 +275,11 @@ def wait_for_dependency(
     )
 
     def outcome(state: str, detail: str, status: int | None = None) -> Outcome:
-        # A wait that ended by starting the dependency did something to the fleet, and the
-        # log has to say so: the dependency's own run is not attributable to this one.
+        # A wait that started the dependency changed the fleet, and the log has to say so.
+        # Nothing else ties the dependency's own run to this run.
         if not started:
             return Outcome(repo, state, detail, status)
-        return Outcome(repo, state, f"{detail}; started by this run", status)
+        return Outcome(repo, state, f"{detail} (started by this run)", status)
 
     while True:
         try:
@@ -306,7 +306,7 @@ def wait_for_dependency(
         if recent:
             run = newest(recent)
             reason = f"run {run.number} ended {run.conclusion}"
-            warn(f"{repo}: {reason}; continuing without waiting")
+            warn(f"{repo}: {reason}. Continuing without waiting")
             return outcome("dep-failed", reason)
         if any(run.inflight for run in runs):
             reason = "its update is already running"
@@ -356,7 +356,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--workflow",
         action="append",
         dest="workflows",
-        help="workflow file to treat as a dependency's update, most preferred first; repeatable",
+        help="workflow file to treat as a dependency's update, most preferred first. Repeatable.",
     )
     parser.add_argument(
         "--fresh-window",
@@ -436,10 +436,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     def wait(repo: str) -> Outcome:
         return wait_for_dependency(client, repo, config, warn)
 
-    # The wait's own log is the only place a consumer's operator can see what it is blocked
-    # on, and one dependency can hold it for the whole budget, so the set being waited for is
-    # stated before the first read and each dependency is reported as it settles. stdout is
-    # buffered when it is a pipe, so these lines flush.
+    # This log is the only place a consumer's operator sees what the run is blocked on. One
+    # dependency can hold the run for the whole budget, so the script names the full set
+    # before its first read and reports each dependency as it settles. A pipe buffers stdout,
+    # so these lines flush.
     print(
         f"waiting for {len(dependencies)} dependency updates, each for up to "
         f"{config.timeout:g}s: {', '.join(dependencies)}",

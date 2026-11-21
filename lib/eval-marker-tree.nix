@@ -1,3 +1,4 @@
+with builtins;
 { versionMatchesComparison }:
 let
   versionVariables = [
@@ -18,7 +19,7 @@ let
       observed =
         bindings.${variable} or (throw "evalMarkerTree: no binding for marker variable ${variable}");
     in
-    if builtins.elem variable versionVariables then
+    if elem variable versionVariables then
       versionMatchesComparison observed {
         inherit operator;
         version = literal;
@@ -38,9 +39,9 @@ let
     else if tree.kind == "cmp" then
       evaluateComparison (removeAttrs tree [ "kind" ])
     else if tree.kind == "all" then
-      builtins.foldl' (acc: condition: acc && evaluate condition) true tree.conditions
+      foldl' (acc: condition: acc && evaluate condition) true tree.conditions
     else if tree.kind == "any" then
-      builtins.foldl' (acc: condition: acc || evaluate condition) false tree.conditions
+      foldl' (acc: condition: acc || evaluate condition) false tree.conditions
     else
       throw "evalMarkerTree: unsupported marker tree kind ${tree.kind}";
 in

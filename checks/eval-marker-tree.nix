@@ -1,12 +1,12 @@
+with builtins;
 { evalMarkerTree }:
 let
-  bindings = {
+  bound = evalMarkerTree {
     platform_machine = "x86_64";
     python_full_version = "3.13.5";
     python_version = "3.13";
     sys_platform = "linux";
   };
-  bound = evalMarkerTree bindings;
 in
 {
   testAllConditionFails = {
@@ -142,7 +142,7 @@ in
       success = false;
       value = false;
     };
-    expr = builtins.tryEval (bound {
+    expr = tryEval (bound {
       kind = "cmp";
       literal = "win32";
       operator = "<";
@@ -199,7 +199,7 @@ in
       success = false;
       value = false;
     };
-    expr = builtins.tryEval (bound {
+    expr = tryEval (bound {
       kind = "bogus";
     });
   };
@@ -208,7 +208,7 @@ in
       success = false;
       value = false;
     };
-    expr = builtins.tryEval (bound {
+    expr = tryEval (bound {
       kind = "cmp";
       literal = "";
       operator = "==";

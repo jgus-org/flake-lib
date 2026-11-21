@@ -15,7 +15,7 @@ jobs:
         with:
           token: ${{ secrets.ATTIC_TOKEN }}
 
-      - name: Effective configuration
+      - name: Show the effective configuration
         run: |
           echo "--- nix.conf"; cat /etc/nix/nix.conf
           echo "--- hook file"; cat /usr/local/bin/attic-push
@@ -38,7 +38,7 @@ jobs:
           printf 'store_path=%s\n' "${path}" >>"${GITHUB_OUTPUT}"
           printf '%s\n' "${path}"
 
-      - name: Daemon journal
+      - name: Show the daemon journal
         run: |
           echo "--- hook lines"
           sudo journalctl -u nix-daemon --no-pager |
@@ -46,7 +46,7 @@ jobs:
           echo "--- journal tail"
           sudo journalctl -u nix-daemon --no-pager -n 25
 
-      - name: Narinfo
+      - name: Request the narinfo
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
         run: |

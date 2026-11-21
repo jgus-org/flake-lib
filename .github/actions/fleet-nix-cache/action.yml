@@ -1,15 +1,15 @@
 name: Fleet Nix cache
 description: >-
   Substitute from and push to the fleet Attic cache when a usable token is
-  available, and leave the run on the public cache when it is not.
+  available, and leave the run on the public cache when none is.
 
 inputs:
   token:
     description: >-
       Attic token scoped to pull and push the named cache. Without a usable
-      token -- an unset secret, as in a fork pull request -- nothing here is
-      configured, so the run substitutes from the public cache and pushes
-      nothing.
+      token (an unset secret, as in a fork pull request), the action
+      configures nothing, so the run substitutes from the public cache and
+      pushes nothing.
     required: false
     default: ""
   endpoint:
@@ -59,9 +59,7 @@ runs:
           "${endpoint}" "${ATTIC_TOKEN}" >"${probe_config}")
         sudo install -m 600 -o root -g root "${probe_config}" /etc/attic-ci/attic/config.toml
         rm -f "${probe_netrc}" "${probe_config}"
-        # The installer writes /etc/nix/nix.conf before this action runs and regenerates it
-        # never, so the settings and the netrc path are appended to it: the last assignment
-        # wins, and the credentials live in a file only this action writes.
+        # The installer writes /etc/nix/nix.conf before this action runs and never regenerates it, so the settings and the netrc path are appended to it: the last assignment wins, and the credentials live in a file only this action writes.
         daemon_netrc=/etc/nix/attic-netrc
         printf 'machine %s\npassword %s\n' "${host}" "${ATTIC_TOKEN}" |
           sudo tee "${daemon_netrc}" >/dev/null

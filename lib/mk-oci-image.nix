@@ -6,7 +6,6 @@
 }:
 let
   contract = import ./oci-image.nix { inherit pkgs source; };
-  inherit (contract) settings;
   image =
     pkgs.runCommand "oci-image-${pkgs.lib.removePrefix "sha256:" pin.imageDigest}"
       {
@@ -33,10 +32,10 @@ let
               exec ${pkgs.lib.getExe copyTo} containers-storage:${imageName}:${imageTag} "''${@}"
             '';
           };
-          imageName = settings.finalImageName;
+          imageName = contract.settings.finalImageName;
           # A branch seeded before its image resolved carries no version and stays tagged by digest.
           imageTag =
-            settings.finalImageTag or pin.version or (pkgs.lib.removePrefix "sha256:" pin.imageDigest);
+            contract.settings.finalImageTag or pin.version or (pkgs.lib.removePrefix "sha256:" pin.imageDigest);
         };
       }
       ''
@@ -44,7 +43,7 @@ let
           --preserve-digests \
           --tmpdir "''${TMPDIR}" \
           --src-tls-verify=true \
-          "docker://${settings.imageName}@${pin.imageDigest}" \
+          "docker://${contract.settings.imageName}@${pin.imageDigest}" \
           "dir://''${out}"
       '';
 in

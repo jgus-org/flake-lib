@@ -3,12 +3,9 @@
   hooks,
   pkgs,
 }:
-let
-  inherit (pkgs) lib;
-in
-lib.getExe (
+pkgs.lib.getExe (
   pkgs.writeShellApplication {
     name = "composed-hook";
-    text = lib.concatMapStringsSep "\n" (h: ''"${h}"'') hooks;
+    text = pkgs.lib.concatMapStringsSep "\n" (h: ''"${h}"'') hooks;
   }
 )

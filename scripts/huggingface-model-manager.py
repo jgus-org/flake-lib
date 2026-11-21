@@ -120,7 +120,7 @@ def main() -> None:
             temporary.replace(stamp)
 
     print(
-        f"Model {revision}: {len(files)} files, {total_bytes} bytes; {args.action} passed"
+        f"Model {revision}: {len(files)} files, {total_bytes} bytes. {args.action} passed"
     )
 
 

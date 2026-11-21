@@ -41,7 +41,7 @@ grep -Fq "imageDigest = \"sha256:$(printf 'b%.0s' {1..64})\";" "${TEST_ROOT}/pin
 write_empty_pin
 TEST_OCI_MANIFEST=single bash "${UPDATE_VERSION}" "sha256:$(printf 'a%.0s' {1..64})"
 
-# `build` is absent because the updater builds nothing: the publication path builds what the flake publishes, so a build failure is not something this path can hit.
+# `build` is absent from the list because the updater builds nothing. The publication path is what builds the flake's packages, so no build failure can come from this path.
 for FAILURE in platform digest copy hash store lock evaluate; do
   write_empty_pin
   cp "${TEST_ROOT}/pin.nix" "${TEST_ROOT}/expected-pin.nix"
@@ -74,7 +74,7 @@ grep -Fq "  imageDigest = \"sha256:$(printf 'a%.0s' {1..64})\";" "${TEST_ROOT}/p
 [[ "$(wc -l <"${TEST_OCI_COPY_LOG}")" -eq ${COPIES} ]]
 [[ "$(tail -1 "${TEST_OCI_INSPECT_LOG}")" == 'docker://registry.example/image:2026.10.0' ]]
 
-# Resolving a version whose image is not the pinned content copies it and writes the version beside it.
+# When the resolved version's image is not the pinned content, the updater copies the image and writes the version beside it.
 write_seeded_pin "sha256:$(printf 'b%.0s' {1..64})"
 VERSION_SOURCE_TYPE=github GH_OWNER=example GH_REPO=example bash "${UPDATE_VERSION}" 2026.9.4
 grep -Fq '  version = "2026.9.4";' "${TEST_ROOT}/pin.nix"

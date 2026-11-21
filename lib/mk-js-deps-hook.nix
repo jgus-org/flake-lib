@@ -1,8 +1,8 @@
-# Generates a flake-lib artifactHook that computes a JS package-manager offline-deps hash for the pinned rev and prints it as one `name=value` line for mkUpdateVersion to capture into pin.nix.
+# Generates a flake-lib artifactHook that computes the JS package-manager offline-deps hash at the pinned revision. It prints one `name=value` line, which mkUpdateVersion captures into pin.nix.
 #
-#   source         : "shipped"   — upstream ships the lockfile; fetch it from the repo at NEW_REV (buildNpmPackage/fetchYarnDeps consume upstream's directly)
-#                    "generated" — upstream ships none; regenerate it from package.json and vendor it into FLAKE_ROOT (the flake's build copies ./package-lock.json). npm only.
-#   fetcherVersion : npm only; must match the flake's npmDepsFetcherVersion — it changes the hash
+#   source "shipped"   : upstream ships the lockfile, so fetch it from the repo at NEW_REV (buildNpmPackage/fetchYarnDeps consume upstream's directly)
+#   source "generated" : upstream ships none, so regenerate it from package.json and vendor it into FLAKE_ROOT (the flake's build copies ./package-lock.json). npm only.
+#   fetcherVersion     : npm only. The fetcher version changes the hash, so it must match the flake's npmDepsFetcherVersion.
 {
   fetcherVersion ? null,
   field ? null,
@@ -11,7 +11,6 @@
   source ? "shipped",
 }:
 let
-  inherit (pkgs) lib;
   fieldName =
     if field != null then
       field
@@ -19,12 +18,11 @@ let
       "npmDepsHash"
     else
       "yarnHash";
-  prefetch = if manager == "npm" then pkgs.prefetch-npm-deps else pkgs.prefetch-yarn-deps;
-  npmFetcherEnv = lib.optionalString (
+  npmFetcherEnv = pkgs.lib.optionalString (
     manager == "npm" && fetcherVersion != null
   ) "export NPM_FETCHER_VERSION=${toString fetcherVersion}";
 
-  # raw media type, not the JSON `.content` field: the latter is base64 and capped at 1 MB by the Contents API (large lockfiles come back empty). raw streams up to 100 MB.
+  # Fetch the raw media type rather than the JSON `.content` field. `.content` is base64 and the Contents API caps it at 1 MB, so a large lockfile comes back empty. Raw media streams up to 100 MB.
   ghFetch =
     file:
     ''gh api "/repos/''${GH_OWNER}/''${GH_REPO}/contents/${file}?ref=''${NEW_REV}" -H "Accept: application/vnd.github.raw"'';
@@ -45,7 +43,7 @@ let
     else if manager == "yarn" && source == "shipped" then
       ''
         ${ghFetch "yarn.lock"} > "''${work}/yarn.lock"
-        # prefetch-yarn-deps prints the hash then a trailing blank line; take the last non-empty line, normalize to SRI.
+        # prefetch-yarn-deps prints the hash then a trailing blank line. Take the last non-empty line and normalize it to SRI.
         hash=$(prefetch-yarn-deps "''${work}/yarn.lock" 2>/dev/null | awk 'NF{last=$0} END{print last}')
         if [[ "''${hash}" != sha256-* ]]; then
           hash=$(nix hash convert --hash-algo sha256 --to sri "''${hash}")
@@ -54,17 +52,17 @@ let
     else
       throw "mkJsDepsHook: unsupported (manager=${manager}, source=${source})";
 in
-lib.getExe (
+pkgs.lib.getExe (
   pkgs.writeShellApplication {
     name = "js-deps-hook-${manager}-${source}";
     runtimeInputs = [
       pkgs.gh
       pkgs.coreutils
-      prefetch
+      (if manager == "npm" then pkgs.prefetch-npm-deps else pkgs.prefetch-yarn-deps)
       pkgs.nix
     ]
-    ++ lib.optionals (manager == "npm" && source == "generated") [ pkgs.nodejs ]
-    ++ lib.optionals (manager == "yarn") [ pkgs.gawk ];
+    ++ pkgs.lib.optionals (manager == "npm" && source == "generated") [ pkgs.nodejs ]
+    ++ pkgs.lib.optionals (manager == "yarn") [ pkgs.gawk ];
     text = ''
       work="$(mktemp -d)"
       trap 'rm -rf "''${work}"' EXIT

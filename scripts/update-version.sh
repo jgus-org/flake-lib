@@ -4,7 +4,7 @@
 #   SOURCE_TYPE   pypi | github | github-release-asset | gitlab | huggingface | oci | mutable-url
 #   PYPI_NAME     PyPI distribution name (underscore form)   [pypi]
 #   PYPI_FORMAT   sdist | wheel                              [pypi]
-#   VERSION_SOURCE_TYPE       the source an oci producer discovers versions from (github); empty for a single-branch image    [oci]
+#   VERSION_SOURCE_TYPE       the source an oci producer discovers versions from (github). Empty for a single-branch image    [oci]
 #   GH_OWNER/GH_REPO          GitHub owner/repo              [github, github-release-asset, oci release source]
 #   GH_TRACK                  release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0.devDATE+gREV)  [github]
 #   GH_BRANCH                 commit-tracking: branch to follow (default: repo default branch)  [github]
@@ -26,19 +26,19 @@
 set -euo pipefail
 
 FLAKE_ROOT="${FLAKE_ROOT:-${PWD}}"
-pin="${FLAKE_ROOT}/pin.nix"
-flake="${FLAKE_ROOT}/flake.nix"
+PIN_PATH="${FLAKE_ROOT}/pin.nix"
+FLAKE_PATH="${FLAKE_ROOT}/flake.nix"
 
-if [[ ! -f ${pin} ]]; then
+if [[ ! -f ${PIN_PATH} ]]; then
   echo "error: no pin.nix in ${FLAKE_ROOT}" >&2
   exit 1
 fi
 
-requested="${1:-}"
-# Optional upstream ref to fetch, distinct from the version written to the pin. Lets the orchestrator pin a canonical version string (e.g. 0.1.40.5-beta) while still resolving the raw upstream tag (e.g. v0.1.405-beta). Defaults to `requested`, i.e. version == ref.
-requested_ref="${2:-}"
-pin_changed=0
-new_version=""
+REQUESTED="${1:-}"
+# Optional upstream ref to fetch, distinct from the version written to the pin. Lets the orchestrator pin a canonical version string (e.g. 0.1.40.5-beta) while still resolving the raw upstream tag (e.g. v0.1.405-beta). Defaults to `REQUESTED`, i.e. version == ref.
+REQUESTED_REF="${2:-}"
+PIN_CHANGED=0
+NEW_VERSION=""
 CASCADE_CHANGED=0
 LOCK_CHANGED=0
 
@@ -74,13 +74,11 @@ MUTABLE_URL="${MUTABLE_URL:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 mapfile -t BUILD_FAILURE_FIELDS < <(jq -r '.[]' <<<"${BUILD_FAILURE_HASHES}")
 
-declare -A extra=()
+declare -A EXTRA=()
 declare -A HF_HASHES=()
 RESOLVED_SIBLING_REFS='{}'
 
-# Every derivation this flake publishes has to instantiate, not only the tracked one. A
-# producer whose deliverable is an overlay publishes no payload of its own, and what is left
-# in `packages` is its tooling -- which still has to evaluate before a pin is written.
+# Every derivation this flake publishes has to instantiate, not only the tracked one. A producer whose deliverable is an overlay publishes no payload of its own, and what is left in `packages` is its tooling. That tooling still has to evaluate before a pin is written.
 evaluate_published_packages() {
   local SYSTEM
   SYSTEM=$(nix config show system) || {
@@ -102,41 +100,32 @@ finish_unchanged() {
   exit 0
 }
 
-# A commit-tracked source has no upstream version to carry, and a producer that is a python one
-# puts whatever label the pin holds into package metadata: `0-unstable-YYYY-MM-DD` is what the
-# updater used to write, and `packaging.version.Version` refuses it, so the payload fails the build
-# that reads its own version. A dev release of 0 sorts below every real release the upstream may
-# one day tag, and the rev suffix distinguishes two commits taken on one day in a branch name as
-# well as in the pin.
+# A commit-tracked source has no upstream version to carry, and a producer that is a python one puts whatever label the pin holds into package metadata: `0-unstable-YYYY-MM-DD` is what the updater used to write, and `packaging.version.Version` refuses it, so the payload fails the build that reads its own version. A dev release of 0 sorts below every real release the upstream may one day tag, and the rev suffix distinguishes two commits taken on one day in a branch name as well as in the pin.
 commit_version() {
   local DATE="${1}" REV="${2}"
   printf '0.dev%s+g%s' "$(tr -dc '0-9' <<<"${DATE}" | cut -c1-8)" "${REV:0:8}"
 }
 
-# The org formatter sorts attributes, so a pin written in any other order comes back changed
-# from the next format of the tree, traded between the updater's commit and a human's reformat.
+# The org formatter sorts attributes, so a pin written in any other order comes back changed from the next format of the tree, traded between the updater's commit and a human's reformat.
 write_pin_fields() {
-  local -n fields="${1}"
+  local -n PIN_FIELDS="${1}"
   local NAME
   while IFS= read -r NAME; do
-    printf '%s\n' "${fields[${NAME}]}"
-  done < <(printf '%s\n' "${!fields[@]}" | LC_ALL=C sort)
+    printf '%s\n' "${PIN_FIELDS[${NAME}]}"
+  done < <(printf '%s\n' "${!PIN_FIELDS[@]}" | LC_ALL=C sort)
 }
 
 format_pin() {
-  # $1 pin path. The writer emits one flat line per field, and a dotted field name asks for a nested
-  # attribute whose shape only the org formatter defines, so the pin is written and then formatted by
-  # the formatter the repository's own formatting check runs. Without FORMATTER the flat lines stand,
-  # which is all a pin of only flat field names ever needed.
+  # The writer emits one flat line per field, and a dotted field name asks for a nested attribute whose shape only the org formatter defines, so the pin is written and then formatted by the formatter the repository's own formatting check runs. Without FORMATTER the flat lines stand, which is all a pin of only flat field names ever needed.
   [[ -z ${FORMATTER} ]] && return 0
   # One file per run, and treefmt's evaluation cache lives under a HOME the updater may not have.
   (cd "$(dirname "${1}")" && "${FORMATTER}" --no-cache "$(basename "${1}")")
 }
 
 pin_sibling_refs_field() {
-  local -n fields="${1}"
+  local -n PIN_FIELDS="${1}"
   [[ -z ${SIBLING_REFS_IN_PIN} ]] && return 0
-  fields[dependencies]="$(
+  PIN_FIELDS[dependencies]="$(
     {
       echo "  dependencies = {"
       jq -r 'to_entries | sort_by(.key)[] | "    " + (.key | tojson) + " = " + (.value | tojson) + ";"' <<<"${RESOLVED_SIBLING_REFS}"
@@ -148,7 +137,7 @@ pin_sibling_refs_field() {
 sibling_refs_current() {
   [[ -z ${SIBLING_REFS_IN_PIN} ]] && return 0
   local CURRENT_REFS
-  CURRENT_REFS=$(nix eval --json --file "${pin}" dependencies 2>/dev/null || echo '{}')
+  CURRENT_REFS=$(nix eval --json --file "${PIN_PATH}" dependencies 2>/dev/null || echo '{}')
   [[ "$(jq -cS . <<<"${CURRENT_REFS}")" == "$(jq -cS . <<<"${RESOLVED_SIBLING_REFS}")" ]]
 }
 
@@ -158,23 +147,23 @@ write_pypi_pin() {
   FIELDS[version]="  version = \"${VERSION}\";"
   FIELDS[hash]="  hash = \"${HASH}\";"
   for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-    FIELDS["${NAME}"]="  ${NAME} = \"${extra[${NAME}]:-}\";"
+    FIELDS["${NAME}"]="  ${NAME} = \"${EXTRA[${NAME}]:-}\";"
   done
   pin_sibling_refs_field FIELDS
   {
     echo "{"
     write_pin_fields FIELDS
     echo "}"
-  } >"${pin}"
+  } >"${PIN_PATH}"
 }
 
 pypi_pin_current() {
   local VERSION="${1}" HASH="${2}" CURRENT_VERSION CURRENT_HASH NAME VALUE
-  CURRENT_VERSION=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
-  CURRENT_HASH=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
+  CURRENT_VERSION=$(nix eval --raw --file "${PIN_PATH}" version 2>/dev/null || echo "")
+  CURRENT_HASH=$(nix eval --raw --file "${PIN_PATH}" hash 2>/dev/null || echo "")
   [[ ${CURRENT_VERSION} == "${VERSION}" && ${CURRENT_HASH} == "${HASH}" ]] || return 1
   for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-    VALUE=$(nix eval --raw --file "${pin}" "${NAME}" 2>/dev/null || echo "")
+    VALUE=$(nix eval --raw --file "${PIN_PATH}" "${NAME}" 2>/dev/null || echo "")
     [[ -n ${VALUE} ]] || return 1
   done
   artifact_pin_current || return 1
@@ -183,14 +172,14 @@ pypi_pin_current() {
 
 # Buffers output and emits it only on success, so a consumer never sees partial data from an attempt that died mid-stream. The tag-spelling probes are wrapped at whole-sweep granularity (resolve_*_ref_sha) so an expected 404 on one candidate spelling is never individually retried.
 retry() {
-  local attempt output
-  for attempt in 1 2 3 4 5; do
-    if output=$("$@"); then
-      [[ -z ${output} ]] || printf '%s\n' "${output}"
+  local ATTEMPT OUTPUT
+  for ATTEMPT in 1 2 3 4 5; do
+    if OUTPUT=$("${@}"); then
+      [[ -z ${OUTPUT} ]] || printf '%s\n' "${OUTPUT}"
       return 0
     fi
-    if ((attempt < 5)); then
-      echo "  ${1} failed (attempt ${attempt}/5); retrying in 5s..." >&2
+    if ((ATTEMPT < 5)); then
+      echo "  ${1} failed (attempt ${ATTEMPT}/5). Retrying in 5s..." >&2
       sleep 5
     fi
   done
@@ -199,15 +188,15 @@ retry() {
 }
 
 fetch_repo_file() {
-  local path="$1" rev="$2" proj enc
+  local FILE_PATH="${1}" REV="${2}" PROJ ENC
   case "${SOURCE_TYPE}" in
   github)
-    retry gh api "/repos/${GH_OWNER}/${GH_REPO}/contents/${path}?ref=${rev}" --jq '.content' | base64 -d
+    retry gh api "/repos/${GH_OWNER}/${GH_REPO}/contents/${FILE_PATH}?ref=${REV}" --jq '.content' | base64 -d
     ;;
   gitlab)
-    proj="${GITLAB_OWNER}%2F${GITLAB_REPO}"
-    enc=$(jq -rn --arg p "${path}" '$p|@uri')
-    retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/files/${enc}/raw?ref=${rev}"
+    PROJ="${GITLAB_OWNER}%2F${GITLAB_REPO}"
+    ENC=$(jq -rn --arg p "${FILE_PATH}" '$p|@uri')
+    retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/files/${ENC}/raw?ref=${REV}"
     ;;
   esac
 }
@@ -241,10 +230,10 @@ github_version_from_tag() {
 }
 
 resolve_gitlab_ref_sha() {
-  local proj="$1" ref_base="$2" candidate id
-  for candidate in "v${ref_base}" "V${ref_base}" "${ref_base}"; do
-    if id=$(curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/commits/${candidate}" 2>/dev/null | jq -r '.id // ""') && [[ -n ${id} && ${id} != "null" ]]; then
-      echo "${id}"
+  local PROJ="${1}" REF_BASE="${2}" CANDIDATE ID
+  for CANDIDATE in "v${REF_BASE}" "V${REF_BASE}" "${REF_BASE}"; do
+    if ID=$(curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/commits/${CANDIDATE}" 2>/dev/null | jq -r '.id // ""') && [[ -n ${ID} && ${ID} != "null" ]]; then
+      echo "${ID}"
       return 0
     fi
   done
@@ -253,9 +242,9 @@ resolve_gitlab_ref_sha() {
 
 rewrite_sibling_url() {
   local FLAKE_REPO="${1}" REF="${2}" BEFORE AFTER
-  BEFORE=$(sha256sum "${flake}")
-  sed -i -E "s|(url = \"github:${FLAKE_REPO})(/[^\"]*)?(\")|\\1/${REF}\\3|" "${flake}"
-  AFTER=$(sha256sum "${flake}")
+  BEFORE=$(sha256sum "${FLAKE_PATH}")
+  sed -i -E "s|(url = \"github:${FLAKE_REPO})(/[^\"]*)?(\")|\\1/${REF}\\3|" "${FLAKE_PATH}"
+  AFTER=$(sha256sum "${FLAKE_PATH}")
   if [[ ${BEFORE} != "${AFTER}" ]]; then
     CASCADE_CHANGED=1
   fi
@@ -310,7 +299,7 @@ resolve_siblings_from_source() {
         echo "error: ${REQUIREMENT_FILE} is unavailable at ${REV}" >&2
         return 1
       fi
-      echo "warning: could not fetch ${REQUIREMENT_FILE} at ${REV}; ${FLAKE_REPO} URL left unchanged." >&2
+      echo "warning: could not fetch ${REQUIREMENT_FILE} at ${REV}, so the ${FLAKE_REPO} URL is left unchanged." >&2
       continue
     fi
     MARKER_ARGS=()
@@ -321,7 +310,7 @@ resolve_siblings_from_source() {
         echo "error: ${REQUIREMENT_FILE} does not resolve ${REQUIREMENT_NAME}" >&2
         return 1
       fi
-      echo "warning: could not resolve ${REQUIREMENT_NAME} from ${REQUIREMENT_FILE}; ${FLAKE_REPO} URL left unchanged." >&2
+      echo "warning: could not resolve ${REQUIREMENT_NAME} from ${REQUIREMENT_FILE}, so the ${FLAKE_REPO} URL is left unchanged." >&2
       continue
     fi
     echo "  ${REQUIREMENT_NAME} -> github:${FLAKE_REPO}/${REF}"
@@ -346,7 +335,7 @@ resolve_siblings_from_metadata() {
         echo "error: release metadata does not resolve ${REQUIREMENT_NAME}" >&2
         return 1
       fi
-      echo "warning: no applicable ${REQUIREMENT_NAME} requirement could be resolved; ${FLAKE_REPO} URL left unchanged." >&2
+      echo "warning: no applicable ${REQUIREMENT_NAME} requirement could be resolved, so the ${FLAKE_REPO} URL is left unchanged." >&2
       continue
     fi
     echo "  ${REQUIREMENT_NAME} -> github:${FLAKE_REPO}/${REF}"
@@ -361,7 +350,7 @@ write_source_pin() {
   FIELDS[sourceRev]="  sourceRev = \"${REV}\";"
   FIELDS[sourceHash]="  sourceHash = \"${HASH}\";"
   for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-    FIELDS["${NAME}"]="  ${NAME} = \"${extra[${NAME}]:-}\";"
+    FIELDS["${NAME}"]="  ${NAME} = \"${EXTRA[${NAME}]:-}\";"
   done
   pin_sibling_refs_field FIELDS
   {
@@ -369,7 +358,7 @@ write_source_pin() {
     echo "{"
     write_pin_fields FIELDS
     echo "}"
-  } >"${pin}"
+  } >"${PIN_PATH}"
 }
 
 write_huggingface_pin() {
@@ -389,22 +378,22 @@ write_huggingface_pin() {
     )"
   fi
   for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-    FIELDS["${NAME}"]="  ${NAME} = \"${extra[${NAME}]:-}\";"
+    FIELDS["${NAME}"]="  ${NAME} = \"${EXTRA[${NAME}]:-}\";"
   done
   {
     echo '# Auto-managed by `nix run .#update-version`. Manual edits will be overwritten by the next bump.'
     echo "{"
     write_pin_fields FIELDS
     echo "}"
-  } >"${pin}"
+  } >"${PIN_PATH}"
 }
 
 huggingface_pin_current() {
   local VERSION="${1}" REV="${2}" CURRENT_VERSION CURRENT_REV CURRENT_HASHES CURRENT_FILES EXPECTED_FILES FILE HASH NAME CURRENT_EXTRA
-  CURRENT_VERSION=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
-  CURRENT_REV=$(nix eval --raw --file "${pin}" sourceRev 2>/dev/null || echo "")
+  CURRENT_VERSION=$(nix eval --raw --file "${PIN_PATH}" version 2>/dev/null || echo "")
+  CURRENT_REV=$(nix eval --raw --file "${PIN_PATH}" sourceRev 2>/dev/null || echo "")
   [[ ${CURRENT_VERSION} == "${VERSION}" && ${CURRENT_REV} == "${REV}" ]] || return 1
-  CURRENT_HASHES=$(nix eval --json --file "${pin}" hashes 2>/dev/null || echo '{}')
+  CURRENT_HASHES=$(nix eval --json --file "${PIN_PATH}" hashes 2>/dev/null || echo '{}')
   CURRENT_FILES=$(jq -c 'keys | sort' <<<"${CURRENT_HASHES}")
   EXPECTED_FILES=$(jq -c 'sort' <<<"${HF_FILES}")
   [[ ${CURRENT_FILES} == "${EXPECTED_FILES}" ]] || return 1
@@ -413,8 +402,8 @@ huggingface_pin_current() {
     [[ -n ${HASH} ]] || return 1
   done < <(jq -r '.[]' <<<"${HF_FILES}")
   for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-    CURRENT_EXTRA=$(nix eval --raw --file "${pin}" "${NAME}" 2>/dev/null || echo "")
-    [[ -n ${CURRENT_EXTRA} && ${CURRENT_EXTRA} == "${extra[${NAME}]:-}" ]] || return 1
+    CURRENT_EXTRA=$(nix eval --raw --file "${PIN_PATH}" "${NAME}" 2>/dev/null || echo "")
+    [[ -n ${CURRENT_EXTRA} && ${CURRENT_EXTRA} == "${EXTRA[${NAME}]:-}" ]] || return 1
   done
   artifact_pin_current || return 1
   return 0
@@ -459,7 +448,7 @@ write_huggingface_manifest() {
         end
     ' <<<"${METADATA}" >"${TMP}"
   mv "${TMP}" "${OUTPUT}"
-  extra["${HF_MANIFEST_HASH_FIELD}"]=$(sha256sum "${OUTPUT}" | cut -d' ' -f1)
+  EXTRA["${HF_MANIFEST_HASH_FIELD}"]=$(sha256sum "${OUTPUT}" | cut -d' ' -f1)
 }
 
 stage_orchestrated_owned_files() {
@@ -478,50 +467,50 @@ stage_orchestrated_owned_files() {
 }
 
 run_artifact_hook() {
-  # $1 rev, $2 version. Runs the consumer hook (which regenerates vendored files in FLAKE_ROOT) and captures its `name=value` stdout lines into `extra`.
-  local rev="$1" v="$2" hook_out k val
+  # Runs the consumer hook (regenerates vendored files in FLAKE_ROOT) and captures its `name=value` stdout lines into `EXTRA`.
+  local REV="${1}" VERSION="${2}" HOOK_OUT K LINE
   [[ -z ${ARTIFACT_HOOK} ]] && return 0
   echo "Running artifact hook..."
-  hook_out=$(NEW_REV="${rev}" NEW_VERSION="${v}" FLAKE_ROOT="${FLAKE_ROOT}" \
+  HOOK_OUT=$(NEW_REV="${REV}" NEW_VERSION="${VERSION}" FLAKE_ROOT="${FLAKE_ROOT}" \
     GH_OWNER="${GH_OWNER}" GH_REPO="${GH_REPO}" \
     GITLAB_OWNER="${GITLAB_OWNER}" GITLAB_REPO="${GITLAB_REPO}" "${ARTIFACT_HOOK}")
-  while IFS= read -r line; do
+  while IFS= read -r LINE; do
     # Split on the first '=' only, so a base64 SRI's trailing '=' padding survives.
-    k="${line%%=*}"
-    [[ -n ${k} ]] && extra["${k}"]="${line#*=}"
-  done <<<"${hook_out}"
-  if [[ -n ${ARTIFACT_FINGERPRINT:-} && ${extra[artifactFingerprint]:-} != "${ARTIFACT_FINGERPRINT}" ]]; then
+    K="${LINE%%=*}"
+    [[ -n ${K} ]] && EXTRA["${K}"]="${LINE#*=}"
+  done <<<"${HOOK_OUT}"
+  if [[ -n ${ARTIFACT_FINGERPRINT:-} && ${EXTRA[artifactFingerprint]:-} != "${ARTIFACT_FINGERPRINT}" ]]; then
     echo "error: artifact hook did not emit the declared artifactFingerprint" >&2
     return 1
   fi
   stage_orchestrated_owned_files
-  return 0 # the loop's status is its last body command — a falsy `[[ -n ]]` on an empty/keyless line — which would trip the caller's set -e; this function has no meaningful return
+  return 0 # the loop's status is its last body command, a falsy `[[ -n ]]` on an empty/keyless line, and that would trip the caller's set -e. This function has no meaningful return.
 }
 
 pin_field_holding() {
-  local want="$1" name value
-  while IFS='=' read -r name value; do
-    if [[ ${value} == "${want}" ]]; then
-      printf '%s\n' "${name}"
+  local WANT="${1}" NAME VALUE
+  while IFS='=' read -r NAME VALUE; do
+    if [[ ${VALUE} == "${WANT}" ]]; then
+      printf '%s\n' "${NAME}"
       return 0
     fi
-  done < <(sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*"([^"]*)";.*/\1=\2/p' "${pin}")
+  done < <(sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*"([^"]*)";.*/\1=\2/p' "${PIN_PATH}")
   return 1
 }
 
 declared_failure_field() {
-  local name
-  for name in "${BUILD_FAILURE_FIELDS[@]}"; do
-    [[ ${name} == "${1}" ]] && return 0
+  local NAME
+  for NAME in "${BUILD_FAILURE_FIELDS[@]}"; do
+    [[ ${NAME} == "${1}" ]] && return 0
   done
   return 1
 }
 
 next_unresolved_failure_field() {
-  local name
-  for name in "${BUILD_FAILURE_FIELDS[@]}"; do
-    if [[ -z ${BUILD_FAILURE_RESOLVED[${name}]:-} ]]; then
-      printf '%s\n' "${name}"
+  local NAME
+  for NAME in "${BUILD_FAILURE_FIELDS[@]}"; do
+    if [[ -z ${BUILD_FAILURE_RESOLVED[${NAME}]:-} ]]; then
+      printf '%s\n' "${NAME}"
       return 0
     fi
   done
@@ -530,79 +519,76 @@ next_unresolved_failure_field() {
 
 revalidate_build_hashes() {
   local -A BUILD_FAILURE_RESOLVED=()
-  local out rc specified new field owner
+  local OUT RC SPECIFIED_HASH GOT_HASH FIELD OWNER
   local -a DISCOVERY_ARGS=(--require-build)
   if [[ -n ${BUILD_TARGET:-} ]]; then
     DISCOVERY_ARGS=(--only "${BUILD_TARGET}")
   fi
-  # A mismatch states its own hash, so the field holding it is looked up from there and no producer
-  # has to name a target; a producer that does narrows this build to what its hash fetches. A family
-  # that builds nothing would report the incomplete pin's hashes as resolved, so a build is required
-  # either way.
+  # A mismatch states its own hash, so the field holding it is looked up from there and no producer has to name a target. A producer that does narrows this build to what its hash fetches. A family that builds nothing would report the incomplete pin's hashes as resolved, so a build is required either way.
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."
     set +e
-    out=$("${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" "${DISCOVERY_ARGS[@]}" 2>&1)
-    rc=$?
+    OUT=$("${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" "${DISCOVERY_ARGS[@]}" 2>&1)
+    RC=${?}
     set -e
-    if ((rc == 0)); then
+    if ((RC == 0)); then
       # The narrowed build proved one package's fetch, not the tree the run commits.
       if [[ -n ${BUILD_TARGET:-} ]]; then
         "${BUILD_PACKAGES_SCRIPT}" --flake "${FLAKE_ROOT}" --require-build
       fi
       return 0
     fi
-    specified=$(printf '%s\n' "${out}" | sed -nE 's/.*specified:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
-    new=$(printf '%s\n' "${out}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
-    if [[ -z ${new} ]]; then
+    SPECIFIED_HASH=$(printf '%s\n' "${OUT}" | sed -nE 's/.*specified:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
+    GOT_HASH=$(printf '%s\n' "${OUT}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
+    if [[ -z ${GOT_HASH} ]]; then
       echo "error: building what this flake publishes failed and it wasn't a hash mismatch:" >&2
-      printf '%s\n' "${out}" >&2
+      printf '%s\n' "${OUT}" >&2
       exit 1
     fi
-    owner=$(pin_field_holding "${specified}") || owner=""
-    if [[ -n ${owner} ]] && ! declared_failure_field "${owner}"; then
-      echo "error: building what this flake publishes names pin field ${owner} as the hash mismatch, and ${owner} is not a declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]})" >&2
-      printf '%s\n' "${out}" >&2
+    OWNER=$(pin_field_holding "${SPECIFIED_HASH}") || OWNER=""
+    if [[ -n ${OWNER} ]] && ! declared_failure_field "${OWNER}"; then
+      echo "error: building what this flake publishes names pin field ${OWNER} as the hash mismatch, and ${OWNER} is not a declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]})" >&2
+      printf '%s\n' "${OUT}" >&2
       exit 1
     fi
-    if [[ -n ${owner} && -n ${BUILD_FAILURE_RESOLVED[${owner}]:-} ]]; then
-      echo "error: building what this flake publishes still names pin field ${owner} after ${owner} was resolved from its own hash mismatch" >&2
-      printf '%s\n' "${out}" >&2
+    if [[ -n ${OWNER} && -n ${BUILD_FAILURE_RESOLVED[${OWNER}]:-} ]]; then
+      echo "error: building what this flake publishes still names pin field ${OWNER} after ${OWNER} was resolved from its own hash mismatch" >&2
+      printf '%s\n' "${OUT}" >&2
       exit 1
     fi
-    if [[ -n ${owner} ]]; then
-      field="${owner}"
+    if [[ -n ${OWNER} ]]; then
+      FIELD="${OWNER}"
     else
-      field=$(next_unresolved_failure_field) || field=""
+      FIELD=$(next_unresolved_failure_field) || FIELD=""
     fi
-    if [[ -z ${field} ]]; then
+    if [[ -z ${FIELD} ]]; then
       echo "error: building what this flake publishes still reports a hash mismatch with every declared build-failure hash field (${BUILD_FAILURE_FIELDS[*]}) resolved once each" >&2
-      printf '%s\n' "${out}" >&2
+      printf '%s\n' "${OUT}" >&2
       exit 1
     fi
-    echo "  ${field} drift -> ${new}"
-    sed -i -E "s|^([[:space:]]*${field}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${new}\\2|" "${pin}"
-    BUILD_FAILURE_RESOLVED["${field}"]=1
+    echo "  ${FIELD} drift -> ${GOT_HASH}"
+    sed -i -E "s|^([[:space:]]*${FIELD}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${GOT_HASH}\\2|" "${PIN_PATH}"
+    BUILD_FAILURE_RESOLVED["${FIELD}"]=1
   done
 }
 
 artifact_pin_current() {
-  local current
+  local CURRENT
   [[ -z ${ARTIFACT_FINGERPRINT:-} ]] && return 0
-  current=$(nix eval --raw --file "${pin}" artifactFingerprint 2>/dev/null || echo "")
-  [[ -n ${current} && ${current} == "${ARTIFACT_FINGERPRINT}" ]]
+  CURRENT=$(nix eval --raw --file "${PIN_PATH}" artifactFingerprint 2>/dev/null || echo "")
+  [[ -n ${CURRENT} && ${CURRENT} == "${ARTIFACT_FINGERPRINT}" ]]
 }
 
 source_pin_current() {
-  # $1 version, $2 rev. True (0) when pin.nix already matches at this version+rev with sourceHash and every EXTRA_HASHES field populated. Lets a no-op run skip the artifactHook + cascade regeneration (which can be non-deterministic, e.g. npm lockfiles) instead of churning the pin on every run. A placeholder pin (empty hash) returns false, so the populate path still runs; callers skip this in build-failure mode, where the hash can drift without a rev change.
-  local v="$1" rev="$2" cv crev csh name val
-  cv=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
-  crev=$(nix eval --raw --file "${pin}" sourceRev 2>/dev/null || echo "")
-  csh=$(nix eval --raw --file "${pin}" sourceHash 2>/dev/null || echo "")
-  [[ ${cv} == "${v}" && ${crev} == "${rev}" && -n ${csh} ]] || return 1
-  for name in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
-    val=$(nix eval --raw --file "${pin}" "${name}" 2>/dev/null || echo "")
-    [[ -n ${val} ]] || return 1
+  # True (0) when pin.nix already matches at this version+rev with sourceHash and every EXTRA_HASHES field populated. Lets a no-op run skip the artifactHook + cascade regeneration (which can be non-deterministic, e.g. npm lockfiles) instead of churning the pin on every run. A placeholder pin (empty hash) returns false, so the populate path still runs. Callers skip this in build-failure mode, where the hash can drift without a rev change.
+  local VERSION="${1}" REV="${2}" CUR_VERSION CUR_REV CUR_HASH NAME VALUE
+  CUR_VERSION=$(nix eval --raw --file "${PIN_PATH}" version 2>/dev/null || echo "")
+  CUR_REV=$(nix eval --raw --file "${PIN_PATH}" sourceRev 2>/dev/null || echo "")
+  CUR_HASH=$(nix eval --raw --file "${PIN_PATH}" sourceHash 2>/dev/null || echo "")
+  [[ ${CUR_VERSION} == "${VERSION}" && ${CUR_REV} == "${REV}" && -n ${CUR_HASH} ]] || return 1
+  for NAME in $(jq -r '.[]' <<<"${PIN_HASHES}"); do
+    VALUE=$(nix eval --raw --file "${PIN_PATH}" "${NAME}" 2>/dev/null || echo "")
+    [[ -n ${VALUE} ]] || return 1
   done
   artifact_pin_current || return 1
   sibling_refs_current
@@ -621,26 +607,25 @@ oci)
   OCI_VERSION=""
   case "${VERSION_SOURCE_TYPE}" in
   "")
-    if [[ -n ${requested_ref} ]]; then
+    if [[ -n ${REQUESTED_REF} ]]; then
       echo "error: oci accepts one tag or digest" >&2
       exit 1
     fi
-    OCI_REF="${requested:-$(jq -er '.tag' <<<"${OCI_SETTINGS}")}"
+    OCI_REF="${REQUESTED:-$(jq -er '.tag' <<<"${OCI_SETTINGS}")}"
     ;;
   github)
-    OCI_REF="${requested_ref:-${requested}}"
+    OCI_REF="${REQUESTED_REF:-${REQUESTED}}"
     if [[ -z ${OCI_REF} ]]; then
       if [[ -z ${GH_OWNER} || -z ${GH_REPO} ]]; then
         echo "error: oci version discovery needs a GitHub release source" >&2
         exit 1
       fi
       echo "Querying GitHub for latest release of ${GH_OWNER}/${GH_REPO}..."
-      # The image is published under its version, not under the spelling of the GitHub release tag, so a
-      # discovered tag is normalized the same way the orchestrator's upstream-version argument already is.
+      # The image is published under its version, not under the spelling of the GitHub release tag, so a discovered tag is normalized the same way the orchestrator's upstream-version argument already is.
       OCI_REF=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/releases/latest" --jq '.tag_name')
       OCI_REF=$(github_version_from_tag "${OCI_REF}" || printf '%s\n' "${OCI_REF}")
     fi
-    OCI_VERSION="${requested:-$(github_version_from_tag "${OCI_REF}" || printf '%s\n' "${OCI_REF}")}"
+    OCI_VERSION="${REQUESTED:-$(github_version_from_tag "${OCI_REF}" || printf '%s\n' "${OCI_REF}")}"
     if [[ ! ${OCI_VERSION} =~ ^[0-9] ]]; then
       echo "error: oci reference ${OCI_REF} does not yield a version for ${GH_OWNER}/${GH_REPO}" >&2
       exit 1
@@ -689,21 +674,20 @@ oci)
     echo "error: oci inspection returned a different platform variant" >&2
     exit 1
   fi
-  OCI_CURRENT_DIGEST=$(nix eval --raw --file "${pin}" imageDigest 2>/dev/null || echo "")
-  OCI_CURRENT_HASH=$(nix eval --raw --file "${pin}" imageHash 2>/dev/null || echo "")
-  OCI_PIN_VERSION=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
-  OCI_LEGACY_FINGERPRINT=$(nix eval --raw --file "${pin}" archiveFingerprint 2>/dev/null || echo "")
+  OCI_CURRENT_DIGEST=$(nix eval --raw --file "${PIN_PATH}" imageDigest 2>/dev/null || echo "")
+  OCI_CURRENT_HASH=$(nix eval --raw --file "${PIN_PATH}" imageHash 2>/dev/null || echo "")
+  OCI_PIN_VERSION=$(nix eval --raw --file "${PIN_PATH}" version 2>/dev/null || echo "")
+  OCI_LEGACY_FINGERPRINT=$(nix eval --raw --file "${PIN_PATH}" archiveFingerprint 2>/dev/null || echo "")
   OCI_CONTENT_MATCHES=0
   if [[ ${OCI_CURRENT_DIGEST} == "${OCI_DIGEST}" && ${OCI_CURRENT_HASH} =~ ^sha256-[A-Za-z0-9+/]{43}=$ && -z ${OCI_LEGACY_FINGERPRINT} ]]; then
     OCI_CONTENT_MATCHES=1
   fi
-  # The image is unchanged only when the pin already claims the version being resolved. A version branch created
-  # from a base that carries this release's image must record its own version, reusing the pinned content.
+  # The image is unchanged only when the pin already claims the version being resolved. A version branch created from a base that carries this release's image must record its own version, reusing the pinned content.
   if ((OCI_CONTENT_MATCHES)) && [[ -z ${OCI_VERSION} || ${OCI_PIN_VERSION} == "${OCI_VERSION}" ]]; then
     finish_unchanged "${OCI_VERSION:-${OCI_DIGEST}}"
   fi
   OCI_WORK=$(mktemp -d)
-  cp "${pin}" "${OCI_WORK}/pin.nix"
+  cp "${PIN_PATH}" "${OCI_WORK}/pin.nix"
   OCI_HAD_LOCK=0
   if [[ -f "${FLAKE_ROOT}/flake.lock" ]]; then
     cp "${FLAKE_ROOT}/flake.lock" "${OCI_WORK}/flake.lock"
@@ -712,7 +696,7 @@ oci)
   trap '
       OCI_STATUS="${?}"
       if (( OCI_STATUS != 0 )); then
-        cp "${OCI_WORK}/pin.nix" "${pin}" || echo "error: oci pin restoration failed" >&2
+        cp "${OCI_WORK}/pin.nix" "${PIN_PATH}" || echo "error: oci pin restoration failed" >&2
         if (( OCI_HAD_LOCK )); then
           cp "${OCI_WORK}/flake.lock" "${FLAKE_ROOT}/flake.lock" || echo "error: oci lock restoration failed" >&2
         else
@@ -742,13 +726,13 @@ oci)
     echo "  imageDigest = \"${OCI_DIGEST}\";"
     echo "  imageHash = \"${OCI_HASH}\";"
     echo "}"
-  } >"${pin}"
-  new_version="${OCI_VERSION:-${OCI_DIGEST}}"
-  pin_changed=1
+  } >"${PIN_PATH}"
+  NEW_VERSION="${OCI_VERSION:-${OCI_DIGEST}}"
+  PIN_CHANGED=1
   ;;
 
 mutable-url)
-  if [[ -n ${requested} || -n ${requested_ref} ]]; then
+  if [[ -n ${REQUESTED} || -n ${REQUESTED_REF} ]]; then
     echo "error: mutable-url does not support requested versions or refs" >&2
     exit 1
   fi
@@ -769,56 +753,56 @@ mutable-url)
     echo "error: mutable-url response has no Last-Modified header" >&2
     exit 1
   fi
-  CURRENT_LAST_MODIFIED=$(nix eval --raw --file "${pin}" lastModified 2>/dev/null || echo "")
-  CURRENT_HASH=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
+  CURRENT_LAST_MODIFIED=$(nix eval --raw --file "${PIN_PATH}" lastModified 2>/dev/null || echo "")
+  CURRENT_HASH=$(nix eval --raw --file "${PIN_PATH}" hash 2>/dev/null || echo "")
   if [[ ${CURRENT_LAST_MODIFIED} == "${LAST_MODIFIED}" && -n ${CURRENT_HASH} ]]; then
     finish_unchanged "main"
   fi
   echo "Prefetching ${MUTABLE_URL}..."
-  new_hash=$(nix store prefetch-file --json --hash-type sha256 "${MUTABLE_URL}" | jq -r '.hash')
-  new_version="main"
+  NEW_HASH=$(nix store prefetch-file --json --hash-type sha256 "${MUTABLE_URL}" | jq -r '.hash')
+  NEW_VERSION="main"
   printf '%s\n' \
     '{' \
     "  lastModified = \"${LAST_MODIFIED}\";" \
-    "  hash = \"${new_hash}\";" \
-    '}' >"${pin}"
-  pin_changed=1
+    "  hash = \"${NEW_HASH}\";" \
+    '}' >"${PIN_PATH}"
+  PIN_CHANGED=1
   ;;
 
 pypi)
-  if [[ -n ${requested} ]]; then
-    new_version="${requested}"
+  if [[ -n ${REQUESTED} ]]; then
+    NEW_VERSION="${REQUESTED}"
   else
-    new_version=$(retry curl -sSfL "https://pypi.org/pypi/${PYPI_NAME}/json" | jq -r '.info.version')
+    NEW_VERSION=$(retry curl -sSfL "https://pypi.org/pypi/${PYPI_NAME}/json" | jq -r '.info.version')
   fi
-  cur_version=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
-  echo "Resolving ${PYPI_NAME} ${new_version} on PyPI..."
-  rel=$(retry curl -sSfL "https://pypi.org/pypi/${PYPI_NAME}/${new_version}/json")
+  CUR_VERSION=$(nix eval --raw --file "${PIN_PATH}" version 2>/dev/null || echo "")
+  echo "Resolving ${PYPI_NAME} ${NEW_VERSION} on PyPI..."
+  RELEASE_JSON=$(retry curl -sSfL "https://pypi.org/pypi/${PYPI_NAME}/${NEW_VERSION}/json")
   if [[ ${PYPI_FORMAT} == "wheel" ]]; then
-    # Prefer the universal py3-none-any wheel (what mk-pypi-package fetches); fall back to the first wheel.
-    url=$(jq -r '([.urls[] | select(.packagetype == "bdist_wheel") | select(.filename | endswith("-py3-none-any.whl"))][0].url) // ([.urls[] | select(.packagetype == "bdist_wheel")][0].url)' <<<"${rel}")
+    # Prefer the universal py3-none-any wheel (what mk-pypi-package fetches). Fall back to the first wheel.
+    URL=$(jq -r '([.urls[] | select(.packagetype == "bdist_wheel") | select(.filename | endswith("-py3-none-any.whl"))][0].url) // ([.urls[] | select(.packagetype == "bdist_wheel")][0].url)' <<<"${RELEASE_JSON}")
   else
-    url=$(jq -r '[.urls[] | select(.packagetype == "sdist")][0].url' <<<"${rel}")
+    URL=$(jq -r '[.urls[] | select(.packagetype == "sdist")][0].url' <<<"${RELEASE_JSON}")
   fi
-  if [[ -z ${url} || ${url} == "null" ]]; then
-    echo "error: no ${PYPI_FORMAT} artifact for ${PYPI_NAME} ${new_version}" >&2
+  if [[ -z ${URL} || ${URL} == "null" ]]; then
+    echo "error: no ${PYPI_FORMAT} artifact for ${PYPI_NAME} ${NEW_VERSION}" >&2
     exit 1
   fi
-  new_hash=$(nix store prefetch-file --json --hash-type sha256 "${url}" | jq -r '.hash')
+  NEW_HASH=$(nix store prefetch-file --json --hash-type sha256 "${URL}" | jq -r '.hash')
   if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
     echo "Resolving sibling cascades..."
-    resolve_siblings_from_metadata "${rel}"
+    resolve_siblings_from_metadata "${RELEASE_JSON}"
   fi
-  if pypi_pin_current "${new_version}" "${new_hash}"; then
+  if pypi_pin_current "${NEW_VERSION}" "${NEW_HASH}"; then
     if [[ -z ${SIBLING_REFS_IN_PIN} ]] && ((CASCADE_CHANGED == 0)); then
-      finish_unchanged "${cur_version}"
+      finish_unchanged "${CUR_VERSION}"
     fi
-    echo "Source pin already up to date (${cur_version})."
+    echo "Source pin already up to date (${CUR_VERSION})."
   else
-    run_artifact_hook "" "${new_version}"
-    echo "Writing pin.nix (${cur_version:-<none>} -> ${new_version})..."
-    write_pypi_pin "${new_version}" "${new_hash}"
-    pin_changed=1
+    run_artifact_hook "" "${NEW_VERSION}"
+    echo "Writing pin.nix (${CUR_VERSION:-<none>} -> ${NEW_VERSION})..."
+    write_pypi_pin "${NEW_VERSION}" "${NEW_HASH}"
+    PIN_CHANGED=1
     if ((${#BUILD_FAILURE_FIELDS[@]} > 0)); then
       revalidate_build_hashes
     fi
@@ -827,72 +811,72 @@ pypi)
 
 github)
   if [[ ${GH_TRACK} == "commit" ]]; then
-    if [[ -n ${requested} ]]; then
-      commit=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${requested}")
+    if [[ -n ${REQUESTED} ]]; then
+      COMMIT=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${REQUESTED}")
     else
-      branch="${GH_BRANCH:-$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}" --jq '.default_branch')}"
-      echo "Querying GitHub for latest commit on ${GH_OWNER}/${GH_REPO}@${branch}..."
-      commit=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${branch}")
+      BRANCH="${GH_BRANCH:-$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}" --jq '.default_branch')}"
+      echo "Querying GitHub for latest commit on ${GH_OWNER}/${GH_REPO}@${BRANCH}..."
+      COMMIT=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/commits/${BRANCH}")
     fi
-    new_rev=$(jq -r '.sha' <<<"${commit}")
-    new_version=$(commit_version "$(jq -r '.commit.committer.date' <<<"${commit}")" "${new_rev}")
+    NEW_REV=$(jq -r '.sha' <<<"${COMMIT}")
+    NEW_VERSION=$(commit_version "$(jq -r '.commit.committer.date' <<<"${COMMIT}")" "${NEW_REV}")
   else
-    if [[ -n ${requested} ]]; then
-      if [[ ${requested} =~ ^[0-9] ]]; then
-        new_version="${requested}"
+    if [[ -n ${REQUESTED} ]]; then
+      if [[ ${REQUESTED} =~ ^[0-9] ]]; then
+        NEW_VERSION="${REQUESTED}"
       else
-        new_version=$(github_version_from_tag "${requested}" || true)
+        NEW_VERSION=$(github_version_from_tag "${REQUESTED}" || true)
       fi
     elif [[ ${GH_TRACK} == "tag" ]]; then
       echo "Querying GitHub for latest tag of ${GH_OWNER}/${GH_REPO}..."
-      new_version=""
+      NEW_VERSION=""
       TAG_NAMES=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/tags" --jq '.[].name')
       while IFS= read -r TAG; do
-        if new_version=$(github_version_from_tag "${TAG}"); then
+        if NEW_VERSION=$(github_version_from_tag "${TAG}"); then
           break
         fi
       done <<<"${TAG_NAMES}"
-      if [[ -z ${new_version} ]]; then
+      if [[ -z ${NEW_VERSION} ]]; then
         echo "error: could not determine a version tag for ${GH_OWNER}/${GH_REPO}" >&2
         exit 1
       fi
     else
       echo "Querying GitHub for latest release of ${GH_OWNER}/${GH_REPO}..."
       RELEASE_TAG=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/releases/latest" --jq '.tag_name')
-      new_version=$(github_version_from_tag "${RELEASE_TAG}" || true)
+      NEW_VERSION=$(github_version_from_tag "${RELEASE_TAG}" || true)
     fi
-    if [[ -z ${new_version} ]]; then
-      echo "error: ${requested:-${RELEASE_TAG:-release tags}} does not match a supported version prefix for ${GH_OWNER}/${GH_REPO}" >&2
+    if [[ -z ${NEW_VERSION} ]]; then
+      echo "error: ${REQUESTED:-${RELEASE_TAG:-release tags}} does not match a supported version prefix for ${GH_OWNER}/${GH_REPO}" >&2
       exit 1
     fi
-    ref_base="${requested_ref:-${new_version}}"
-    ref_base=$(github_version_from_tag "${ref_base}" || printf '%s\n' "${ref_base}")
-    new_rev=$(retry resolve_github_ref_sha "${ref_base}" || true)
-    if [[ -z ${new_rev} ]]; then
-      echo "error: could not resolve ${ref_base} with tag prefixes ${GH_TAG_PREFIXES} on ${GH_OWNER}/${GH_REPO}" >&2
+    REF_BASE="${REQUESTED_REF:-${NEW_VERSION}}"
+    REF_BASE=$(github_version_from_tag "${REF_BASE}" || printf '%s\n' "${REF_BASE}")
+    NEW_REV=$(retry resolve_github_ref_sha "${REF_BASE}" || true)
+    if [[ -z ${NEW_REV} ]]; then
+      echo "error: could not resolve ${REF_BASE} with tag prefixes ${GH_TAG_PREFIXES} on ${GH_OWNER}/${GH_REPO}" >&2
       exit 1
     fi
   fi
   if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
     echo "Resolving sibling cascades..."
-    resolve_siblings_from_source "${new_rev}"
+    resolve_siblings_from_source "${NEW_REV}"
   fi
-  if [[ ${HASH_MODE} != "build-failure" ]] && source_pin_current "${new_version}" "${new_rev}"; then
+  if [[ ${HASH_MODE} != "build-failure" ]] && source_pin_current "${NEW_VERSION}" "${NEW_REV}"; then
     if [[ -z ${SIBLING_REFS_IN_PIN} ]] && ((CASCADE_CHANGED == 0)); then
-      finish_unchanged "${new_version}"
+      finish_unchanged "${NEW_VERSION}"
     fi
-    echo "Source pin already up to date (${new_version})."
+    echo "Source pin already up to date (${NEW_VERSION})."
   else
-    run_artifact_hook "${new_rev}" "${new_version}"
+    run_artifact_hook "${NEW_REV}" "${NEW_VERSION}"
     if [[ ${HASH_MODE} == "build-failure" ]]; then
-      new_hash=""
+      NEW_HASH=""
     else
-      echo "Computing source hash for ${GH_OWNER}/${GH_REPO}@${new_rev}..."
-      new_hash=$(nix-prefetch-github ${GH_FETCH_SUBMODULES:+--fetch-submodules} --rev "${new_rev}" "${GH_OWNER}" "${GH_REPO}" --json | jq -r '.hash // .sha256')
+      echo "Computing source hash for ${GH_OWNER}/${GH_REPO}@${NEW_REV}..."
+      NEW_HASH=$(nix-prefetch-github ${GH_FETCH_SUBMODULES:+--fetch-submodules} --rev "${NEW_REV}" "${GH_OWNER}" "${GH_REPO}" --json | jq -r '.hash // .sha256')
     fi
-    echo "Writing pin.nix (-> ${new_version})..."
-    write_source_pin "${new_version}" "${new_rev}" "${new_hash}"
-    pin_changed=1
+    echo "Writing pin.nix (-> ${NEW_VERSION})..."
+    write_source_pin "${NEW_VERSION}" "${NEW_REV}" "${NEW_HASH}"
+    PIN_CHANGED=1
     if ((${#BUILD_FAILURE_FIELDS[@]} > 0)); then
       revalidate_build_hashes
     fi
@@ -900,40 +884,40 @@ github)
   ;;
 
 github-release-asset)
-  # A prebuilt release asset (single file), not the source tree: resolve the version like `github` (latest release tag, or the requested version), then prefetch-file the asset URL into a { version, hash } pin. No sourceRev — there is no tree to hash. Release assets are immutable, so a matching populated pin short-circuits before the (potentially large) download.
+  # A prebuilt release asset (single file), not the source tree: resolve the version like `github` (latest release tag, or the requested version), then prefetch-file the asset URL into a { version, hash } pin. There is no tree to hash, so no sourceRev. Release assets are immutable, so a matching populated pin short-circuits before the (potentially large) download.
   if [[ -z ${GH_ASSET} ]]; then
     echo "error: github-release-asset requires source.asset (GH_ASSET)" >&2
     exit 1
   fi
-  if [[ -n ${requested} ]]; then
-    new_version="${requested#[Vv]}"
+  if [[ -n ${REQUESTED} ]]; then
+    NEW_VERSION="${REQUESTED#[Vv]}"
   else
     echo "Querying GitHub for latest release of ${GH_OWNER}/${GH_REPO}..."
-    new_version=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/releases/latest" --jq '.tag_name')
-    new_version="${new_version#[Vv]}"
+    NEW_VERSION=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/releases/latest" --jq '.tag_name')
+    NEW_VERSION="${NEW_VERSION#[Vv]}"
   fi
-  cur_version=$(nix eval --raw --file "${pin}" version 2>/dev/null || echo "")
-  cur_hash=$(nix eval --raw --file "${pin}" hash 2>/dev/null || echo "")
-  if [[ ${cur_version} == "${new_version}" && -n ${cur_hash} ]]; then
-    finish_unchanged "${new_version}"
+  CUR_VERSION=$(nix eval --raw --file "${PIN_PATH}" version 2>/dev/null || echo "")
+  CUR_HASH=$(nix eval --raw --file "${PIN_PATH}" hash 2>/dev/null || echo "")
+  if [[ ${CUR_VERSION} == "${NEW_VERSION}" && -n ${CUR_HASH} ]]; then
+    finish_unchanged "${NEW_VERSION}"
   fi
-  tag_tmpl="${GH_TAG}"
-  [[ -n ${tag_tmpl} ]] || tag_tmpl='v${version}'
-  tag="${tag_tmpl//'${version}'/${new_version}}"
-  asset="${GH_ASSET//'${version}'/${new_version}}"
-  asset="${asset//'${tag}'/${tag}}"
-  url="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/${tag}/${asset}"
-  echo "Prefetching ${url}..."
-  new_hash=$(nix store prefetch-file --json --hash-type sha256 "${url}" | jq -r '.hash')
-  echo "Writing pin.nix (${cur_version:-<none>} -> ${new_version})..."
-  cat >"${pin}" <<EOF
+  TAG_TMPL="${GH_TAG}"
+  [[ -n ${TAG_TMPL} ]] || TAG_TMPL='v${version}'
+  TAG="${TAG_TMPL//'${version}'/${NEW_VERSION}}"
+  ASSET="${GH_ASSET//'${version}'/${NEW_VERSION}}"
+  ASSET="${ASSET//'${tag}'/${TAG}}"
+  URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/${TAG}/${ASSET}"
+  echo "Prefetching ${URL}..."
+  NEW_HASH=$(nix store prefetch-file --json --hash-type sha256 "${URL}" | jq -r '.hash')
+  echo "Writing pin.nix (${CUR_VERSION:-<none>} -> ${NEW_VERSION})..."
+  cat >"${PIN_PATH}" <<EOF
 # Auto-managed by \`nix run .#update-version\`. Manual edits will be overwritten by the next bump.
 {
-  version = "${new_version}";
-  hash = "${new_hash}";
+  version = "${NEW_VERSION}";
+  hash = "${NEW_HASH}";
 }
 EOF
-  pin_changed=1
+  PIN_CHANGED=1
   ;;
 
 huggingface)
@@ -941,7 +925,7 @@ huggingface)
     echo "error: huggingface requires source.repo (HF_REPO)" >&2
     exit 1
   fi
-  HF_REF="${requested:-${HF_REVISION}}"
+  HF_REF="${REQUESTED:-${HF_REVISION}}"
   echo "Querying Hugging Face for ${HF_REPO}@${HF_REF}..."
   HF_METADATA=$(retry curl -sSfL "https://huggingface.co/api/models/${HF_REPO}/revision/${HF_REF}${HF_MANIFEST_PATH:+?blobs=true}")
   HF_REV=$(jq -r '.sha // ""' <<<"${HF_METADATA}")
@@ -950,74 +934,74 @@ huggingface)
     echo "error: could not resolve ${HF_REPO}@${HF_REF}" >&2
     exit 1
   fi
-  new_version=$(commit_version "${HF_DATE}" "${HF_REV}")
+  NEW_VERSION=$(commit_version "${HF_DATE}" "${HF_REV}")
   write_huggingface_manifest "${HF_METADATA}"
-  run_artifact_hook "${HF_REV}" "${new_version}"
-  if huggingface_pin_current "${new_version}" "${HF_REV}"; then
-    finish_unchanged "${new_version}"
+  run_artifact_hook "${HF_REV}" "${NEW_VERSION}"
+  if huggingface_pin_current "${NEW_VERSION}" "${HF_REV}"; then
+    finish_unchanged "${NEW_VERSION}"
   fi
   while IFS= read -r HF_FILE; do
     HF_FILE_URL=$(jq -rn --arg VALUE "${HF_FILE}" '$VALUE | split("/") | map(@uri) | join("/")')
     echo "Prefetching ${HF_FILE}..."
     HF_HASHES["${HF_FILE}"]=$(nix store prefetch-file --json --hash-type sha256 "https://huggingface.co/${HF_REPO}/resolve/${HF_REV}/${HF_FILE_URL}" | jq -r '.hash')
   done < <(jq -r '.[]' <<<"${HF_FILES}")
-  echo "Writing pin.nix (-> ${new_version})..."
-  write_huggingface_pin "${new_version}" "${HF_REV}"
-  pin_changed=1
+  echo "Writing pin.nix (-> ${NEW_VERSION})..."
+  write_huggingface_pin "${NEW_VERSION}" "${HF_REV}"
+  PIN_CHANGED=1
   ;;
 
 gitlab)
-  proj="${GITLAB_OWNER}%2F${GITLAB_REPO}"
+  PROJ="${GITLAB_OWNER}%2F${GITLAB_REPO}"
   if [[ ${GITLAB_TRACK} == "release" ]]; then
-    if [[ -n ${requested} ]]; then
-      new_version="${requested#[Vv]}"
+    if [[ -n ${REQUESTED} ]]; then
+      NEW_VERSION="${REQUESTED#[Vv]}"
     else
       echo "Querying GitLab for latest tag of ${GITLAB_OWNER}/${GITLAB_REPO}..."
-      new_version=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/tags" | jq -r '[.[].name | select(test("^[vV]?[0-9]"))][0] // ""')
-      new_version="${new_version#[Vv]}"
+      NEW_VERSION=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/tags" | jq -r '[.[].name | select(test("^[vV]?[0-9]"))][0] // ""')
+      NEW_VERSION="${NEW_VERSION#[Vv]}"
     fi
-    if [[ -z ${new_version} ]]; then
+    if [[ -z ${NEW_VERSION} ]]; then
       echo "error: could not determine a release tag for ${GITLAB_OWNER}/${GITLAB_REPO}" >&2
       exit 1
     fi
-    ref_base="${requested_ref:-${new_version}}"
-    ref_base="${ref_base#[Vv]}"
-    new_rev=$(retry resolve_gitlab_ref_sha "${proj}" "${ref_base}" || true)
-    if [[ -z ${new_rev} ]]; then
-      echo "error: could not resolve v${ref_base} / V${ref_base} / ${ref_base} on ${GITLAB_OWNER}/${GITLAB_REPO}" >&2
+    REF_BASE="${REQUESTED_REF:-${NEW_VERSION}}"
+    REF_BASE="${REF_BASE#[Vv]}"
+    NEW_REV=$(retry resolve_gitlab_ref_sha "${PROJ}" "${REF_BASE}" || true)
+    if [[ -z ${NEW_REV} ]]; then
+      echo "error: could not resolve v${REF_BASE} / V${REF_BASE} / ${REF_BASE} on ${GITLAB_OWNER}/${GITLAB_REPO}" >&2
       exit 1
     fi
   else
-    if [[ -n ${requested} ]]; then
-      commit=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/commits/${requested}")
+    if [[ -n ${REQUESTED} ]]; then
+      COMMIT=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/commits/${REQUESTED}")
     else
       echo "Querying GitLab for latest master commit of ${GITLAB_OWNER}/${GITLAB_REPO}..."
-      commit=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${proj}/repository/branches/master" | jq -r '.commit')
+      COMMIT=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/branches/master" | jq -r '.commit')
     fi
-    new_rev=$(jq -r '.id' <<<"${commit}")
-    new_date=$(jq -r '.committed_date' <<<"${commit}" | cut -d'T' -f1)
-    new_version=$(commit_version "${new_date}" "${new_rev}")
+    NEW_REV=$(jq -r '.id' <<<"${COMMIT}")
+    NEW_DATE=$(jq -r '.committed_date' <<<"${COMMIT}" | cut -d'T' -f1)
+    NEW_VERSION=$(commit_version "${NEW_DATE}" "${NEW_REV}")
   fi
   if [[ "$(jq 'length' <<<"${SIBLINGS}")" -gt 0 ]]; then
     echo "Resolving sibling cascades..."
-    resolve_siblings_from_source "${new_rev}"
+    resolve_siblings_from_source "${NEW_REV}"
   fi
-  if [[ ${HASH_MODE} != "build-failure" ]] && source_pin_current "${new_version}" "${new_rev}"; then
+  if [[ ${HASH_MODE} != "build-failure" ]] && source_pin_current "${NEW_VERSION}" "${NEW_REV}"; then
     if [[ -z ${SIBLING_REFS_IN_PIN} ]] && ((CASCADE_CHANGED == 0)); then
-      finish_unchanged "${new_version}"
+      finish_unchanged "${NEW_VERSION}"
     fi
-    echo "Source pin already up to date (${new_version})."
+    echo "Source pin already up to date (${NEW_VERSION})."
   else
-    run_artifact_hook "${new_rev}" "${new_version}"
+    run_artifact_hook "${NEW_REV}" "${NEW_VERSION}"
     if [[ ${HASH_MODE} == "build-failure" ]]; then
-      new_hash=""
+      NEW_HASH=""
     else
-      echo "Computing source hash for ${GITLAB_OWNER}/${GITLAB_REPO}@${new_rev}..."
-      new_hash=$(nix-prefetch-git --quiet --url "https://${GITLAB_DOMAIN}/${GITLAB_OWNER}/${GITLAB_REPO}.git" --rev "${new_rev}" | jq -r '.hash')
+      echo "Computing source hash for ${GITLAB_OWNER}/${GITLAB_REPO}@${NEW_REV}..."
+      NEW_HASH=$(nix-prefetch-git --quiet --url "https://${GITLAB_DOMAIN}/${GITLAB_OWNER}/${GITLAB_REPO}.git" --rev "${NEW_REV}" | jq -r '.hash')
     fi
-    echo "Writing pin.nix (-> ${new_version})..."
-    write_source_pin "${new_version}" "${new_rev}" "${new_hash}"
-    pin_changed=1
+    echo "Writing pin.nix (-> ${NEW_VERSION})..."
+    write_source_pin "${NEW_VERSION}" "${NEW_REV}" "${NEW_HASH}"
+    PIN_CHANGED=1
     if ((${#BUILD_FAILURE_FIELDS[@]} > 0)); then
       revalidate_build_hashes
     fi
@@ -1030,24 +1014,24 @@ gitlab)
   ;;
 esac
 
-if ((pin_changed)); then
-  format_pin "${pin}"
+if ((PIN_CHANGED)); then
+  format_pin "${PIN_PATH}"
 fi
 
-if ((pin_changed || CASCADE_CHANGED)) || [[ -n ${SIBLING_REFS_IN_PIN} ]]; then
+if ((PIN_CHANGED || CASCADE_CHANGED)) || [[ -n ${SIBLING_REFS_IN_PIN} ]]; then
   echo "Updating flake.lock..."
   update_flake_lock
 fi
 
-if ((pin_changed == 0 && CASCADE_CHANGED == 0 && LOCK_CHANGED == 0)); then
-  finish_unchanged "${new_version}"
+if ((PIN_CHANGED == 0 && CASCADE_CHANGED == 0 && LOCK_CHANGED == 0)); then
+  finish_unchanged "${NEW_VERSION}"
 fi
 
 evaluate_published_packages
 
 echo
-if ((pin_changed)); then
-  echo "Updated the pin to ${new_version}."
+if ((PIN_CHANGED)); then
+  echo "Updated the pin to ${NEW_VERSION}."
 else
-  echo "Pin unchanged (${new_version})."
+  echo "Pin unchanged (${NEW_VERSION})."
 fi

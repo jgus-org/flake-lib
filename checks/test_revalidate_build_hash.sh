@@ -2,11 +2,9 @@
 
 set -euo pipefail
 
-# What this suite owes is that the build the hash is recovered from is the build step the installed
-# package provides rather than one the script names for itself -- which is how a producer's update
-# came to fail on an attribute no flake publishes.
+# The revalidator recovers the hash from the build step the installed package provides, not one it names for itself. The script naming a build step of its own is how a producer's update came to fail on an attribute no flake publishes.
 
-# The suite runs the script through bash, so nothing else here would notice a bit the wrapper needs.
+# This suite runs the script through bash for determinism, so nothing else here would notice a missing executable bit. flake.nix's package wrapper execs the script directly, so a missing bit breaks every producer's run.
 [[ -x ${REVALIDATE_BUILD_HASH:?} ]] || {
   printf 'revalidator script is not executable, so the package wrapper cannot exec it: %s\n' "${REVALIDATE_BUILD_HASH}" >&2
   exit 1
@@ -16,13 +14,11 @@ CASES=$(mktemp -d)
 STUBS=$(mktemp -d)
 trap 'rm -rf "${CASES}" "${STUBS}"' EXIT
 
-# The revalidator execs the build step, so the stub's shebang has to resolve where the test runs:
-# the bash already on PATH is the one that does. Each build consumes the plan's first line; a plan
-# with no lines left builds clean.
+# The revalidator execs the build step, so the stub's shebang has to resolve where the test runs. The bash already on PATH is the one that does. Each build consumes the plan's first line, and a plan with no lines left builds clean.
 {
   printf '#!%s\n' "$(command -v bash)"
   cat <<'STUB'
-printf '%s\n' "$*" >>"${STEP_LOG:?}"
+printf '%s\n' "${*}" >>"${STEP_LOG:?}"
 OUTCOME=''
 TEST_SPECIFIED=''
 TEST_GOT=''
@@ -85,11 +81,10 @@ grep -Fq 'hash = "sha256-vendornew";' "${CASE}/tree/pin.nix"
 }
 grep -Fq -- "--flake ${CASE}/tree" "${BUILDS}"
 
-# A family that builds nothing reports success, so the recovery build is asked for a build.
+# A family that builds nothing exits clean, so the revalidator asks the recovery build for a build.
 grep -Fq -- '--require-build' "${BUILDS}"
 
-# Naming the package narrows the recovery build without narrowing what the finished pin is proven
-# against.
+# Naming the package narrows the build that mines the hash, and the finished pin is still proven against the whole family.
 TARGET='caddy'
 run_revalidator 'mismatch sha256-vendorold sha256-vendornew
 ok' '{
@@ -111,7 +106,7 @@ if grep -Fq -- '--only' <<<"${VERIFIED_BUILD}"; then
 fi
 TARGET=''
 
-# A pin whose field is named something other than `hash` is the field that is read and rewritten.
+# The revalidator reads and rewrites a pin field named something other than `hash` the same way.
 FIELD='vendorHash'
 run_revalidator 'mismatch sha256-vendorold sha256-vendornew
 ok' '{
@@ -155,7 +150,7 @@ grep -Fq 'hash = "sha256-vendorold";' "${CASE}/tree/pin.nix"
   exit 1
 }
 
-# Running the script text without its installed build step is an error, not a verdict.
+# Running the script text without its installed build step fails as an error.
 CASE=$(mktemp -d -p "${CASES}")
 mkdir -p "${CASE}/tree"
 printf '%s\n' '{

@@ -54,6 +54,13 @@ fixed-output hash pin from a build's hash mismatch, for a hash nothing can prefe
 offline-dependency hash at the pinned revision and prints it for the updater to capture into the
 pin.
 
+`mkPnpmDeps` (`lib/mk-pnpm-deps.nix`): a pnpm workspace's offline dependency tree, filed under a
+store name carrying the pnpm major. A fixed-output path is keyed on its name and its declared hash
+alone, so two instantiations sharing both share the path, and the one that runs second never
+fetches: one toolchain's tree answers for another's, and one hash pin cannot be right for both. The
+fetcher puts the name nowhere but the path, so carrying the major costs a cache miss and no change
+to the hash value. `checks.<system>.pnpm-deps-tests` owns the assertion.
+
 `mkComposedHook` (`lib/mk-composed-hook.nix`): several artifact hooks composed into the one
 executable a single hook slot takes.
 

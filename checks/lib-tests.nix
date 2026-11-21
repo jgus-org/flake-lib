@@ -34,6 +34,19 @@
 
   oci-image-tests = import ./oci-image.nix { inherit lib pkgs; };
 
+  pnpm-deps-tests =
+    let
+      failures = pkgs.lib.runTests (
+        import ./pnpm-deps.nix {
+          inherit lib pkgs;
+          inherit (lib) mkPnpmDeps;
+        }
+      );
+    in
+    pkgs.lib.throwIf (failures != [ ]) "mkPnpmDeps tests failed" (
+      pkgs.runCommand "pnpm-deps-tests" { } "touch $out"
+    );
+
   python-flake-tests =
     let
       failures = pkgs.lib.runTests (

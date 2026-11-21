@@ -4,12 +4,15 @@
 #   SOURCE_TYPE   pypi | github | github-release-asset | gitlab | huggingface | oci | mutable-url
 #   PYPI_NAME     PyPI distribution name (underscore form)   [pypi]
 #   PYPI_FORMAT   sdist | wheel                              [pypi]
-#   VERSION_SOURCE_TYPE       the source an oci producer discovers versions from (github). Empty for a single-branch image    [oci]
+#   VERSION_SOURCE_TYPE       the source an oci producer discovers versions from (github | registry). Empty for a single-branch image    [oci]
+#   VERSION_TAG_PREFIX        the prefix an oci registry puts on the tag it publishes a version under    [oci registry]
+#   REGISTRY_TAGS_LIB         the sourced helper that lists a registry's tags    [oci registry]
 #   GH_OWNER/GH_REPO          GitHub owner/repo              [github, github-release-asset, oci release source]
 #   GH_TRACK                  release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0.devDATE+gREV)  [github]
 #   GH_BRANCH                 commit-tracking: branch to follow (default: repo default branch)  [github]
 #   GH_ASSET                  release-asset filename template; tokens ${version} (tag minus leading v) and ${tag}  [github-release-asset]
-#   GH_TAG                    release-tag template; token ${version} (default: v${version})  [github-release-asset]
+#   GH_TAG                    release-tag template; token ${version} (default: the declared tag prefix, or v, before the version)  [github-release-asset]
+#   GH_TAG_PREFIXES           JSON array of the prefixes a version's tag may carry; the source's tagPrefix when it declares one
 #   GITLAB_OWNER/GITLAB_REPO  GitLab owner/repo              [gitlab]
 #   GITLAB_DOMAIN             GitLab host (default gitlab.com)                       [gitlab]
 #   GITLAB_TRACK              release (tags -> X.Y.Z) | commit (master HEAD -> 0.devDATE+gREV)  [gitlab]
@@ -71,8 +74,14 @@ HF_MANIFEST_INCLUDE="${HF_MANIFEST_INCLUDE:-[]}"
 HF_MANIFEST_EXCLUDE="${HF_MANIFEST_EXCLUDE:-[]}"
 HF_MANIFEST_HASH_FIELD="${HF_MANIFEST_HASH_FIELD:-}"
 MUTABLE_URL="${MUTABLE_URL:-}"
+VERSION_TAG_PREFIX="${VERSION_TAG_PREFIX:-}"
 mapfile -t GITHUB_TAG_PREFIXES < <(jq -r '.[]' <<<"${GH_TAG_PREFIXES}")
 mapfile -t BUILD_FAILURE_FIELDS < <(jq -r '.[]' <<<"${BUILD_FAILURE_HASHES}")
+
+if [[ ${SOURCE_TYPE} == "oci" && ${VERSION_SOURCE_TYPE} == "registry" ]]; then
+  # shellcheck source=/dev/null
+  source "${REGISTRY_TAGS_LIB:?required env var}"
+fi
 
 declare -A EXTRA=()
 declare -A HF_HASHES=()
@@ -230,8 +239,12 @@ github_version_from_tag() {
 }
 
 resolve_gitlab_ref_sha() {
-  local PROJ="${1}" REF_BASE="${2}" CANDIDATE ID
-  for CANDIDATE in "v${REF_BASE}" "V${REF_BASE}" "${REF_BASE}"; do
+  local PROJ="${1}" REF_BASE="${2}" CANDIDATE ID PREFIX
+  local -a CANDIDATES=()
+  for PREFIX in "${GITHUB_TAG_PREFIXES[@]}"; do
+    CANDIDATES+=("${PREFIX}${REF_BASE}")
+  done
+  for CANDIDATE in "${CANDIDATES[@]}"; do
     if ID=$(curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/commits/${CANDIDATE}" 2>/dev/null | jq -r '.id // ""') && [[ -n ${ID} && ${ID} != "null" ]]; then
       echo "${ID}"
       return 0
@@ -631,6 +644,43 @@ oci)
       exit 1
     fi
     ;;
+  registry)
+    # A registry publishes a version under whatever tag it likes, so the tag is never inferred from the version except by the one prefix the flake declares.
+    if [[ -n ${REQUESTED_REF} ]]; then
+      OCI_REF="${REQUESTED_REF}"
+      OCI_VERSION="${REQUESTED}"
+    elif [[ -n ${REQUESTED} ]]; then
+      OCI_REF="${VERSION_TAG_PREFIX}${REQUESTED}"
+      OCI_VERSION="${REQUESTED}"
+    else
+      # The registry's own tag list is the only authority on what it published, and the newest stable version in it is the answer, the same as a release source's latest release. A tag that names no version is not trackable.
+      echo "Listing the tags the registry publishes for ${OCI_NAME}..."
+      if ! OCI_TAGS=$(retry registry_tag_names "${OCI_NAME}"); then
+        exit 1
+      fi
+      declare -A OCI_TAG_OF=()
+      while IFS= read -r OCI_TAG; do
+        OCI_TAG_VERSION=$(github_version_from_tag "${OCI_TAG}" || true)
+        [[ ${OCI_TAG_VERSION} =~ ^[0-9] ]] || continue
+        OCI_TAG_OF["${OCI_TAG_VERSION}"]="${OCI_TAG}"
+      done <<<"${OCI_TAGS}"
+      if ((${#OCI_TAG_OF[@]} == 0)); then
+        echo "error: ${OCI_NAME} publishes no tag that names a version" >&2
+        exit 1
+      fi
+      OCI_VERSION=$(printf '%s\n' "${!OCI_TAG_OF[@]}" |
+        python3 "${CASCADE_PY}" sort 0 stable | tail -1)
+      if [[ -z ${OCI_VERSION} ]]; then
+        echo "error: ${OCI_NAME} publishes no stable version tag" >&2
+        exit 1
+      fi
+      OCI_REF="${OCI_TAG_OF[${OCI_VERSION}]}"
+    fi
+    if [[ ! ${OCI_VERSION} =~ ^[0-9] ]]; then
+      echo "error: oci reference ${OCI_REF} does not yield a version for ${OCI_NAME}" >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "error: oci cannot discover versions from VERSION_SOURCE_TYPE=${VERSION_SOURCE_TYPE}" >&2
     exit 1
@@ -890,11 +940,11 @@ github-release-asset)
     exit 1
   fi
   if [[ -n ${REQUESTED} ]]; then
-    NEW_VERSION="${REQUESTED#[Vv]}"
+    NEW_VERSION=$(github_version_from_tag "${REQUESTED}" || printf '%s\n' "${REQUESTED}")
   else
     echo "Querying GitHub for latest release of ${GH_OWNER}/${GH_REPO}..."
     NEW_VERSION=$(retry gh api "/repos/${GH_OWNER}/${GH_REPO}/releases/latest" --jq '.tag_name')
-    NEW_VERSION="${NEW_VERSION#[Vv]}"
+    NEW_VERSION=$(github_version_from_tag "${NEW_VERSION}" || printf '%s\n' "${NEW_VERSION}")
   fi
   CUR_VERSION=$(nix eval --raw --file "${PIN_PATH}" version 2>/dev/null || echo "")
   CUR_HASH=$(nix eval --raw --file "${PIN_PATH}" hash 2>/dev/null || echo "")
@@ -902,7 +952,8 @@ github-release-asset)
     finish_unchanged "${NEW_VERSION}"
   fi
   TAG_TMPL="${GH_TAG}"
-  [[ -n ${TAG_TMPL} ]] || TAG_TMPL='v${version}'
+  # A release tag is the version under the prefix the source declares, and under `v` when it declares none, which is how the first entry of the default prefix list spells it.
+  [[ -n ${TAG_TMPL} ]] || TAG_TMPL="${GITHUB_TAG_PREFIXES[0]}\${version}"
   TAG="${TAG_TMPL//'${version}'/${NEW_VERSION}}"
   ASSET="${GH_ASSET//'${version}'/${NEW_VERSION}}"
   ASSET="${ASSET//'${tag}'/${TAG}}"
@@ -954,21 +1005,28 @@ gitlab)
   PROJ="${GITLAB_OWNER}%2F${GITLAB_REPO}"
   if [[ ${GITLAB_TRACK} == "release" ]]; then
     if [[ -n ${REQUESTED} ]]; then
-      NEW_VERSION="${REQUESTED#[Vv]}"
+      NEW_VERSION=$(github_version_from_tag "${REQUESTED}" || printf '%s\n' "${REQUESTED}")
     else
       echo "Querying GitLab for latest tag of ${GITLAB_OWNER}/${GITLAB_REPO}..."
-      NEW_VERSION=$(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/tags" | jq -r '[.[].name | select(test("^[vV]?[0-9]"))][0] // ""')
-      NEW_VERSION="${NEW_VERSION#[Vv]}"
+      # The project's own tag list answers with its newest tag first, and a tag names a version only under the prefixes the source declares.
+      NEW_VERSION=""
+      while IFS= read -r TAG; do
+        if STRIPPED=$(github_version_from_tag "${TAG}"); then
+          NEW_VERSION="${STRIPPED}"
+          break
+        fi
+      done < <(retry curl -sSfL "https://${GITLAB_DOMAIN}/api/v4/projects/${PROJ}/repository/tags" |
+        jq -r '.[].name')
     fi
     if [[ -z ${NEW_VERSION} ]]; then
       echo "error: could not determine a release tag for ${GITLAB_OWNER}/${GITLAB_REPO}" >&2
       exit 1
     fi
     REF_BASE="${REQUESTED_REF:-${NEW_VERSION}}"
-    REF_BASE="${REF_BASE#[Vv]}"
+    REF_BASE=$(github_version_from_tag "${REF_BASE}" || printf '%s\n' "${REF_BASE}")
     NEW_REV=$(retry resolve_gitlab_ref_sha "${PROJ}" "${REF_BASE}" || true)
     if [[ -z ${NEW_REV} ]]; then
-      echo "error: could not resolve v${REF_BASE} / V${REF_BASE} / ${REF_BASE} on ${GITLAB_OWNER}/${GITLAB_REPO}" >&2
+      echo "error: could not resolve a ref for version ${REF_BASE} on ${GITLAB_OWNER}/${GITLAB_REPO}" >&2
       exit 1
     fi
   else

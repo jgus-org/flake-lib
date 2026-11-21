@@ -83,6 +83,9 @@ let
     name = "curl";
     runtimeInputs = [ pkgs.jq ];
     text = ''
+      case "''${*}" in
+        *'/tags/list'* | *'/token'*) exec ${fixtures.registry-test-curl}/bin/registry-test-curl "''${@}" ;;
+      esac
       # GitLab names the page that follows in a response header, so the fake writes
       # the header dump the orchestrator asked for as well as the body it reads.
       headers=""
@@ -126,6 +129,7 @@ in
         CASCADE_PY = ../scripts/cascade.py;
         DEPS_CORE = ../scripts/deps_core.py;
         GIT_PUSH_LIB = ../scripts/git-push.sh;
+        REGISTRY_TAGS_LIB = ../scripts/registry-tags.sh;
         UPDATE_BRANCHES_CORE = ../scripts/update-branches-core.sh;
         nativeBuildInputs = [
           pkgs.bash

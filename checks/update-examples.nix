@@ -18,6 +18,18 @@ let
     };
   };
 
+  # A registry spells a version however it likes, so a producer whose image's own tag carries a prefix names the registry as its version source: its tag list is where its versions live, and tagPrefix says how the registry spells one.
+  ociRegistrySource = {
+    arch = "amd64";
+    imageName = "registry.example/image";
+    os = "linux";
+    type = "oci";
+    versions = {
+      tagPrefix = "v";
+      type = "registry";
+    };
+  };
+
   examples = {
     update-branches-github-pnpm = lib.mkUpdateBranches {
       inherit pkgs;
@@ -32,6 +44,11 @@ let
       inherit pkgs;
       pinSchema = "oci";
       source = ociVersionedSource;
+    };
+    update-branches-oci-registry = lib.mkUpdateBranches {
+      inherit pkgs;
+      pinSchema = "oci";
+      source = ociRegistrySource;
     };
     update-branches-pypi-cargo = lib.mkUpdateBranches {
       inherit pkgs;
@@ -111,6 +128,10 @@ let
     update-version-oci-github = lib.mkUpdateVersion {
       inherit pkgs;
       source = ociVersionedSource;
+    };
+    update-version-oci-registry = lib.mkUpdateVersion {
+      inherit pkgs;
+      source = ociRegistrySource;
     };
     update-version-pypi-cargo = lib.mkUpdateVersion {
       inherit pkgs;

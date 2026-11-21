@@ -2,7 +2,7 @@
   description = "Shared library for jgus sub-flakes: the per-version-branch orchestrator, update-version machinery, artifact producers, and the install shapes they share.";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     treefmt-nix = {
       inputs.nixpkgs.follows = "nixpkgs";
       url = "github:numtide/treefmt-nix";

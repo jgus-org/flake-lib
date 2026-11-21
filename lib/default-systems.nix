@@ -1,4 +1,4 @@
-# Build hosts a sub-flake produces for, stated once for the flake family, and the per-system output iteration built on them. Nixpkgs 26.11 dropped x86_64-darwin, so importing it there fails: a throw on current nixpkgs-unstable, a warning where an abort-on-warn verification build already refuses it. A flake naming that host evaluates fine until something forces its attributes, so a per-flake list drifts silently. Intel macOS remains reachable as a cross-compile or an upstream prebuilt.
+# Build hosts a sub-flake produces for, stated once for the flake family, and the per-system output iteration built on them. Nixpkgs 26.11 dropped x86_64-darwin, so importing it there fails: a throw on current nixos-unstable, a warning where an abort-on-warn verification build already refuses it. A flake naming that host evaluates fine until something forces its attributes, so a per-flake list drifts silently. Intel macOS remains reachable as a cross-compile or an upstream prebuilt.
 with builtins;
 let
   defaultSystems = [

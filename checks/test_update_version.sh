@@ -111,9 +111,7 @@ diff -u <(printf '%s\n' \
   '  version = "1.2.3";' \
   '}') <(grep -v '^#' "${TEST_ROOT}/pin.nix")
 
-# A dotted field name is a nested attribute, and how deeply it nests is the formatter's rule rather than the writer's,
-# so the updater hands the pin to the repository's own formatter. The property is that nothing is left to reformat; a
-# pin the formatter would change is a pin that fails the formatting check on the updater's own commit.
+# A dotted field name is a nested attribute, and how deeply it nests is the formatter's rule rather than the writer's. The updater therefore hands the pin to the repository's own formatter. Nothing may be left to reformat: a pin the formatter would change is a pin that fails the formatting check on the updater's own commit.
 NESTED_ROOT="${TEST_ROOT}/nested-pin"
 mkdir -p "${NESTED_ROOT}"
 printf '%s\n' '{}' >"${NESTED_ROOT}/flake.nix"
@@ -480,10 +478,7 @@ grep -Fq 'publishes no package named not-published' <<<"${STRAY_OUTPUT}"
   exit 1
 }
 
-# A self-hosted instance is named by GITLAB_DOMAIN, so every upstream this updater asks has to be that host: the
-# tag list a release is discovered from, the ref it resolves to, the branch a commit-tracked source follows, and
-# the git remote the source hash is computed from. Naming no domain leaves all of them on gitlab.com, which is
-# what every producer already in the fleet does.
+# A self-hosted instance is named by GITLAB_DOMAIN, so every upstream this updater asks has to be that host: the tag list a release is discovered from, the ref it resolves to, the branch a commit-tracked source follows, and the git remote the source hash is computed from. Naming no domain leaves all of them on gitlab.com, which is what every producer already in the fleet does.
 gitlab_update() {
   # $1 host (empty names none, so the updater's own default applies), $2 tracking mode, $3 case directory, $4 request log
   local DOMAIN="${1}" TRACK="${2}" ROOT="${TEST_ROOT}/${3}" URL_LOG="${4}"

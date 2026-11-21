@@ -1,20 +1,4 @@
-# Installed and refreshed by `nix run github:jgus-org/flake-lib/v1#update-workflows`: the
-# tool is taken from flake-lib's own flake URL rather than from this repository, because
-# there is nothing producer-specific in it to re-declare. A repository that does not have
-# this file yet installs it with
-# `nix run github:jgus-org/flake-lib/v1#update-workflows -- adopt update-branches.yml`.
-# Edit it in jgus-org/flake-lib's templates/workflows, not here. Binary caching uses the
-# fleet Attic cache whenever the ATTIC_TOKEN secret resolves -- an organization secret
-# covers every repository at once -- and a repository, or a fork pull request, with no
-# token runs on the public cache alone.
-# The refresh that keeps this file current is a workflow of its own,
-# templates/workflows/update-workflows.yml, so this run reads the workflow file it is
-# already running and never executes a file its own job has just written. The flake-lib
-# input and the templates that revision ships arrive in one commit, so the scripts this
-# run invokes are always the scripts its workflow file was written against.
-#
-# An update runs on a hosted runner unless the repository sets the `RUNNER` variable to a
-# label one of its own runners carries.
+# Rewritten wholesale by `nix run github:jgus-org/flake-lib/v1#update-workflows`. Edit it in jgus-org/flake-lib's templates/workflows, not here.
 
 name: Update branches
 
@@ -27,11 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  # A producer whose flake takes inputs from other producers here must not pin them before
-  # their own update has published. The edges are this repository's flake inputs, so nothing
-  # below is producer-specific, and a leaf producer's run reports nothing to wait for. A
-  # dependency that cannot be observed, that ended badly, or that never finishes is reported
-  # and skipped: ordering is worth waiting for, not worth stalling the fleet on.
+  # A producer whose flake takes inputs from other producers must not pin them before their own update has published. The edges are this repository's flake inputs, so nothing below is producer-specific, and a leaf producer's run reports nothing to wait for. A dependency that cannot be observed, that ended badly, or that never finishes is reported and skipped: ordering is worth waiting for, not worth stalling the fleet on.
   deps:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
@@ -46,17 +26,13 @@ jobs:
 
       - name: Wait for dependency updates
         env:
-          # Reading another repository's runs and starting a dependency's update both need a
-          # token. This organization secret covers every repository, so no producer declares
-          # anything, and with no such secret the gate observes nothing and proceeds.
+          # Reading another repository's runs and starting a dependency's update both need a token. This organization secret covers every repository, so no producer declares anything. With no such secret the gate observes nothing and proceeds.
           GITHUB_TOKEN: ${{ secrets.ORG_UPDATE_TOKEN }}
         run: nix run github:jgus-org/flake-lib/v1#wait-for-deps
 
   discover:
     needs: deps
-    # A dependency that failed is worth continuing past: ordering is best effort. A run that is
-    # being cancelled is not -- GitHub schedules this job and never dispatches it, so the run
-    # queues forever and holds the concurrency group every later update waits behind.
+    # A dependency that failed is worth continuing past: ordering is best effort. A run that is being cancelled is not: GitHub schedules this job and never dispatches it, so the run queues forever and holds the concurrency group every later update waits behind.
     if: "!cancelled()"
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     outputs:
@@ -76,7 +52,7 @@ jobs:
       - name: Discover tracked versions and specification base
         id: plan
         env:
-          # gh CLI reads GH_TOKEN, not GITHUB_TOKEN; required for github-source flakes.
+          # gh CLI reads GH_TOKEN, not GITHUB_TOKEN, and a github-source flake needs it.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: nix run .#update-branches -- list
 

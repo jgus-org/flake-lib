@@ -1,21 +1,12 @@
 #!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#git nixpkgs#jq nixpkgs#nix nixpkgs#coreutils --command bash
 
-# Installs this repository's GitHub Actions workflows from the templates shipped by the
-# newest flake-lib revision its declared input can reach, and advances the lock to that
-# revision in the same commit: a workflow that tracks flake-lib N must not run the scripts of
-# revision N+1, or the repository is green against a library nothing else locks.
+# Installs this repository's GitHub Actions workflows from the templates shipped by the newest flake-lib revision its declared input can reach, and advances the lock to that revision in the same commit: a workflow that tracks flake-lib N must not run the scripts of revision N+1, or the repository is green against a library nothing else locks.
 #
-# A template replaces its workflow wholesale. Every repository-owned knob is a constructor
-# argument in flake.nix baked into the package the workflow invokes, so the workflow file
-# carries no repository state worth rescuing.
+# A template replaces its workflow wholesale. Every repository-owned knob is a constructor argument in flake.nix baked into the package the workflow invokes, so the workflow file carries no repository state worth rescuing.
 #
-# With no arguments this keeps installed workflows current; it removes, renames, or picks names
-# for none of them, because which workflows a repository has is the author's decision. `adopt
-# <name>` is how a repository joins that set, and it is the only way: the author names the
-# template, so the tool never guesses which publication model a repository wants.
+# With no arguments this keeps installed workflows current. It removes, renames, or picks names for none of them, because which workflows a repository has is the author's decision. `adopt <name>` is how a repository joins that set, and it is the only way: the author names the template, so the tool never guesses which publication model a repository wants.
 #
-# A workflow follows the templates only because this runs for it on a schedule, so every run
-# keeps update-workflows.yml -- the workflow that runs this -- installed and current too.
+# A workflow follows the templates only because this runs for it on a schedule, so every run keeps update-workflows.yml, the workflow that runs this, installed and current too.
 
 set -euo pipefail
 
@@ -66,122 +57,108 @@ esac
 # shellcheck source=/dev/null
 source "${GIT_PUSH_LIB:?required env var}"
 
-node=$(jq -r '.nodes.root.inputs["flake-lib"] // ""' flake.lock)
-[[ -n ${node} ]] || die "flake.lock has no flake-lib input, so there is no template to install"
-locked_url=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
+NODE=$(jq -r '.nodes.root.inputs["flake-lib"] // ""' flake.lock)
+[[ -n ${NODE} ]] || die "flake.lock has no flake-lib input, so there is no template to install"
+LOCKED_URL=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
   | select(.type == "github") | "\(.owner)/\(.repo)/\(.rev)"' flake.lock)
-[[ -n ${locked_url} ]] || die "flake.lock's flake-lib is not a github input, so its templates have no public revision to install from"
+[[ -n ${LOCKED_URL} ]] || die "flake.lock's flake-lib is not a github input, so its templates have no public revision to install from"
 
 if ! nix flake update flake-lib; then
   die "advancing the flake-lib input failed"
 fi
-current_url=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
+CURRENT_URL=$(jq -r '.nodes.root.inputs["flake-lib"] as $n | .nodes[$n].locked
   | select(.type == "github") | "\(.owner)/\(.repo)/\(.rev)"' flake.lock)
-[[ -n ${current_url} ]] || die "advancing flake-lib left a lock whose flake-lib input is no longer a github input"
+[[ -n ${CURRENT_URL} ]] || die "advancing flake-lib left a lock whose flake-lib input is no longer a github input"
 
-system=$(nix config show system) || die "this nix does not report the system it builds for"
-templates_ref="github:${current_url}#packages.${system}.workflow-templates"
-stderr=$(mktemp)
-trap 'rm -f "${stderr}"' EXIT
-if ! templates_src=$(nix build --no-link --no-write-lock-file --print-out-paths "${templates_ref}" 2>"${stderr}"); then
-  cat "${stderr}" >&2
-  die "flake-lib ${current_url} publishes no packages.${system}.workflow-templates, so the installed workflows cannot be refreshed from it"
+SYSTEM=$(nix config show system) || die "this nix does not report the system it builds for"
+TEMPLATES_REF="github:${CURRENT_URL}#packages.${SYSTEM}.workflow-templates"
+STDERR=$(mktemp)
+trap 'rm -f "${STDERR}"' EXIT
+if ! TEMPLATES_SRC=$(nix build --no-link --no-write-lock-file --print-out-paths "${TEMPLATES_REF}" 2>"${STDERR}"); then
+  cat "${STDERR}" >&2
+  die "flake-lib ${CURRENT_URL} publishes no packages.${SYSTEM}.workflow-templates, so the installed workflows cannot be refreshed from it"
 fi
 
 install_from_template() {
-  local template="${1}" destination="${2}"
-  # The template is the whole file: every repository-owned knob is a flake.nix
-  # constructor argument baked into the invoked package, so nothing here is worth
-  # rescuing from the file being replaced.
-  cp "${template}" "${destination}"
+  local TEMPLATE="${1}" DESTINATION="${2}"
+  cp "${TEMPLATE}" "${DESTINATION}"
 }
 
 carries_schedule() {
   grep -qE '^[[:space:]]*schedule:' "${1}"
 }
 
-declare -a installed=()
+declare -a INSTALLED=()
 if [[ ${MODE} == adopt ]]; then
-  template="${templates_src}/${ADOPT_TARGET}"
-  if [[ ! -s ${template} ]]; then
-    available=$(cd "${templates_src}" && printf '%s ' *.yml *.yaml 2>/dev/null || true)
-    die "flake-lib ${current_url##*/} ships no templates/workflows/${ADOPT_TARGET}; it ships ${available}"
+  TEMPLATE="${TEMPLATES_SRC}/${ADOPT_TARGET}"
+  if [[ ! -s ${TEMPLATE} ]]; then
+    AVAILABLE=$(cd "${TEMPLATES_SRC}" && printf '%s ' *.yml *.yaml 2>/dev/null || true)
+    die "flake-lib ${CURRENT_URL##*/} ships no templates/workflows/${ADOPT_TARGET}; it ships ${AVAILABLE}"
   fi
-  destination="${WORKFLOW_DIR}/${ADOPT_TARGET}"
+  DESTINATION="${WORKFLOW_DIR}/${ADOPT_TARGET}"
   mkdir -p "${WORKFLOW_DIR}"
-  install_from_template "${template}" "${destination}"
-  installed+=("${destination}")
-  # Adopting a flake-lib workflow adopts the schedule that rewrites flake-lib workflows with it,
-  # so the adopted template is current the day it lands rather than after someone installs the
-  # schedule by hand.
-  if [[ ${destination} != "${REFRESHER_WORKFLOW}" ]]; then
-    install_from_template "${templates_src}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
-    installed+=("${REFRESHER_WORKFLOW}")
+  install_from_template "${TEMPLATE}" "${DESTINATION}"
+  INSTALLED+=("${DESTINATION}")
+  # Adopting a flake-lib workflow adopts the schedule that rewrites flake-lib workflows with it, so the adopted template is current the day it lands rather than after someone installs the schedule by hand.
+  if [[ ${DESTINATION} != "${REFRESHER_WORKFLOW}" ]]; then
+    install_from_template "${TEMPLATES_SRC}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    INSTALLED+=("${REFRESHER_WORKFLOW}")
   fi
-  # A workflow flake-lib has no template for is invisible to every later refresh, and a
-  # scheduled one keeps publishing beside the adopted template forever. Retiring it is the
-  # author's decision, so it is named rather than removed. Whether a file schedules anything is
-  # the author's intent and lives only in the file, which is the one place it can be read. The
-  # schedule installed above is skipped: it is refreshed by every run, which is what it is for.
-  others=()
-  for other in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
-    [[ -f ${other} && ${other} != "${destination}" ]] || continue
-    [[ ${other} == "${REFRESHER_WORKFLOW}" ]] && continue
-    if carries_schedule "${other}"; then
-      others+=("${other}")
+  # A workflow flake-lib has no template for is invisible to every later refresh, and a scheduled one keeps publishing beside the adopted template forever. Retiring it is the author's decision, so it is named rather than removed. Whether a file schedules anything is the author's intent and lives only in the file, which is the one place it can be read. The schedule installed above is skipped: it is refreshed by every run, which is what it is for.
+  OTHERS=()
+  for OTHER in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
+    [[ -f ${OTHER} && ${OTHER} != "${DESTINATION}" ]] || continue
+    [[ ${OTHER} == "${REFRESHER_WORKFLOW}" ]] && continue
+    if carries_schedule "${OTHER}"; then
+      OTHERS+=("${OTHER}")
     fi
   done
-  if ((${#others[@]} > 0)); then
+  if ((${#OTHERS[@]} > 0)); then
     printf 'note: %s also carries a schedule, and a workflow flake-lib has no template for is never refreshed: %s\n' \
-      "${MODE}" "${others[*]}"
+      "${MODE}" "${OTHERS[*]}"
   fi
 else
-  for destination in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
-    [[ -e ${destination} ]] || continue
-    template="${templates_src}/${destination##*/}"
-    [[ -f ${template} ]] || continue
-    install_from_template "${template}" "${destination}"
-    installed+=("${destination}")
+  for DESTINATION in "${WORKFLOW_DIR}"/*.yml "${WORKFLOW_DIR}"/*.yaml; do
+    [[ -e ${DESTINATION} ]] || continue
+    TEMPLATE="${TEMPLATES_SRC}/${DESTINATION##*/}"
+    [[ -f ${TEMPLATE} ]] || continue
+    install_from_template "${TEMPLATE}" "${DESTINATION}"
+    INSTALLED+=("${DESTINATION}")
   done
-  # A repository that runs this tool follows flake-lib's templates, and the workflow that rewrites
-  # them is one of them: an installed copy is refreshed by the loop above, which is also how its
-  # cron keeps up with the template, and a repository with none gets it here. The case that matters
-  # is a repository whose only flake-lib workflow is the pull-request gate, which has nothing else
-  # that would ever update it.
-  if ((${#installed[@]} == 0)); then
-    echo "no workflow here matched flake-lib's templates/workflows; this run installs the schedule that runs it and advances the input."
+  # A repository that runs this tool follows flake-lib's templates, and the workflow that rewrites them is one of them: an installed copy is refreshed by the loop above, which is also how its cron keeps up with the template, and a repository with none gets it here. The case that matters is a repository whose only flake-lib workflow is the pull-request gate, which has nothing else that would ever update it.
+  if ((${#INSTALLED[@]} == 0)); then
+    echo "no workflow here matched flake-lib's templates/workflows. This run installs the schedule that runs it and advances the input."
   fi
   if [[ ! -e ${REFRESHER_WORKFLOW} ]]; then
     mkdir -p "${WORKFLOW_DIR}"
-    install_from_template "${templates_src}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
-    installed+=("${REFRESHER_WORKFLOW}")
+    install_from_template "${TEMPLATES_SRC}/update-workflows.yml" "${REFRESHER_WORKFLOW}"
+    INSTALLED+=("${REFRESHER_WORKFLOW}")
   fi
 fi
 
-branch=$(git symbolic-ref --quiet --short HEAD) ||
+BRANCH=$(git symbolic-ref --quiet --short HEAD) ||
   die "the flake-lib update commit needs a branch to push to, but HEAD is detached"
-base=$(git rev-parse HEAD)
+BASE=$(git rev-parse HEAD)
 
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-git add flake.lock "${installed[@]}"
+git add flake.lock "${INSTALLED[@]}"
 if git diff --cached --quiet; then
-  echo "flake-lib ${current_url} changed neither the installed workflows nor this flake's inputs."
+  echo "flake-lib ${CURRENT_URL} changed neither the installed workflows nor this flake's inputs."
   exit 0
 fi
-mapfile -t committed < <(git diff --cached --name-only)
-# A template can be byte-identical to what is already installed, in which case the commit
-# is the input advance alone and its subject should not claim otherwise.
-if printf '%s\n' "${committed[@]}" | grep -qvxF flake.lock; then
+mapfile -t COMMITTED < <(git diff --cached --name-only)
+# A template can be byte-identical to what is already installed, in which case the commit is the input advance alone and its subject should not claim otherwise.
+if printf '%s\n' "${COMMITTED[@]}" | grep -qvxF flake.lock; then
   if [[ ${MODE} == adopt ]]; then
-    subject="Adopt flake-lib's ${ADOPT_TARGET} at ${current_url##*/}"
+    SUBJECT="Adopt flake-lib's ${ADOPT_TARGET} at ${CURRENT_URL##*/}"
   else
-    subject="Update workflows from flake-lib ${current_url##*/}"
+    SUBJECT="Update workflows from flake-lib ${CURRENT_URL##*/}"
   fi
 else
-  subject="Advance flake-lib to ${current_url##*/}"
+  SUBJECT="Advance flake-lib to ${CURRENT_URL##*/}"
 fi
-git commit -q -m "${subject}"
+git commit -q -m "${SUBJECT}"
 
-push_ref HEAD "${branch}" "${base}" lease
-echo "Committed ${#committed[@]} file(s) from flake-lib ${current_url}: ${committed[*]}"
+push_ref HEAD "${BRANCH}" "${BASE}" lease
+echo "Committed ${#COMMITTED[@]} file(s) from flake-lib ${CURRENT_URL}: ${COMMITTED[*]}"

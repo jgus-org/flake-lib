@@ -73,8 +73,7 @@ in
       };
     };
   };
-  # The gate consumes this as JSON, so its keys and shapes are the contract between this
-  # expression and the shell that reads it.
+  # The gate consumes this as JSON, so its keys and shapes are the contract between this expression and the shell that reads it.
   testSelectionSerializesToTheNamesTheGateReads = {
     expected = {
       build = [ "a" ];

@@ -1,12 +1,8 @@
 #!/usr/bin/env -S nix shell nixpkgs#bash nixpkgs#jq nixpkgs#coreutils --command bash
 
-# Builds every package a flake publishes for one system, which is the part of a flake's
-# published surface that `nix flake check` only evaluates. See "Gate a pull request" in
-# README.md for the gate this belongs to and for what it deliberately leaves out.
+# Builds every package a flake publishes for one system, which is the part of a flake's published surface that `nix flake check` only evaluates. See "Gate a pull request" in README.md for the gate this belongs to and for what it deliberately leaves out.
 #
-# Like the workflow refresher this is flake-lib's own tool rather than a copy each producer
-# republishes, because nothing about the calling flake is baked into it: what to build is
-# read from the flake at the revision the runner checked out.
+# Like the workflow refresher this is flake-lib's own tool rather than a copy each producer republishes, because nothing about the calling flake is baked into it: what to build is read from the flake at the revision the runner checked out.
 
 set -euo pipefail
 
@@ -71,9 +67,7 @@ if [[ -z ${SYSTEM} ]]; then
   SYSTEM=$(nix config show system) || die "this nix does not report the system it builds for"
 fi
 
-# The selection travels as text because a pure evaluation refuses a path literal. An absent
-# output family and a flake that fails to evaluate reach this point with the same exit
-# status, and only the first is named alone among the candidates in nix's message.
+# The selection travels as text because a pure evaluation refuses a path literal. An absent output family and a flake that fails to evaluate reach this point with the same exit status, and only the first is named alone among the candidates in nix's message.
 STDERR=$(mktemp)
 trap 'rm -f "${STDERR}"' EXIT
 if ! SELECTION=$(nix eval --no-write-lock-file --json --apply "$(cat "${SELECT}")" "${FLAKE}#packages.${SYSTEM}" 2>"${STDERR}"); then
@@ -89,16 +83,13 @@ if ! SELECTION=$(nix eval --no-write-lock-file --json --apply "$(cat "${SELECT}"
 fi
 cat "${STDERR}" >&2
 
-# The lists below are read through a process substitution, whose exit status this shell
-# cannot see, so the shape is required before it is read rather than trusted afterwards.
+# The lists below are read through a process substitution, whose exit status this shell cannot see, so the shape is required before it is read rather than trusted afterwards.
 jq -e 'has("build") and has("skip")' >/dev/null <<<"${SELECTION}" ||
   die "the selection did not report a build list and a skip list"
 mapfile -t BUILD_NAMES < <(jq -r '.build[]' <<<"${SELECTION}")
 mapfile -t SKIPPED_NAMES < <(jq -r '.skip[]' <<<"${SELECTION}")
 
-# A name outside the published family is refused here rather than reaching nix as a build error over
-# a target nobody chose. The gate's excuse is not asked of it: the name says what to build, not what
-# to gate.
+# A name outside the published family is refused here rather than reaching nix as a build error over a target nobody chose. The gate's excuse is not asked of it: the name says what to build, not what to gate.
 if [[ -n ${ONLY} ]]; then
   ONLY_PUBLISHED=false
   for NAME in "${BUILD_NAMES[@]}" "${SKIPPED_NAMES[@]}"; do
@@ -115,9 +106,7 @@ if ((${#SKIPPED_NAMES[@]} > 0)); then
   printf 'skipped by passthru.ciBuildSkip: %s\n' "${SKIPPED_NAMES[*]}" >&2
 fi
 
-# Quoted because an attribute name is not necessarily an identifier: a name with a dot in it
-# would otherwise read as a nested attribute, and one starting with a digit would not read at
-# all. nix resolves either form once quoted.
+# Quoted because an attribute name is not necessarily an identifier: a name with a dot in it would otherwise read as a nested attribute, and one starting with a digit would not read at all. nix resolves either form once quoted.
 TARGETS=()
 for NAME in "${BUILD_NAMES[@]}"; do
   TARGETS+=("${FLAKE}#packages.${SYSTEM}.\"${NAME}\"")

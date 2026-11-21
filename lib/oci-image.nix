@@ -1,3 +1,4 @@
+with builtins;
 { pkgs, source }:
 assert !(source ? versions) || !(source ? tag);
 let
@@ -10,11 +11,13 @@ let
     variant = source.variant or "";
   }
   // pkgs.lib.optionalAttrs (source ? finalImageTag) { inherit (source) finalImageTag; };
-  registry = builtins.head (pkgs.lib.splitString "/" settings.imageName);
+  registry = head (pkgs.lib.splitString "/" settings.imageName);
   registries = pkgs.writeText "oci-registries.conf" ''
     unqualified-search-registries = []
   '';
-  auth = pkgs.writeText "oci-auth.json" (builtins.toJSON { auths = { }; });
+  auth = pkgs.writeText "oci-auth.json" (toJSON {
+    auths = { };
+  });
   skopeo = pkgs.writeShellApplication {
     name = "skopeo";
     text = ''
@@ -29,19 +32,17 @@ let
   };
 in
 assert source.type == "oci";
-assert
-  builtins.match "[a-z0-9][a-z0-9.-]*(:[0-9]+)?/[a-z0-9][a-z0-9._/-]*" settings.imageName != null;
+assert match "[a-z0-9][a-z0-9.-]*(:[0-9]+)?/[a-z0-9][a-z0-9._/-]*" settings.imageName != null;
 assert registry == "localhost" || pkgs.lib.hasInfix "." registry || pkgs.lib.hasInfix ":" registry;
-assert builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" settings.tag != null;
+assert match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" settings.tag != null;
 assert
   !(settings ? finalImageTag)
-  || builtins.match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" settings.finalImageTag != null;
+  || match "[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" settings.finalImageTag != null;
 assert
-  builtins.match "[a-z0-9][a-z0-9._/-]*(:[0-9]+)?(/[a-z0-9][a-z0-9._/-]*)?" settings.finalImageName
-  != null;
-assert builtins.match "[a-z0-9][a-z0-9_-]*" settings.os != null;
-assert builtins.match "[a-z0-9][a-z0-9_-]*" settings.arch != null;
-assert builtins.match "[A-Za-z0-9_.-]*" settings.variant != null;
+  match "[a-z0-9][a-z0-9._/-]*(:[0-9]+)?(/[a-z0-9][a-z0-9._/-]*)?" settings.finalImageName != null;
+assert match "[a-z0-9][a-z0-9_-]*" settings.os != null;
+assert match "[a-z0-9][a-z0-9_-]*" settings.arch != null;
+assert match "[A-Za-z0-9_.-]*" settings.variant != null;
 {
   inherit settings skopeo;
 }

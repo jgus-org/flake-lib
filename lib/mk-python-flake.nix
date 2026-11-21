@@ -1,7 +1,4 @@
-# Assembles a python producer flake's outputs from what it publishes and the upstream it tracks.
-# `payload.packages` becomes `packages.<system>`, `payload.overlays` extends the consumer's python
-# set, and `payload.checks` adds checks that ship nothing. `checks.<system>` holds the overlay
-# members built in the tree `gate.config` names, the checks half, and `formatting`.
+# Assembles a python producer flake's outputs from what it publishes and the upstream it tracks. `payload.packages` becomes `packages.<system>`, `payload.overlays` extends the consumer's python set, and `payload.checks` adds checks that ship nothing. `checks.<system>` holds the overlay members built in the tree `gate.config` names, the checks half, and `formatting`.
 with builtins;
 {
   eachDefaultSystem,
@@ -29,26 +26,21 @@ with builtins;
   upstream ? null,
 }:
 let
-  each = if systems == null then eachDefaultSystem else eachSystem systems;
-
   # `upstream` is the source shape the updaters write plus the pin the build reads: pypi, or a github/gitlab repository by revision.
   source = if upstream == null then { } else removeAttrs upstream [ "pin" ];
-  pin =
-    if upstream == null then
-      null
-    else
-      upstream.pin
-        or (throw "mkPythonFlake: upstream is given without a pin, so the build has no pinned source to fetch");
-  pinSchema = if (source.type or "pypi") == "pypi" then "pypi" else "github";
 
-  packagesPayload = payload.packages or (_: { });
   overlaysPayload = payload.overlays or (_: { });
-  checksPayload = payload.checks or (_: { });
 
   # A payload states its publishables as a function of the set they land in, so the same payload serves the producer's own build and every consumer's tree.
   recordIn =
     pkgsFor: pythonSet:
     let
+      pin =
+        if upstream == null then
+          null
+        else
+          upstream.pin
+            or (throw "mkPythonFlake: upstream is given without a pin, so the build has no pinned source to fetch");
       pinned =
         if upstream == null then
           { }
@@ -70,12 +62,12 @@ let
     // nixpkgs.lib.optionalAttrs (upstream != null) {
       sourcePath =
         pinned.sourcePath
-          or (throw "mkPythonFlake: a payload reads source files, but this pin's source has no eval-time path; only a github or gitlab pin carries one");
+          or (throw "mkPythonFlake: a payload reads source files, but this pin's source has no eval-time path. Only a github or gitlab pin carries one");
       src = pinned.src;
       version = pinned.version;
     };
 
-  packagesIn = pkgsFor: packagesPayload (recordIn pkgsFor pkgsFor.python3.pkgs);
+  packagesIn = pkgsFor: (payload.packages or (_: { })) (recordIn pkgsFor pkgsFor.python3.pkgs);
 
   ownOverlay =
     final: prev:
@@ -90,7 +82,7 @@ in
 {
   overlays.default = ownOverlay;
 }
-// each (
+// (if systems == null then eachDefaultSystem else eachSystem systems) (
   system:
   let
     pkgs = import nixpkgs {
@@ -111,12 +103,12 @@ in
     overlayTree = treeWith { };
     gateTree = if (gate.config or { }) == { } then overlayTree else treeWith gate.config;
     gateChecks = nixpkgs.lib.genAttrs overlayOnly (name: gateTree.python3Packages.${name});
-    ownChecks = checksPayload (recordIn gateTree gateTree.python3.pkgs);
+    ownChecks = (payload.checks or (_: { })) (recordIn gateTree gateTree.python3.pkgs);
 
     formatting = mkFormatting {
       inherit excludes self system;
     };
-    # An artifact hook is a built executable, so one taken from the deployment's set arrives as a function of it.
+    # An artifact hook is a built executable, so a hook taken from the deployment's set arrives as a function of that set.
     updaterArgs =
       updateVersion
       // nixpkgs.lib.optionalAttrs (isFunction (updateVersion.artifactHook or null)) {
@@ -135,7 +127,8 @@ in
     );
     update-branches = mkUpdateBranches (
       {
-        inherit pinSchema pkgs source;
+        inherit pkgs source;
+        pinSchema = if (source.type or "pypi") == "pypi" then "pypi" else "github";
       }
       // nixpkgs.lib.optionalAttrs (branchOwnedFiles != null) { inherit branchOwnedFiles; }
       // updateBranches

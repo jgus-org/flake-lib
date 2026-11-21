@@ -64,30 +64,30 @@ install_push_wrapper() {
 set -euo pipefail
 
 if [[ "${1:-}" == push && -n "${TEST_PUSH_REF:-}" ]]; then
-  refspec="${!#}"
-  if [[ "${refspec}" == *":refs/heads/${TEST_PUSH_REF}" ]]; then
-    count=$(cat "${TEST_PUSH_COUNT_FILE}" 2>/dev/null || printf '%s\n' 0)
-    count=$((count + 1))
-    printf '%s\n' "${count}" > "${TEST_PUSH_COUNT_FILE}"
+  REFSPEC="${!#}"
+  if [[ "${REFSPEC}" == *":refs/heads/${TEST_PUSH_REF}" ]]; then
+    PUSH_COUNT=$(cat "${TEST_PUSH_COUNT_FILE}" 2>/dev/null || printf '%s\n' 0)
+    PUSH_COUNT=$((PUSH_COUNT + 1))
+    printf '%s\n' "${PUSH_COUNT}" >"${TEST_PUSH_COUNT_FILE}"
     case "${TEST_PUSH_MODE}" in
       transient)
-        if (( count <= TEST_PUSH_FAILURES )); then
+        if (( PUSH_COUNT <= TEST_PUSH_FAILURES )); then
           printf '%s\n' 'remote: Internal Server Error' >&2
           exit 1
         fi
         ;;
       applied)
-        if (( count == 1 )); then
-          desired=$("${TEST_REAL_GIT}" rev-parse --verify "${refspec%%:*}^{commit}")
-          "${TEST_REAL_GIT}" push --quiet origin "${desired}:refs/heads/__test-transfer"
-          "${TEST_REAL_GIT}" --git-dir="${TEST_REMOTE}" update-ref "refs/heads/${TEST_PUSH_REF}" "${desired}"
+        if (( PUSH_COUNT == 1 )); then
+          DESIRED=$("${TEST_REAL_GIT}" rev-parse --verify "${REFSPEC%%:*}^{commit}")
+          "${TEST_REAL_GIT}" push --quiet origin "${DESIRED}:refs/heads/__test-transfer"
+          "${TEST_REAL_GIT}" --git-dir="${TEST_REMOTE}" update-ref "refs/heads/${TEST_PUSH_REF}" "${DESIRED}"
           "${TEST_REAL_GIT}" --git-dir="${TEST_REMOTE}" update-ref -d refs/heads/__test-transfer
           printf '%s\n' "remote: ref applied before the response failed" >&2
           exit 1
         fi
         ;;
       conflict)
-        if (( count == 1 )); then
+        if (( PUSH_COUNT == 1 )); then
           "${TEST_REAL_GIT}" --git-dir="${TEST_REMOTE}" update-ref "refs/heads/${TEST_PUSH_REF}" "${TEST_PUSH_CONFLICT_SHA}"
           printf '%s\n' 'remote: ref changed concurrently' >&2
           exit 1
@@ -97,7 +97,7 @@ if [[ "${1:-}" == push && -n "${TEST_PUSH_REF:-}" ]]; then
   fi
 fi
 
-exec "${TEST_REAL_GIT}" "$@"
+exec "${TEST_REAL_GIT}" "${@}"
 EOF
   chmod +x "${TEST_GIT_BIN}/git"
   export TEST_REAL_GIT TEST_GIT_BIN TEST_PUSH_COUNT_FILE
@@ -157,7 +157,7 @@ invoke_update() {
       TRANSIENT_RETRY_DELAY_SECONDS=0 \
       VERSION_CANON='' \
       VERSION_OVERRIDES="${OVERRIDES}" \
-      bash "${UPDATE_BRANCHES_CORE}" "$@"
+      bash "${UPDATE_BRANCHES_CORE}" "${@}"
   )
 }
 
@@ -170,7 +170,7 @@ run_update() {
 run_command() {
   local VERSIONS="${1}"
   shift
-  invoke_update "${VERSIONS}" '["v","V",""]' '' '' "$@"
+  invoke_update "${VERSIONS}" '["v","V",""]' '' '' "${@}"
 }
 
 assert_ref_version() {
@@ -232,9 +232,9 @@ run_failed_update() {
   set +e
   (
     set -e
-    run_update "$@"
+    run_update "${@}"
   ) >"${CASE_ROOT}/update.log" 2>&1
-  UPDATE_EXIT=$?
+  UPDATE_EXIT=${?}
   set -e
   cat "${CASE_ROOT}/update.log"
   if [[ ${UPDATE_EXIT} != 1 ]]; then
@@ -282,7 +282,7 @@ assert_same_ref v1.2 v1.2.3
 assert_same_ref v1 v1.2.3
 assert_same_ref main v1.2.3
 
-# An older branch's failed input refresh must not run its version updater or publish its partial lockfile; a newer healthy branch still advances main.
+# A failed input refresh on an older branch stops the version updater and the partial lockfile for that branch. A newer healthy branch still advances main.
 initialize_repository
 seed_exact_branch 1.1.0
 seed_exact_branch 1.2.0
@@ -303,7 +303,7 @@ grep -Fq 'nix flake update failed for 1.1.0 (exit 42)' "${CASE_ROOT}/update.log"
 grep -Fqx -- '- `v1.1.0`: nix flake update failed (exit 42)' "${GITHUB_STEP_SUMMARY}"
 unset GITHUB_STEP_SUMMARY
 
-# A failed input refresh on the only new branch leaves both its partial lockfile and the version updater unpublished.
+# A failed input refresh on the only new branch publishes neither its partial lockfile nor its version updater.
 initialize_repository
 commit_specification
 export GITHUB_STEP_SUMMARY="${CASE_ROOT}/summary.md"
@@ -316,7 +316,7 @@ assert_missing_ref v1
 grep -Fqx -- '- `v1.2.0`: nix flake update failed (exit 42)' "${GITHUB_STEP_SUMMARY}"
 unset GITHUB_STEP_SUMMARY
 
-# A failed existing exact branch must not roll back the specification. Aggregates shared with a lower successful stable advance to that successful branch.
+# A failed existing exact branch does not roll back the specification. Aggregates shared with a lower successful stable advance to that successful branch.
 initialize_repository
 seed_exact_branch 1.1.0
 seed_exact_branch 1.2.0
@@ -337,7 +337,7 @@ assert_same_ref v1.1 v1.1.0
 assert_contains_specification v1.3.0-rc1
 assert_same_ref v1.3 v1.3.0-rc1
 
-# A failed new branch has no published target; the successful version can still advance all its aggregates.
+# A failed new branch has no published target. The successful version can still advance all its aggregates.
 initialize_repository
 seed_exact_branch 1.1.0
 point_aggregate main 1.1.0
@@ -349,7 +349,7 @@ assert_same_ref main v1.1.0
 assert_same_ref v1 v1.1.0
 assert_same_ref v1.1 v1.1.0
 
-# When all existing versions fail, retain the new specification and leave the exact branches untouched.
+# When all existing versions fail, the orchestrator retains the new specification and leaves the exact branches untouched.
 initialize_repository
 seed_exact_branch 1.2.0
 point_aggregate main 1.2.0
@@ -364,7 +364,7 @@ assert_missing_ref v1
 grep -Fqx -- '- `v1.2.0`: update-version failed (exit 1)' "${GITHUB_STEP_SUMMARY}"
 unset GITHUB_STEP_SUMMARY
 
-# A successful prerelease must not select its failed stable counterpart when choosing aggregate targets.
+# A successful prerelease does not select its failed stable counterpart when the orchestrator chooses aggregate targets.
 initialize_repository
 seed_exact_branch 1.2.3
 point_aggregate main 1.2.3
@@ -412,7 +412,7 @@ export GITHUB_STEP_SUMMARY="${CASE_ROOT}/summary.md"
 PUBLISH_EXIT=0
 set +e
 run_command '1.2.0' publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" >"${CASE_ROOT}/publish.log" 2>&1
-PUBLISH_EXIT=$?
+PUBLISH_EXIT=${?}
 set -e
 cat "${CASE_ROOT}/publish.log"
 [[ ${PUBLISH_EXIT} == 1 ]]
@@ -427,7 +427,7 @@ assert_same_ref main v1.2.0
 assert_contains_specification main
 assert_contains_specification v1.2.0
 
-# A main-only commit on top of the published target leaves main ahead of the target rather than stranded from it: publication leaves every ref alone.
+# A main-only commit on top of the published target leaves main ahead of the target. Publication leaves every ref alone.
 initialize_repository
 seed_exact_branch 1.2.0
 PLAN=$(run_command '1.2.0' list)
@@ -470,7 +470,7 @@ VERSIONS_JSON=$(jq -c '.versions' <<<"${PLAN}")
 [[ ${BASE_SHA} == "${SPECIFICATION_SHA}" ]]
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.3.0-rc1","1.2.3","1.2.2","1.2.1"]' ]]
 
-# A per-version invocation refreshes only the requested exact branch, so a publication between refreshes advances the aggregates only as far as the lines that already have one.
+# A per-version invocation refreshes only the requested exact branch. A publication between refreshes therefore advances each aggregate only as far as the lines that already have one.
 run_command "${VERSIONS}" refresh \
   --base-sha "${BASE_SHA}" \
   --version 1.2.3 \
@@ -510,7 +510,7 @@ assert_same_ref v1 v1.2.3
 assert_same_ref v1.2 v1.2.3
 assert_same_ref v1.3 v1.3.0-rc1
 
-# Publication retains an aggregate whose every exact branch predates the specification, and moves the ones the refreshed version carries; the next refresh releases the retained one.
+# Publication retains an aggregate whose every exact branch predates the specification, and moves the ones the refreshed version carries. The next refresh releases the retained one.
 initialize_repository
 seed_exact_branch 1.2.1
 point_aggregate v1.2 1.2.1
@@ -526,7 +526,7 @@ run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.3.0 --ups
 PUBLISH_EXIT=0
 set +e
 run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}" >"${CASE_ROOT}/publish.log" 2>&1
-PUBLISH_EXIT=$?
+PUBLISH_EXIT=${?}
 set -e
 grep -Fq 'No candidate for v1.2 contains discovery base' "${CASE_ROOT}/publish.log"
 [[ ${PUBLISH_EXIT} == 1 ]]
@@ -537,12 +537,12 @@ run_command "${VERSIONS}" refresh --base-sha "${BASE_SHA}" --version 1.2.1 --ups
 run_command "${VERSIONS}" publish --base-sha "${BASE_SHA}" --versions-json "${VERSIONS_JSON}"
 assert_same_ref v1.2 v1.2.1
 
-# GitHub tags accepted by the existing version grammar are retained even when they are not PEP 440; a final release sorts ahead of its same-core prerelease.
+# The fan-out retains GitHub tags the existing version grammar accepts, even when they are not PEP 440. A final release sorts ahead of its same-core prerelease.
 initialize_repository
 PLAN=$(run_command $'1.2.3-ubuntu1\n1.2.3' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.2.3","1.2.3-ubuntu1"]' ]]
 
-# TRACK_STABLE_ONLY removes prereleases from the fan-out the maintenance matrix and publication are built from, so they get neither. Default off keeps them tracked.
+# TRACK_STABLE_ONLY removes prereleases from the fan-out the maintenance matrix and publication are built from, so they get neither. TRACK_STABLE_ONLY off keeps them tracked.
 initialize_repository
 VERSIONS=$'1.2.1\n1.2.2\n1.2.3\n1.3.0-rc1'
 [[ "$(jq -c '[.versions[].version]' <<<"$(run_command "${VERSIONS}" list)")" == '["1.3.0-rc1","1.2.3","1.2.2","1.2.1"]' ]]
@@ -557,7 +557,7 @@ assert_same_ref main v1.2.3
 assert_missing_ref v1.3.0-rc1
 assert_missing_ref v1.3
 
-# A temporary server-side push failure retries without rebuilding the branch.
+# A temporary server-side push failure makes the publisher retry without rebuilding the branch.
 initialize_repository
 install_push_wrapper
 export TEST_PUSH_MODE=transient TEST_PUSH_REF=v1.2.0 TEST_PUSH_FAILURES=2
@@ -567,7 +567,7 @@ assert_same_ref main v1.2.0
 [[ "$(grep -Fxc 1.2.0 "${CASE_ROOT}/update-version.log")" == 1 ]]
 clear_test_failures
 
-# The same bounded retry protects force-with-lease aggregate publication.
+# The same bounded retry covers force-with-lease publication of aggregates.
 initialize_repository
 install_push_wrapper
 export TEST_PUSH_MODE=transient TEST_PUSH_REF=main TEST_PUSH_FAILURES=2
@@ -576,7 +576,7 @@ assert_same_ref main v1.2.0
 [[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 3 ]]
 clear_test_failures
 
-# If a push reports failure after the desired ref was applied, reconcile it as success.
+# When a push reports failure after the ref it wanted is already in place, the publisher treats the push as successful.
 initialize_repository
 install_push_wrapper
 export TEST_PUSH_MODE=applied TEST_PUSH_REF=v1.2.0 TEST_PUSH_FAILURES=0
@@ -585,7 +585,7 @@ assert_same_ref main v1.2.0
 [[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 1 ]]
 clear_test_failures
 
-# A genuinely different concurrent ref must fail immediately and remain untouched.
+# A genuinely different concurrent ref fails at once and the publisher leaves it untouched.
 initialize_repository
 seed_exact_branch 1.2.0
 EXPECTED_SHA=$(git --git-dir="${REMOTE}" rev-parse refs/heads/v1.2.0)
@@ -598,7 +598,7 @@ export TEST_PUSH_CONFLICT_SHA="${SPECIFICATION_SHA}"
 REFRESH_EXIT=0
 set +e
 run_command '1.2.0' refresh --base-sha "${BASE_SHA}" --version 1.2.0 --upstream-version 1.2.0 >"${CASE_ROOT}/conflict.log" 2>&1
-REFRESH_EXIT=$?
+REFRESH_EXIT=${?}
 set -e
 [[ ${REFRESH_EXIT} == 1 ]]
 [[ "$(cat "${TEST_PUSH_COUNT_FILE}")" == 1 ]]
@@ -607,7 +607,7 @@ assert_ref_sha v1.2.0 "${SPECIFICATION_SHA}"
 grep -Fq 'changed concurrently' "${CASE_ROOT}/conflict.log"
 clear_test_failures
 
-# Retry one update-version invocation only when its output identifies a transient network failure.
+# The orchestrator retries an update-version invocation only when its output names a transient network failure.
 initialize_repository
 mkdir -p "${CASE_ROOT}/transient-attempts"
 export TEST_TRANSIENT_UPDATE_VERSIONS=1.2.0
@@ -754,10 +754,7 @@ BRANCH_OWNED_FILES_OVERRIDE='pin.nix flake.lock removed-by-update.txt never-exis
 ! git --git-dir="${REMOTE}" cat-file -e 'refs/heads/v1.2.0:removed-by-update.txt'
 clear_test_failures
 
-# A schema with a placeholder template of its own carries every declared extra hash into the new branch, so the pin has
-# one shape from the branch's first commit and an empty field is what re-runs the producer's hook. This fixture carries
-# no formatter (a real flake root would), so the seeded lines are the flat ones the writer emitted; the formatter seam
-# is the update-version suite's to cover.
+# A schema with a placeholder template of its own carries every declared extra hash into the new branch. The pin therefore has one shape from the branch's first commit, and an empty field is what re-runs the producer's hook. This fixture carries no formatter, though a real flake root would, so the seeded lines are the flat ones the writer emitted. The formatter seam is the update-version suite's to cover.
 initialize_repository
 export PIN_SCHEMA=github EXTRA_HASHES='["v8.archive.aarch64-linux","v8.archive.x86_64-linux","v8.version"]'
 export TEST_CAPTURED_PIN="${CASE_ROOT}/placeholder-pin"
@@ -789,7 +786,7 @@ run_failed_update '1.2.0'
 grep -Fq 'error: update-branches cannot enumerate versions for source type oci' "${CASE_ROOT}/update.log"
 unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE
 
-# A new oci branch is seeded with the base pin's image content alone, even when the base branch already claims a version; its own updater resolves that version's image and only then writes it.
+# The orchestrator seeds a new oci branch with the base pin's image content alone, even when the base branch already claims a version. The branch's own updater resolves that version's image and only then writes it.
 initialize_repository oci-versioned
 export PIN_SCHEMA=oci SOURCE_TYPE=oci VERSION_SOURCE_TYPE=github TEST_EXPECT_SEEDED_PIN=1
 export VERSION_OVERRIDES='{"1.2.3+oe": "1.2.3"}' TEST_EXPECTED_UPSTREAM_VERSION='1.2.3+oe'
@@ -822,7 +819,7 @@ assert_missing_ref v1
 grep -Fqx -- '- `v1.2.0`: update-version failed (exit 1)' "${GITHUB_STEP_SUMMARY}"
 unset PIN_SCHEMA SOURCE_TYPE VERSION_SOURCE_TYPE GITHUB_STEP_SUMMARY
 
-# A github source tracked by tags enumerates git tags, not GitHub Releases: an upstream shipping tags without releases has an empty releases list, and discovering from it tracks nothing.
+# A github source tracked by tags enumerates git tags, not GitHub Releases. An upstream that ships tags without releases has an empty releases list, so discovering from it tracks nothing.
 initialize_repository
 export VERSION_TRACK=tag TEST_TAGS_VERSIONS=$'v1.6.0\nv1.5.0\nnot-a-version'
 PLAN=$(run_command '9.9.9' list)
@@ -830,7 +827,7 @@ PLAN=$(run_command '9.9.9' list)
 grep -Fqx -- '/repos/example/example/tags?per_page=30&page=1' "${CASE_ROOT}/gh-endpoints"
 unset VERSION_TRACK TEST_TAGS_VERSIONS
 
-# Without a tracking mode the github vocabulary names releases, which is what the updater's own default is.
+# Without a tracking mode the github vocabulary names releases, matching the updater's own default.
 initialize_repository
 export TEST_TAGS_VERSIONS=$'v9.9.9'
 PLAN=$(run_command '1.2.0' list)
@@ -838,8 +835,7 @@ PLAN=$(run_command '1.2.0' list)
 grep -Fqx -- '/repos/example/example/releases?per_page=30&page=1' "${CASE_ROOT}/gh-endpoints"
 unset TEST_TAGS_VERSIONS
 
-# GitHub answers one numbered page per request and names nothing that follows it, so the
-# enumeration keeps asking until a page comes back short of the page size.
+# GitHub answers one numbered page per request and names nothing that follows it. The enumeration keeps asking until a page comes back short of the page size.
 initialize_repository
 export GITHUB_PAGE_SIZE=2 TEST_VERSIONS_NEXT=$'v1.7.0'
 PLAN=$(run_command $'v1.9.0\nv1.8.0' list)
@@ -847,16 +843,14 @@ PLAN=$(run_command $'v1.9.0\nv1.8.0' list)
 [[ "$(wc -l <"${CASE_ROOT}/gh-endpoints")" == 2 ]]
 unset GITHUB_PAGE_SIZE TEST_VERSIONS_NEXT
 
-# One page failing answers a retry of that page alone, so the versions the other pages
-# carried are not lost with it.
+# When one page fails, the retry covers that page alone, so the versions the other pages carried survive.
 initialize_repository
 export GITHUB_PAGE_SIZE=2 TEST_VERSIONS_NEXT=$'v1.7.0' TEST_GH_FLAKY_PAGES=2
 PLAN=$(run_command $'v1.9.0\nv1.8.0' list)
 [[ "$(jq -c '[.versions[].version]' <<<"${PLAN}")" == '["1.9.0","1.8.0","1.7.0"]' ]]
 unset GITHUB_PAGE_SIZE TEST_VERSIONS_NEXT TEST_GH_FLAKY_PAGES
 
-# A page that never answers ends discovery in failure; an enumeration that stopped partway
-# would otherwise be taken for upstream's whole version list, leaving what it never reached unbranched.
+# A page that never answers ends discovery in failure. An enumeration that stopped partway would otherwise be taken for upstream's whole version list, and the versions it never reached would stay unbranched.
 initialize_repository
 export GITHUB_PAGE_SIZE=2 TEST_VERSIONS_NEXT=$'v1.7.0' TEST_GH_DEAD_PAGES=2
 run_failed_update $'v1.9.0\nv1.8.0' '["v","V",""]' '' '' list
@@ -871,7 +865,7 @@ run_failed_update '' '["v",""]' '' '' list
 grep -Fq -- 'error: upstream discovery found no version names at /repos/example/example/tags for source type github tracking tag' "${CASE_ROOT}/update.log"
 unset VERSION_TRACK TEST_TAGS_VERSIONS
 
-# A gitlab project names its versions in its git tags, the same place its updater resolves a release from, so discovery queries that endpoint instead of GitHub's.
+# A gitlab project names its versions in its git tags, the same place its updater resolves a release from. Discovery therefore queries that endpoint instead of GitHub's.
 initialize_repository
 export SOURCE_TYPE=gitlab TEST_GITLAB_ENDPOINTS="${CASE_ROOT}/gitlab-endpoints" TEST_GITLAB_TAGS=$'v4.7.2\nv4.7.1'
 PLAN=$(run_command '4.7.0' list)
@@ -880,8 +874,7 @@ grep -Fqx -- 'https://gitlab.com/api/v4/projects/example%2Fexample/repository/ta
 [[ ! -s "${CASE_ROOT}/gh-endpoints" ]]
 unset SOURCE_TYPE TEST_GITLAB_ENDPOINTS TEST_GITLAB_TAGS
 
-# A self-hosted instance named by GITLAB_DOMAIN is the host discovery queries; naming none keeps it on gitlab.com,
-# which the case above covers.
+# A self-hosted instance named by GITLAB_DOMAIN is the host discovery queries. Naming no domain keeps it on gitlab.com, which the case above covers.
 initialize_repository
 export SOURCE_TYPE=gitlab GITLAB_DOMAIN=invent.kde.org TEST_GITLAB_ENDPOINTS="${CASE_ROOT}/gitlab-endpoints" TEST_GITLAB_TAGS=$'v4.7.2'
 PLAN=$(run_command '4.7.0' list)
@@ -889,7 +882,7 @@ PLAN=$(run_command '4.7.0' list)
 grep -Fqx -- 'https://invent.kde.org/api/v4/projects/example%2Fexample/repository/tags?per_page=100&page=1' "${CASE_ROOT}/gitlab-endpoints"
 unset SOURCE_TYPE GITLAB_DOMAIN TEST_GITLAB_ENDPOINTS TEST_GITLAB_TAGS
 
-# GitLab pages by number and names the page that follows in a response header, so the enumeration ends only when a page stops pointing onward.
+# GitLab pages by number and names the page that follows in a response header. The enumeration ends only when a page stops pointing onward.
 initialize_repository
 export SOURCE_TYPE=gitlab TEST_GITLAB_ENDPOINTS="${CASE_ROOT}/gitlab-endpoints"
 export TEST_GITLAB_TAGS=$'v4.7.2' TEST_GITLAB_NEXT_PAGE=2 TEST_GITLAB_TAGS_NEXT=$'v4.7.1\nv4.7.0'
@@ -912,7 +905,7 @@ run_failed_update '' '["v",""]' '' '' list
 grep -Fq -- 'error: gitlab tag enumeration did not end within 2 pages' "${CASE_ROOT}/update.log"
 unset SOURCE_TYPE GITLAB_MAX_PAGES TEST_GITLAB_TAGS TEST_GITLAB_NEXT_PAGE TEST_GITLAB_ALWAYS_NEXT_PAGE
 
-# Under Actions discovery also writes the fan-out the workflow's later jobs read, so the version logic lives here rather than in the workflow file.
+# Under Actions, discovery also writes the fan-out that the workflow's later jobs read. That keeps the version logic here rather than in the workflow file.
 initialize_repository
 export GITHUB_OUTPUT="${CASE_ROOT}/outputs"
 OUTPUTS="${GITHUB_OUTPUT}"
@@ -921,7 +914,7 @@ unset GITHUB_OUTPUT
 [[ "$(sed -nE 's/^base_sha=//p' "${OUTPUTS}")" == "$(git --git-dir="${REMOTE}" rev-parse refs/heads/main)" ]]
 [[ "$(sed -nE 's/^versions=//p' "${OUTPUTS}" | jq -c '[.[].version]')" == '["1.3.0","1.2.3"]' ]]
 
-# A refreshed branch is built before it is pushed, so the pin an unbuildable package comes from is never what a consumer resolves. The refresh is not rolled back by the run, only withheld: the version stays undiscovered and the next run retries it.
+# A refreshed branch is built before it is pushed, so the pin an unbuildable package comes from is never what a consumer resolves. The run withholds the refresh instead of rolling it back. The version stays undiscovered and the next run retries it.
 initialize_repository
 export TEST_NIX_BUILD_FAILURES='1.2.0'
 run_failed_update '1.2.0'
@@ -930,13 +923,10 @@ assert_missing_ref v1.2
 assert_missing_ref v1
 assert_ref_version main 1.0.0
 [[ "$(cat "${CASE_ROOT}/update-version.log")" == '1.2.0' ]]
-grep -Fq -- 'a build or check failed at 1.2.0; v1.2.0 not published' "${CASE_ROOT}/update.log"
+grep -Fq -- 'a build or check failed at 1.2.0, so v1.2.0 was not published' "${CASE_ROOT}/update.log"
 unset TEST_NIX_BUILD_FAILURES
 
-# A producer whose deliverable is an overlay publishes no payload of its own, so the same gate that
-# withheld the pin above has nothing to build here. Nothing to build is a pass, not a failure: an
-# overlay-published producer is not pushed into publishing a package to satisfy the path that
-# pushes it.
+# A producer whose deliverable is an overlay publishes no payload of its own, so the same gate that withheld the pin above has nothing to build here. Nothing to build is a pass, and this keeps an overlay-published producer from publishing a package just to satisfy the path that pushes it.
 initialize_repository
 export TEST_NIX_SELECTION='{"build":[],"skip":[]}'
 run_command '1.2.0'

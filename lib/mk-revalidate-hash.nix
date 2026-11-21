@@ -1,6 +1,6 @@
 # Generates a `revalidate-hash` package that rewrites a flake's fixed-output hash pin from a build-time hash mismatch.
 {
-  # Published package the hash is recovered from; empty recovers from the whole published family.
+  # Published package the hash is recovered from. Empty selects the whole published family.
   buildTarget ? "",
   hashField ? "hash",
   meta ? {

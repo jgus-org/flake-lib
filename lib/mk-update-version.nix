@@ -8,13 +8,7 @@
 #   formatter    : the repository's own formatter package (e.g. self.formatter.${system}). Required when a pin field name carries a dot: that field is written as a nested attribute, and only the org formatter defines that shape.
 #   siblings     : sibling-cascade specs
 #   markerEnvironment : overrides for the explicit PEP 508 marker environment sibling resolution evaluates under
-#
-# This tool evaluates what the flake publishes and starts no package build of its own: the
-# publication path runs flake-lib's `build-and-check`, the same command that gates a pull request,
-# so the tree a run commits is the tree a pull request would have gated. Hash discovery is the
-# exception: `hashMode = "build-failure"` builds what the flake publishes and mines the mismatch out
-# of that log, which is the one place this tool starts a build of its own. `buildTarget` names the
-# published package that build is mined from; the family is still built whole before the run commits.
+with builtins;
 {
   artifactFingerprint ? "",
   artifactHook ? null,
@@ -68,8 +62,6 @@ in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
 assert hfManifestHashField == null || hfManifestHashField != "";
-# A dotted pin field is a nested attribute, and the pin written flat is only canonical once the org formatter
-# has had it.
 assert
   formatter != null
   || !pkgs.lib.any (name: pkgs.lib.hasInfix "." name) (effectiveExtraHashes ++ buildFailureFields);
@@ -84,7 +76,7 @@ assert
   );
 pkgs.writeShellApplication {
   inherit meta;
-  # EXTRA_HASHES / SIBLINGS are JSON strings (quotes/brackets) consumed via jq at runtime (SC2089/SC2090); GH_ASSET/GH_TAG carry a literal ${version}/${tag} token the script substitutes at runtime, intentionally single-quoted (SC2016). All false positives on the generated export.
+  # EXTRA_HASHES and SIBLINGS are JSON, so the generated export carries quotes and brackets that shellcheck reads as a quoting error (SC2089/SC2090). GH_ASSET and GH_TAG hold a literal ${version} or ${tag} token that the script substitutes at runtime, so they stay single-quoted (SC2016).
   excludeShellChecks = [
     "SC2016"
     "SC2089"
@@ -94,13 +86,13 @@ pkgs.writeShellApplication {
   runtimeEnv = {
     ARTIFACT_FINGERPRINT = artifactFingerprint;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
-    BUILD_FAILURE_HASHES = builtins.toJSON buildFailureFields;
+    BUILD_FAILURE_HASHES = toJSON buildFailureFields;
     BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
     BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";
     BUILD_TARGET = buildTarget;
     CASCADE_PY = "${pkgs.copyPathToStore ../scripts/cascade.py}";
     DEPS_CORE = "${pkgs.copyPathToStore ../scripts/deps_core.py}";
-    EXTRA_HASHES = builtins.toJSON effectiveExtraHashes;
+    EXTRA_HASHES = toJSON effectiveExtraHashes;
     FORMATTER = if formatter == null then "" else pkgs.lib.getExe formatter;
     GH_ASSET = source.asset or ""; # github-release-asset: filename template, tokens ${version} and ${tag}
     GH_BRANCH = source.branch or ""; # commit-tracking: branch to follow (default: repo's default branch)
@@ -108,7 +100,7 @@ pkgs.writeShellApplication {
     GH_OWNER = versionSource.owner or "";
     GH_REPO = versionSource.repo or "";
     GH_TAG = source.tag or ""; # github-release-asset: tag template, token ${version} (default v${version})
-    GH_TAG_PREFIXES = builtins.toJSON (
+    GH_TAG_PREFIXES = toJSON (
       if versionSource ? tagPrefix then
         [ versionSource.tagPrefix ]
       else
@@ -119,35 +111,31 @@ pkgs.writeShellApplication {
         ]
     );
     GH_TRACK = source.track or "release"; # release (Releases API) | tag (latest version git tag) | commit (default-branch HEAD -> 0.devDATE+gREV)
-    GITLAB_DOMAIN = source.domain or "gitlab.com"; # GitLab host: a self-hosted instance names its domain, gitlab.com otherwise
+    GITLAB_DOMAIN = source.domain or "gitlab.com";
     GITLAB_OWNER = source.owner or "";
     GITLAB_REPO = source.repo or "";
     GITLAB_TRACK = source.track or "commit"; # release (tags -> X.Y.Z) | commit (master HEAD -> 0.devDATE+gREV)
     HASH_MODE = hashMode;
-    HF_FILES = builtins.toJSON (source.files or [ ]);
-    HF_MANIFEST_EXCLUDE = builtins.toJSON (
-      if hfManifest == null then [ ] else hfManifest.exclude or [ ]
-    );
+    HF_FILES = toJSON (source.files or [ ]);
+    HF_MANIFEST_EXCLUDE = toJSON (if hfManifest == null then [ ] else hfManifest.exclude or [ ]);
     HF_MANIFEST_HASH_FIELD = if hfManifestHashField == null then "" else hfManifestHashField;
-    HF_MANIFEST_INCLUDE = builtins.toJSON (
-      if hfManifest == null then [ ] else hfManifest.include or [ ]
-    );
+    HF_MANIFEST_INCLUDE = toJSON (if hfManifest == null then [ ] else hfManifest.include or [ ]);
     HF_MANIFEST_PATH = if hfManifest == null then "" else hfManifest.path;
     HF_REPO = if source.type == "huggingface" then source.repo else "";
     HF_REVISION = source.revision or "main";
-    MARKER_ENV = builtins.toJSON (defaultMarkerEnvironment // markerEnvironment);
+    MARKER_ENV = toJSON (defaultMarkerEnvironment // markerEnvironment);
     MUTABLE_URL = source.url or "";
     NIX_PATH = "nixpkgs=${pkgs.path}";
-    OCI_SETTINGS = if oci == null then "" else builtins.toJSON oci.settings;
+    OCI_SETTINGS = if oci == null then "" else toJSON oci.settings;
     OCI_SKOPEO = if oci == null then "" else pkgs.lib.getExe oci.skopeo;
-    PIN_HASHES = builtins.toJSON (
+    PIN_HASHES = toJSON (
       pkgs.lib.unique (
         effectiveExtraHashes ++ pkgs.lib.filter (name: name != "sourceHash") buildFailureFields
       )
     );
     PYPI_FORMAT = source.format or "sdist";
     PYPI_NAME = source.pname or "";
-    SIBLINGS = builtins.toJSON siblings;
+    SIBLINGS = toJSON siblings;
     SIBLING_REFS_IN_PIN = pkgs.lib.optionalString siblingRefsInPin "1";
     SOURCE_TYPE = source.type;
     VERSION_SOURCE_TYPE = source.versions.type or "";

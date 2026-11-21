@@ -1,12 +1,6 @@
-# The one interposer that makes `IPV6_V6ONLY=True` setsockopt calls no-ops, so an
-# `AF_INET6` `[::]` bind serves both families. asyncio and waitress set that flag by
-# default on AF_INET6 sockets, which makes a `[::]` listener v6-only and breaks
-# dual-stack clients (including anything probing 127.0.0.1).
+# The interposer that makes `IPV6_V6ONLY=True` setsockopt calls no-ops, so an `AF_INET6` `[::]` bind serves both families. asyncio and waitress set that flag by default on AF_INET6 sockets. That makes a `[::]` listener v6-only and breaks dual-stack clients, including anything probing 127.0.0.1.
 #
-# The definition-and-delete shape keeps `orig`, `ipv6`, and `v6only` as closure cells
-# on the replacement rather than module globals: a consumer's module may be re-imported
-# fresh by tests or tooling, and the replacement must not resolve names the module
-# stopped defining.
+# The definition-and-delete shape keeps `orig`, `ipv6`, and `v6only` as closure cells on the replacement rather than module globals. Tests and tooling may re-import a module fresh, and the replacement must not resolve names the module stopped defining.
 let
   interpose = ''
     def _flake_lib_install_dual_stack_ipv6():
@@ -27,16 +21,10 @@ let
   '';
 in
 {
-  # A directory holding a sitecustomize.py, for a PYTHONPATH the consumer controls
-  # (a launcher's pythonPath, an environment's PYTHONPATH).
+  # A directory holding a sitecustomize.py, for a PYTHONPATH the consumer controls (a launcher's pythonPath, an environment's PYTHONPATH).
   site = pkgs: pkgs.writeTextDir "sitecustomize.py" interpose;
 
-  # Appends the interposer to `initFile` — an __init__.py the entrypoint
-  # transitively imports before any server socket is created — for a package whose
-  # interpreter environment the consumer does not control. Appending rather than
-  # prepending avoids conflicts with `from __future__` imports at the top of the
-  # file, and the block still runs before any bind because __init__.py executes
-  # fully during package import.
+  # Appends the interposer to `initFile` (an __init__.py the entrypoint transitively imports before any server socket is created) for a package whose interpreter environment the consumer does not control. Appending rather than prepending avoids conflicts with `from __future__` imports at the top of the file, and the block still runs before any bind because __init__.py executes fully during package import.
   withPackage =
     { initFile, package }:
     package.overrideAttrs (old: {

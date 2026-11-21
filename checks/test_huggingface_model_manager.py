@@ -1,8 +1,10 @@
+import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+from typing import Any
 
 
 MODEL_MANAGER = os.environ["MODEL_MANAGER"]
@@ -55,7 +57,9 @@ class HuggingFaceModelManagerTests(unittest.TestCase):
         ).write_text("{}")
         self.run_manager("check", succeeds=False)
 
-    def capture_download_kwargs(self, environment: dict[str, str]) -> dict:
+    def capture_download_kwargs(
+        self, environment: dict[str, str]
+    ) -> dict[str, Any]:
         fake_hub = self.root / "fake_hub_capture"
         if not fake_hub.exists():
             fake_hub.mkdir()
@@ -70,7 +74,7 @@ class HuggingFaceModelManagerTests(unittest.TestCase):
             "download",
             environment={**environment, "CAPTURE_FILE": str(capture_file)},
         )
-        return __import__("json").loads(capture_file.read_text())
+        return json.loads(capture_file.read_text())
 
     def test_download_anonymous_without_token(self) -> None:
         self.run_manager("verify")

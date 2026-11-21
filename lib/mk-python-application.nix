@@ -11,13 +11,14 @@
   workDir ? null,
 }:
 let
-  inherit (pkgs) lib;
   baseLayer = pkgs.python3.withPackages dependencies;
-  envFlags = lib.concatStringsSep " " (
-    lib.mapAttrsToList (n: v: "--set ${n} ${lib.escapeShellArg (toString v)}") env
+  envFlags = pkgs.lib.concatStringsSep " " (
+    pkgs.lib.mapAttrsToList (n: v: "--set ${n} ${pkgs.lib.escapeShellArg (toString v)}") env
   );
-  envDefaultFlags = lib.concatStringsSep " " (
-    lib.mapAttrsToList (n: v: "--set-default ${n} ${lib.escapeShellArg (toString v)}") envDefaults
+  envDefaultFlags = pkgs.lib.concatStringsSep " " (
+    pkgs.lib.mapAttrsToList (
+      n: v: "--set-default ${n} ${pkgs.lib.escapeShellArg (toString v)}"
+    ) envDefaults
   );
 in
 pkgs.runCommand name
@@ -35,12 +36,14 @@ pkgs.runCommand name
     mkdir -p $out/bin
     makeWrapper ${baseLayer.interpreter} $out/bin/${name} \
       --add-flags ${script} \
-      ${lib.optionalString (workDir != null) "--chdir ${lib.escapeShellArg (toString workDir)}"} \
-      --prefix PATH : ${lib.makeBinPath ([ baseLayer ] ++ runtimeInputs)} \
       ${
-        lib.optionalString (
+        pkgs.lib.optionalString (workDir != null) "--chdir ${pkgs.lib.escapeShellArg (toString workDir)}"
+      } \
+      --prefix PATH : ${pkgs.lib.makeBinPath ([ baseLayer ] ++ runtimeInputs)} \
+      ${
+        pkgs.lib.optionalString (
           pythonPath != [ ]
-        ) "--prefix PYTHONPATH : ${lib.concatStringsSep ":" (map toString pythonPath)}"
+        ) "--prefix PYTHONPATH : ${pkgs.lib.concatStringsSep ":" (map toString pythonPath)}"
       } \
       ${envFlags} \
       ${envDefaultFlags}

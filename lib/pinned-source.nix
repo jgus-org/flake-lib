@@ -15,7 +15,7 @@ in
 if type == "github" then
   {
     inherit (pin) version;
-    # Evaluation may read a source file only from an eval-time fetch, never from a derivation output; the same pin hash covers both because a pinned tree is hashed by content.
+    # Evaluation reads a source file only from an eval-time fetch, never from a derivation output. One pin hash covers both fetches, because a pinned tree is hashed by content.
     sourcePath = builtins.fetchTarball {
       sha256 = pin.sourceHash;
       url = "https://github.com/${source.owner}/${source.repo}/archive/${pin.sourceRev}.tar.gz";
@@ -28,7 +28,7 @@ if type == "github" then
   }
 else if type == "gitlab" then
   let
-    # A self-hosted instance names itself here; gitlab.com is what every producer that names none has always fetched from.
+    # A self-hosted instance names its own domain.
     domain = source.domain or "gitlab.com";
   in
   {

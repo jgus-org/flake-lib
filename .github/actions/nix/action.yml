@@ -2,7 +2,8 @@ name: Provide nix
 description: >-
   Give the job nix, the fleet binary cache, the credential for github inputs the runner
   cannot fetch anonymously, and the nix settings the repository declares in
-  `.github/nix.conf`, leaving nix itself alone on a runner that already configures it.
+  `.github/nix.conf`. Where the runner already provides nix, the action leaves that runner's nix and cache
+  configuration alone.
 
 inputs:
   token:
@@ -15,7 +16,7 @@ inputs:
   github-token:
     description: >-
       Credential for the github inputs a flake locks, handed to later steps through
-      NIX_CONFIG, the setting being client-side. Where it does not resolve, nix fetches with
+      the client-side NIX_CONFIG setting. Where it does not resolve, nix fetches with
       the run's own token, which reads no other repository's private contents: a flake
       locking one needs this input.
     required: false
@@ -47,8 +48,7 @@ runs:
           fi
           printf '%s\n' REPO_NIX_CONF_EOF
         } >>"${GITHUB_ENV}"
-    # A step cannot test a command in its own condition, so the test is its own step and
-    # the two steps that follow read its output.
+    # A step cannot test a command in its own condition, so the test is its own step and the two steps that follow read its output.
     - id: nix
       shell: bash
       run: |
@@ -57,8 +57,7 @@ runs:
         else
           printf 'provided=%s\n' false >>"$GITHUB_OUTPUT"
         fi
-    # A runner the repository owns brings its own nix and its own cache configuration, and
-    # rewriting the nix configuration of a machine the job does not own is not a job's work.
+    # A runner the repository owns brings its own nix and its own cache configuration, and rewriting the nix configuration of a machine the job does not own is not a job's work.
     - if: steps.nix.outputs.provided == 'false'
       uses: cachix/install-nix-action@v31
     - if: steps.nix.outputs.provided == 'false'

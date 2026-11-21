@@ -1,9 +1,9 @@
 """Exercises the dependency ordering gate against a scripted GitHub Actions API.
 
-The stand-in serves the reads the gate makes per dependency (its workflows, its default
-branch, its update runs) plus the dispatch that starts one, and it advances a dependency one
-page per run-list read so that a wait can be observed: what the gate decided, how many times
-it started anything, and whether it waited on several dependencies at the same time.
+The stand-in serves the reads the gate makes for each dependency: its workflows, its
+default branch, and its update runs. It also serves the dispatch that starts an update.
+Each run-list read advances one page, so a test can see what the gate decided, how many
+updates it started, and whether it waited on several dependencies at the same time.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ MODULE_SPEC = importlib.util.spec_from_file_location(
 assert MODULE_SPEC is not None
 assert MODULE_SPEC.loader is not None
 GATE = importlib.util.module_from_spec(MODULE_SPEC)
-# The module must be registered before its body runs: its dataclasses resolve their
+# The module is registered before its body runs, because its dataclasses resolve their
 # annotations through sys.modules[__name__].
 sys.modules[MODULE_SPEC.name] = GATE
 MODULE_SPEC.loader.exec_module(GATE)
@@ -44,7 +44,7 @@ WORKFLOW_STATE = "active"
 FRESH_WINDOW = 60.0
 POLL_INTERVAL = 0.02
 TIMEOUT = 0.5
-# A success older than the freshness window: the dependency updated, but not for this run.
+# A success older than the freshness window. The dependency updated, but not for this run.
 STALE = 7200.0
 
 
@@ -82,14 +82,14 @@ def in_flight() -> list[dict[str, Any]]:
 
 @dataclass
 class Dependency:
-    # One entry per read of the run list: a status code stands for a refused read, a list of
-    # runs for a page. The last entry repeats, so a dependency can hold a state forever.
+    # One entry per read of the run list. A status code stands for a refused read, a list
+    # of runs for a page. The last entry repeats, so a dependency can hold a state forever.
     reads: list[Any] = field(default_factory=lambda: [[]])
     workflow: str | None = WORKFLOW
     workflow_state: str = WORKFLOW_STATE
     dispatch_status: int = 204
     delay: float = 0.0
-    # Held open until every participant's read is in flight together.
+    # This barrier stays open until every participant's read is in flight together.
     gate: Any = None
     reads_taken: int = 0
     dispatches: int = 0
@@ -346,7 +346,7 @@ class WaitForDepsTests(unittest.TestCase):
             report.states, {f"{OWNER}/pydantic-flake": "dep-failed"}
         )
         self.assertIn(
-            "run 8 ended failure; continuing without waiting", report.stderr
+            "run 8 ended failure. Continuing without waiting", report.stderr
         )
         self.assertEqual(
             report.api.dependencies["pydantic-flake"].dispatches, 0
@@ -394,7 +394,7 @@ class WaitForDepsTests(unittest.TestCase):
         )
         self.assertEqual(dependency.dispatches, 1)
         self.assertIn(
-            "its update did not finish in time; started by this run",
+            "its update did not finish in time (started by this run)",
             report.line_for("tokenizers-flake"),
         )
 
@@ -414,8 +414,9 @@ class WaitForDepsTests(unittest.TestCase):
                 f"{OWNER}/click-flake": "updated",
             },
         )
-        # One read told it everything: the branch cannot change without the dispatch the
-        # credential was refused, so polling it for the rest of the budget would prove nothing.
+        # One read told it everything. The branch cannot change without the dispatch the
+        # credential was refused, so polling it for the rest of the budget would prove
+        # nothing.
         self.assertEqual(dependencies["unsloth-zoo-flake"].dispatches, 1)
         self.assertEqual(dependencies["unsloth-zoo-flake"].reads_taken, 1)
         self.assertIn(
@@ -430,9 +431,9 @@ class WaitForDepsTests(unittest.TestCase):
     def test_dispatch_the_api_will_never_accept_is_not_waited_for(
         self,
     ) -> None:
-        # A workflow that is disabled answers the dispatch with 422 for as long as it stays
+        # A disabled workflow answers the dispatch with 422 for as long as it stays
         # disabled, which is a condition no poll can change. It is not a credential problem
-        # either, so it must not be counted as one.
+        # either, so it is not counted as one.
         dependencies = {
             "systemctl-mqtt": Dependency(
                 reads=[succeeded(STALE)], dispatch_status=422
@@ -543,10 +544,10 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(dependency.dispatches, 0)
 
     def test_dependencies_are_waited_for_at_once(self) -> None:
-        # Every dependency's read is held until all nine are in flight together, so this only
-        # passes if the gate starts a wait per dependency rather than working through a pool
-        # smaller than the set. A dependency that has not started has not started its budget
-        # either, which is what makes a ceiling read like a slow dependency.
+        # The barrier holds every read until all nine are in flight together. The test
+        # therefore fails if the gate works through a pool smaller than the set instead of
+        # starting a wait per dependency. A dependency that has not started has not started
+        # its budget either, which is what makes a ceiling read like a slow dependency.
         arrived = threading.Barrier(9, timeout=20.0)
         dependencies = {
             f"{letter}-flake": Dependency(
@@ -560,9 +561,9 @@ class WaitForDepsTests(unittest.TestCase):
         self.assertEqual(report.api.peak, len(dependencies))
 
     def test_dependencies_are_reported_as_they_settle(self) -> None:
-        # a-flake holds its reads open and z-flake does not, so z-flake can only be reported
-        # first if each dependency is reported as it finishes rather than in lock order after
-        # the whole set has.
+        # a-flake holds its reads open and z-flake does not. z-flake can only be reported
+        # first if the gate reports each dependency as it finishes, not in lock order after
+        # the whole set.
         dependencies = {
             "a-flake": Dependency(reads=[in_flight(), succeeded()], delay=0.4),
             "z-flake": Dependency(reads=[succeeded()]),
@@ -582,9 +583,9 @@ class WaitForDepsTests(unittest.TestCase):
         )
 
     def test_the_report_is_flushed_as_it_is_written(self) -> None:
-        # A consumer runs the gate with its output on a pipe, where python holds every line
-        # until something flushes it, so a report that is only written reaches the log when
-        # the process ends rather than while the wait runs.
+        # A consumer runs the gate with its output on a pipe, where Python holds every line
+        # until something flushes it. A report that is only written reaches the log when the
+        # process ends, not while the wait runs.
         flushed: list[str] = []
 
         class Pipe(StringIO):

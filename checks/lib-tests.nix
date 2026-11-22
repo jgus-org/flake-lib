@@ -47,6 +47,19 @@
       pkgs.runCommand "pnpm-deps-tests" { } "touch $out"
     );
 
+  pnpm-toolchain-tests =
+    let
+      failures = pkgs.lib.runTests (
+        import ./pnpm-toolchain.nix {
+          inherit lib pkgs;
+          inherit (lib) mkPnpmDeps;
+        }
+      );
+    in
+    pkgs.lib.throwIf (failures != [ ]) "pnpmToolchain tests failed" (
+      pkgs.runCommand "pnpm-toolchain-tests" { } "touch $out"
+    );
+
   python-flake-tests =
     let
       failures = pkgs.lib.runTests (

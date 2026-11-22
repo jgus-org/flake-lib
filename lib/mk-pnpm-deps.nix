@@ -5,6 +5,8 @@
 # The same keying hides a stale hash pin from `update-version`. Its build-failure path takes the mismatch a build reports and rewrites the pin field holding the specified hash, but a fetch whose name and declared hash already resolve to a valid path never runs to report one. The bump's tree then goes unverified: the build either dies inside `pnpmConfigHook`'s offline install, which is a build failure rather than a hash mismatch the updater can attribute, or succeeds against the previous revision's dependencies. A fingerprint that changes when the source does gives the fetch a new path at every bump, which is what makes the mismatch reachable.
 #
 # The fetcher uses `pname` for its store name and nothing else, so either half of the name costs a cache miss on the first build and no change to the hash value.
+#
+# `pnpmMajor` resolves the toolchain through `pnpmToolchain` instead of taking one from the producer, and the resolved pair is published on `passthru.pnpmToolchain` so the build reads the same tree the fetch did. Producers that declare no major keep passing `pnpm`.
 {
   # Value the fetcher's own contract requires, passed through unchanged.
   fetcherVersion,
@@ -14,24 +16,51 @@
   pkgs,
   # Name the dependency tree is filed under. The pnpm major is appended to it before the fetcher sees it.
   pname,
-  # The pnpm that fetches the tree and installs it offline. Its major is what the store path records.
-  pnpm,
+  # The pnpm that fetches the tree and installs it offline. Its major is what the store path records. Mutually exclusive with `pnpmMajor`.
+  pnpm ? null,
+  # The pnpm major upstream declares, where `mkPnpmToolchainHook` recorded it. Resolves the toolchain and adapts the workspace where that major is no longer in the package set.
+  pnpmMajor ? null,
   # String that changes whenever the fetched tree's input does, the source hash already in the pin being the usual one. It reaches the store name and nothing else, so declaring it costs a refetch on any source change. With none, the name carries the major alone and a source change under an unchanged hash pin reuses whatever tree the store already holds.
   sourceFingerprint ? null,
+  # Workspace whose manifest is adapted when the declared major is resolved to another, relative to `src`.
+  workspaceDir ? null,
   ...
 }@args:
 let
   # A store path name carries neither `/` nor `=`, and an SRI hash carries both.
   nameSafeFingerprint = pkgs.lib.replaceStrings [ "/" "=" ] [ "-" "-" ] sourceFingerprint;
+
+  toolchain =
+    if pnpmMajor == null then
+      {
+        pnpm = if pnpm != null then pnpm else pkgs.pnpm;
+        src = args.src;
+        substituted = false;
+      }
+    else
+      import ./pnpm-toolchain {
+        inherit pkgs workspaceDir;
+        declaredMajor = pnpmMajor;
+        src = args.src;
+      };
+
+  fetchArgs =
+    builtins.removeAttrs args [
+      "pkgs"
+      "pnpm"
+      "pnpmMajor"
+      "sourceFingerprint"
+      "workspaceDir"
+    ]
+    // {
+      inherit (toolchain) pnpm src;
+      passthru.pnpmToolchain = toolchain;
+      pname = "${pname}-pnpm${pkgs.lib.versions.major toolchain.pnpm.version}${
+        pkgs.lib.optionalString (sourceFingerprint != null) "-${nameSafeFingerprint}"
+      }";
+    };
 in
-pkgs.fetchPnpmDeps (
-  builtins.removeAttrs args [
-    "pkgs"
-    "sourceFingerprint"
-  ]
-  // {
-    pname = "${pname}-pnpm${pkgs.lib.versions.major pnpm.version}${
-      pkgs.lib.optionalString (sourceFingerprint != null) "-${nameSafeFingerprint}"
-    }";
-  }
-)
+if pnpm != null && pnpmMajor != null then
+  throw "mkPnpmDeps: both pnpm and pnpmMajor are given, so which toolchain fetches this tree is ambiguous."
+else
+  pkgs.fetchPnpmDeps fetchArgs

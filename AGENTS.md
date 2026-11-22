@@ -80,7 +80,7 @@ flake-lib.url = "github:jgus-org/flake-lib/v1";
 flake-lib.inputs.nixpkgs.follows = "nixpkgs";
 ```
 
-`v1` is the API family and the lock records its commit. A root that pins its nixpkgs under another name points the edge at that name. For example, `jgus-org/nix` follows `nixpkgs-unstable`. The edge, not the name, is the rule.
+`v1` is the API family and the lock records its commit. A root that pins its nixpkgs under another name points the edge at that name. The edge, not the name, is the rule.
 
 **A python producer is one `mkPythonFlake` call, whatever it publishes.** The leaf composes the payload, both updaters, the org formatter, the published family, and its checks from what the flake says it builds, so `flake.nix` carries the payload and nothing else. The arguments are in [`lib/mk-python-flake.nix`](lib/mk-python-flake.nix). Neither this file nor the README restates them. A producer that runs its own `eachDefaultSystem`, binds `mkUpdateVersion`, `mkUpdateBranches`, and `mkFormatting` by hand, and appends to `pythonPackagesExtensions` itself re-derives four things the library owns. That is how two producers of the same kind end up shaped differently, and why the interface is one call with named arguments rather than a template to copy.
 

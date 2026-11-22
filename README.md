@@ -59,7 +59,17 @@ store name carrying the pnpm major. A fixed-output path is keyed on its name and
 alone, so two instantiations sharing both share the path, and the one that runs second never
 fetches: one toolchain's tree answers for another's, and one hash pin cannot be right for both. The
 fetcher puts the name nowhere but the path, so carrying the major costs a cache miss and no change
-to the hash value. `checks.<system>.pnpm-deps-tests` owns the assertion.
+to the hash value.
+
+`sourceFingerprint` adds a string that changes whenever the fetched tree's input does to that name,
+the source hash already in the pin being the usual one. The same keying leaves a stale hash pin past
+detection: a fetch whose name and declared hash already resolve to a path the store holds never runs,
+so `update-version`'s build-failure refresh has no mismatch to read, and the bumped build either dies
+inside `pnpmConfigHook`'s offline install, which is a build failure and not a hash mismatch the
+updater can attribute, or succeeds against the previous revision's dependencies. A fingerprint gives
+each bump a path nobody has seen, which is what makes that mismatch reachable. It costs a refetch on
+any source change, so it is declared rather than assumed. `checks.<system>.pnpm-deps-tests` owns both
+assertions.
 
 `mkComposedHook` (`lib/mk-composed-hook.nix`): several artifact hooks composed into the one
 executable a single hook slot takes.

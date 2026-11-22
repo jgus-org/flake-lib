@@ -12,9 +12,12 @@ let
   };
 
   deps =
-    toolchain:
+    {
+      sourceFingerprint ? null,
+      toolchain ? pkgs.pnpm,
+    }:
     mkPnpmDeps {
-      inherit pkgs;
+      inherit pkgs sourceFingerprint;
       fetcherVersion = 4;
       hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       pname = "pnpm-deps-test";
@@ -23,10 +26,25 @@ let
       version = "1.0.0";
     };
 
-  default = deps pkgs.pnpm;
-  other = deps otherMajor;
+  default = deps { };
+  other = deps { toolchain = otherMajor; };
+
+  # Chosen for the `/` and `=` a store path name cannot carry, so the name also proves the fingerprint reached it in a usable spelling.
+  fingerprint = "sha256-RblR6SOFYZoGzVFU/c6+7JnqT8bs3P6Uh8xm+N7/pc8=";
+  fingerprintInName = "RblR6SOFYZoGzVFU-c6+7JnqT8bs3P6Uh8xm+N7-pc8-";
+  named = deps {
+    sourceFingerprint = fingerprint;
+  };
+  moved = deps {
+    sourceFingerprint = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  };
 in
 {
+  # The updater's build-failure hash refresh needs the fetch to run at a bump, and it runs only when the declared name and hash resolve to a path the store has not seen.
+  testAChangedSourceFingerprintGetsItsOwnStorePath = {
+    expected = true;
+    expr = named.outPath != default.outPath && moved.outPath != named.outPath;
+  };
   # The hazard: a fixed-output path is keyed on name and declared hash alone, so without the major in the name one pnpm's fetched tree answers for another's and the second fetch never runs.
   testAnotherMajorGetsItsOwnStorePath = {
     expected = true;
@@ -34,12 +52,20 @@ in
   };
   testOneToolchainIsRepeatable = {
     expected = true;
-    expr = (deps pkgs.pnpm).outPath == default.outPath;
+    expr = (deps { }).outPath == default.outPath;
+  };
+  testSourceFingerprintIsDeclaredNotAssumed = {
+    expected = true;
+    expr = !(pkgs.lib.strings.hasInfix "sha256-" (baseNameOf default.outPath));
   };
   testStoreNameCarriesThePnpmMajor = {
     expected = true;
     expr = pkgs.lib.strings.hasInfix ("-pnpm${pkgs.lib.versions.major pkgs.pnpm.version}-pnpm-deps") (
       baseNameOf default.outPath
     );
+  };
+  testStoreNameCarriesTheSourceFingerprint = {
+    expected = true;
+    expr = pkgs.lib.strings.hasInfix fingerprintInName (baseNameOf named.outPath);
   };
 }

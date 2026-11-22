@@ -71,6 +71,20 @@ each bump a path nobody has seen, which is what makes that mismatch reachable. I
 any source change, so it is declared rather than assumed. `checks.<system>.pnpm-deps-tests` owns both
 assertions.
 
+`pnpmMajor` resolves the toolchain from what the workspace declares instead of taking one from the
+producer. A workspace names its toolchain through `packageManager`, and pnpm honors that field by
+switching to the named release whenever it can reach one, so a producer builds with the major that
+wrote the lockfile wherever the package set still carries it. Where it does not — a retired major
+keeps its attribute and throws when forced — the nearest major above the declaration is substituted,
+and the workspace is adapted to say so: `packageManager` is rewritten to the release that runs, and
+pnpm settings kept under `pnpm` in the manifest move to the top level of `pnpm-workspace.yaml`, where
+a newer pnpm looks for them. Substituting the nearest rather than the newest keeps the toolchain one
+release line from the lockfile instead of as far away as the package set permits, and holds still
+while nixpkgs publishes majors. The resolved toolchain and the tree it reads are published on
+`passthru.pnpmToolchain` for the build to take, because the tree the fetcher reads and the tree the
+build compiles have to be the same tree. `checks.<system>.pnpm-toolchain-tests` owns these against a
+package set of its own, so no test depends on which majors nixpkgs happens to carry.
+
 `mkComposedHook` (`lib/mk-composed-hook.nix`): several artifact hooks composed into the one
 executable a single hook slot takes.
 

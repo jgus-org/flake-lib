@@ -30,6 +30,13 @@ let
       };
     };
 
+  twoPackages =
+    { pkgs, ... }:
+    {
+      one = pkgs.writeText "one" "one";
+      two = pkgs.writeText "two" "two";
+    };
+
   producer =
     extra:
     mkPythonFlake (
@@ -87,6 +94,18 @@ in
         theTwoAreDifferentBuilds =
           outputs.checks.${system}.six.drvPath != outputs.packages.${system}.six.drvPath;
       };
+  };
+  testADefaultPackageThePayloadDoesNotPublishThrows = {
+    expected = {
+      success = false;
+      value = false;
+    };
+    expr = tryEval (
+      (producer {
+        defaultPackage = "three";
+        payload.packages = twoPackages;
+      }).packages.${system}.default.drvPath
+    );
   };
   testAGitlabSourceFetchesItsSourceFromGitLab = {
     expected = {
@@ -165,6 +184,43 @@ in
         };
       };
   };
+  testANamedDefaultPackageIsTheDefaultWhenThePayloadHasSeveral = {
+    expected = {
+      names = [
+        "default"
+        "one"
+        "two"
+      ];
+      theAliasNamesThePackageItStates = true;
+    };
+    expr =
+      let
+        packages =
+          (producer {
+            defaultPackage = "two";
+            payload.packages = twoPackages;
+          }).packages.${system};
+      in
+      {
+        names = attrNames packages;
+        theAliasNamesThePackageItStates = packages.default.drvPath == packages.two.drvPath;
+      };
+  };
+  testANamedDefaultPackageReachesNoPackageSet = {
+    expected = false;
+    expr =
+      (import nixpkgs {
+        inherit system;
+        overlays = [
+          (producer {
+            defaultPackage = "six";
+            payload.packages = packagesPayload;
+            upstream = pypi;
+          }).overlays.default
+        ];
+      })
+        ? default;
+  };
   testAPayloadReadingSourceFilesFromAPinWithoutThemThrows = {
     expected = {
       success = false;
@@ -180,6 +236,13 @@ in
         upstream = pypi;
       }).packages.${system}.six.drvPath
     );
+  };
+  testAPayloadWithSeveralPackagesPublishesNoDefaultUntilOneIsNamed = {
+    expected = [
+      "one"
+      "two"
+    ];
+    expr = attrNames (producer { payload.packages = twoPackages; }).packages.${system};
   };
   testARecipeNamingABuildForAWheelSourceThrows = {
     expected = {

@@ -1,6 +1,8 @@
-# Resolves the pnpm major a workspace declares against the package set, and adapts that workspace's manifest when the resolution is not the declared major.
+# Resolves the pnpm major a workspace declares against the package set, and hands back a tree whose manifest names the release that runs.
 #
-# A workspace names its toolchain through `packageManager`, and pnpm honors that field by switching to the named release whenever it can reach one. A producer whose declared major the package set still carries builds with that major and reads the tree as upstream wrote it. A producer whose declared major the package set has retired cannot: the retired release is not something nixpkgs can supply, so the build runs a different major than the one that wrote the lockfile, and the manifest has to say so.
+# A workspace names its toolchain through `packageManager`, and pnpm honors that field by switching to the named release whenever it can reach one. A build sandbox reaches no registry, so a tree naming a release other than the one it is handed dies inside `pnpmConfigHook`, in a phase no producer can reach with a patch. The manifest therefore names what it is given. Where the resolution crossed into another major, the pnpm settings kept under `pnpm` in the manifest additionally move to the top level of `pnpm-workspace.yaml`, where a newer pnpm looks for them; within one major the rest of the tree is read as upstream wrote it, and a manifest that already names the release the package set supplies is handed back with its contents untouched.
+#
+# Which release the tree names is known only from the tree, so the decision is made in the builder rather than at evaluation.
 #
 # A retired major keeps its attribute in the package set and throws when forced, and a major never published throws at the selection itself, which `tryEval` does not catch. Both cases are therefore tested before one is chosen.
 #
@@ -37,7 +39,6 @@ let
       throw "pnpmToolchain: the package set carries no pnpm ${toString declaredMajor} and no major above it, so ${baseNameOf (toString src)} has no toolchain to build with.";
 
   pnpm = pkgs.${resolvedName};
-  substituted = resolvedName != declaredName && declaredMajor != null;
 
   # The adapted tree keeps the name of the tree it replaces. A producer locates its workspace inside the unpacked source by that name, and `fetchPnpmDeps` unpacks the same way, so a new name would make the adaptation visible wherever the source is named.
   adapted =
@@ -56,8 +57,8 @@ let
       '';
 in
 {
-  inherit pnpm substituted;
+  inherit pnpm;
 
   # The tree the fetcher reads and the tree the build compiles have to be the same tree, so the adaptation is published here rather than left for each producer to reproduce.
-  src = if substituted then adapted else src;
+  src = adapted;
 }

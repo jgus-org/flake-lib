@@ -82,15 +82,23 @@ assertions.
 producer. A workspace names its toolchain through `packageManager`, and pnpm honors that field by
 switching to the named release whenever it can reach one, so a producer builds with the major that
 wrote the lockfile wherever the package set still carries it. Where it does not — a retired major
-keeps its attribute and throws when forced — the nearest major above the declaration is substituted,
-and the workspace is adapted to say so: `packageManager` is rewritten to the release that runs, and
-pnpm settings kept under `pnpm` in the manifest move to the top level of `pnpm-workspace.yaml`, where
-a newer pnpm looks for them. Substituting the nearest rather than the newest keeps the toolchain one
-release line from the lockfile instead of as far away as the package set permits, and holds still
-while nixpkgs publishes majors. The resolved toolchain and the tree it reads are published on
-`passthru.pnpmToolchain` for the build to take, because the tree the fetcher reads and the tree the
-build compiles have to be the same tree. `checks.<system>.pnpm-toolchain-tests` owns these against a
-package set of its own, so no test depends on which majors nixpkgs happens to carry.
+keeps its attribute and throws when forced — the nearest major above the declaration is substituted.
+Substituting the nearest rather than the newest keeps the toolchain one release line from the lockfile
+instead of as far away as the package set permits, and holds still while nixpkgs publishes majors.
+
+Either way the manifest is rewritten to name the release that runs, since the package set decides
+which release answers a major and a tree naming `pnpm@10.34.5` is routinely handed 10.34.7. A tree
+that names a release nothing runs asks the registry for it, which is a failure no build sandbox can
+answer and no producer can reach with a patch, the install happening before any phase a producer owns.
+Where the resolution crossed into another major, pnpm settings kept under `pnpm` in the manifest also
+move to the top level of `pnpm-workspace.yaml`, where a newer pnpm looks for them; within one major
+the rest of the tree is read as upstream wrote it. A tree already naming the release it is handed
+comes back with its contents untouched, and one naming a manager other than pnpm is left alone. The
+resolved toolchain and the tree it reads are published on `passthru.pnpmToolchain` for the build to
+take, because the tree the fetcher reads and the tree the build compiles have to be the same tree.
+`checks.<system>.pnpm-toolchain-tests` owns the resolution against a package set of its own, so no
+test depends on which majors nixpkgs happens to carry, and `checks.<system>.pnpm-adaptation-tests`
+runs the manifest edits over trees differing only in what they name.
 
 `mkComposedHook` (`lib/mk-composed-hook.nix`): several artifact hooks composed into the one
 executable a single hook slot takes.

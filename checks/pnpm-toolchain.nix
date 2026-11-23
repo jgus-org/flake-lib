@@ -1,4 +1,4 @@
-# Pure tests for the toolchain a pnpm dependency fetch is resolved to: which major answers a declaration, and which tree the fetcher and the build are then handed. Nothing is built, and the package set is a fixture, so no test here depends on which pnpm majors nixpkgs happens to carry.
+# Pure tests for the toolchain a pnpm dependency fetch is resolved to: which major answers a declaration, and which tree the fetcher and the build are then handed. Nothing is built, and the package set is a fixture, so no test here depends on which pnpm majors nixpkgs happens to carry. The manifest edits themselves are behavior and belong to `pnpm-adaptation.nix`, which runs them.
 {
   lib,
   mkPnpmDeps,
@@ -17,6 +17,7 @@ let
       inherit env name script;
       drvPath = "/nix/store/fake.drv";
       outPath = "/nix/store/fake";
+      targetVersion = env.targetVersion;
     };
   };
 
@@ -56,17 +57,18 @@ in
       pkgs.lib.strings.hasSuffix "-pnpm11" kept.pname
       && pkgs.lib.strings.hasSuffix "-pnpm10" substituted.pname;
   };
-  # pnpm switches to whatever `packageManager` names, so the fetcher and the build must be handed the identical tree: one adapted, the other pristine, and the dependency tree answers for neither.
-  testFetcherAndBuildAreHandedTheSameTree = {
+  # The adapted tree is handed to the fetcher and to the build, and it keeps the name of the tree it replaces, because that name is where a producer locates its workspace.
+  testFetcherAndBuildAreHandedTheAdaptedTree = {
     expected = true;
     expr =
       substituted.src == substituted.passthru.pnpmToolchain.src
-      && kept.src == kept.passthru.pnpmToolchain.src;
+      && substituted.src != src
+      && substituted.src.name == src.name;
   };
-  # A declaration the package set can honor needs nothing done to it, so upstream's tree is fetched and built as written.
-  testHonoredDeclarationLeavesTheTreeAsUpstreamWroteIt = {
+  # The resolution is published for the producer's build inputs, so the tree and the tool that installs it are resolved once and by nobody else.
+  testFetcherAndBuildResolveOneToolchain = {
     expected = true;
-    expr = kept.src == src && !kept.passthru.pnpmToolchain.substituted;
+    expr = kept.src == kept.passthru.pnpmToolchain.src && kept.pnpm == kept.passthru.pnpmToolchain.pnpm;
   };
   # A major nixpkgs has retired cannot be supplied, and reaching past the package set for it fails rather than resolving to a major nobody declared.
   testMajorAbsentFromThePackageSetIsAFailure = {
@@ -76,10 +78,7 @@ in
   # The nearest available major above the declaration, not the newest one: the newest moves whenever nixpkgs publishes a major and would re-resolve every substituted producer with it.
   testNearestMajorAboveTheDeclarationIsSubstituted = {
     expected = true;
-    expr =
-      substituted.pnpm.version == "10.34.7"
-      && skipped.pnpm.version == "10.34.7"
-      && substituted.passthru.pnpmToolchain.substituted;
+    expr = substituted.pnpm.version == "10.34.7" && skipped.pnpm.version == "10.34.7";
   };
   # One toolchain source per call: a producer naming both a package and a declaration leaves the resolution ambiguous.
   testPnpmAndDeclaredMajorAreMutuallyExclusive = {
@@ -97,9 +96,9 @@ in
         }).pname
       ).success;
   };
-  # The adaptation is a tree of its own, and it keeps the name the producer unpacks.
-  testSubstitutedDeclarationAdaptsTheTree = {
+  # A declaration the package set can honor resolves to the major it names, and the tree it is handed names the release that runs rather than one a sandbox cannot reach.
+  testResolvedToolchainIsNamedByTheTreeItIsHanded = {
     expected = true;
-    expr = substituted.src != src && substituted.src.name == src.name;
+    expr = kept.pnpm.version == "11.27.0" && kept.src.targetVersion == "11.27.0";
   };
 }

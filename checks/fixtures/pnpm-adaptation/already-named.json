@@ -1,0 +1,10 @@
+{
+  "name": "adaptation-fixture",
+  "version": "1.0.0",
+  "packageManager": "pnpm@10.34.7",
+  "pnpm": {
+    "overrides": {
+      "foo": "1.2.3"
+    }
+  }
+}

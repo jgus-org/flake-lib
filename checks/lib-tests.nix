@@ -34,6 +34,8 @@
 
   oci-image-tests = import ./oci-image.nix { inherit lib pkgs; };
 
+  pnpm-adaptation-tests = import ./pnpm-adaptation.nix { inherit pkgs; };
+
   pnpm-deps-tests =
     let
       failures = pkgs.lib.runTests (

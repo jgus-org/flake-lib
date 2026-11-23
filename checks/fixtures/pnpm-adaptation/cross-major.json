@@ -1,0 +1,11 @@
+{
+  "name": "adaptation-fixture",
+  "version": "1.0.0",
+  "packageManager": "pnpm@9.15.9+sha512bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "pnpm": {
+    "overrides": {
+      "foo": "1.2.3"
+    },
+    "onlyBuiltDependencies": ["bar"]
+  }
+}

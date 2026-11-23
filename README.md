@@ -62,11 +62,12 @@ tarball hash for a tool nothing vouches for. The major it prints is what `mkPnpm
 the hook does not fill is written empty.
 
 `mkPnpmDeps` (`lib/mk-pnpm-deps.nix`): a pnpm workspace's offline dependency tree, filed under a
-store name carrying the pnpm major. A fixed-output path is keyed on its name and its declared hash
-alone, so two instantiations sharing both share the path, and the one that runs second never
-fetches: one toolchain's tree answers for another's, and one hash pin cannot be right for both. The
-fetcher puts the name nowhere but the path, so carrying the major costs a cache miss and no change
-to the hash value.
+store name carrying the pnpm major and the fetcher version. A fixed-output path is keyed on its name
+and its declared hash alone, so two instantiations sharing both share the path, and the one that runs
+second never fetches: one toolchain's tree answers for another's, and one hash pin cannot be right for
+both. The fetcher puts the name nowhere but the path, so carrying either costs a cache miss and no
+change to the hash value. `fetcherVersion` names the shape of the fetcher's own output rather than
+anything about the source, so the producer states it and no hook can read it from upstream.
 
 `sourceFingerprint` adds a string that changes whenever the fetched tree's input does to that name,
 the source hash already in the pin being the usual one. The same keying leaves a stale hash pin past

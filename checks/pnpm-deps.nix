@@ -38,6 +38,23 @@ let
   moved = deps {
     sourceFingerprint = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
   };
+
+  # A package set accepts one pair of fetcher versions at a time, and rejects the rest at evaluation, so a pair is compared on the name the fetcher is handed rather than on two derivations this set would refuse to build.
+  recordingPkgs = pkgs // {
+    fetchPnpmDeps = args: args;
+  };
+
+  fetchNameAt =
+    fetcherVersion:
+    (mkPnpmDeps {
+      fetcherVersion = fetcherVersion;
+      hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+      pkgs = recordingPkgs;
+      pname = "pnpm-deps-test";
+      pnpm = pkgs.pnpm;
+      src = ./fixtures/pnpm-deps/apps;
+      version = "1.0.0";
+    }).pname;
 in
 {
   # The updater's build-failure hash refresh needs the fetch to run at a bump, and it runs only when the declared name and hash resolve to a path the store has not seen.
@@ -50,6 +67,11 @@ in
     expected = true;
     expr = default.outPath != other.outPath;
   };
+  # The same hazard on the fetcher's output shape: a migration regenerates the hash, so one path shared between two shapes would let the tree built to the old layout answer for the new one.
+  testFetcherVersionsApartGetDistinctStorePaths = {
+    expected = true;
+    expr = fetchNameAt 4 != fetchNameAt 5 && fetchNameAt 4 != fetchNameAt 3;
+  };
   testOneToolchainIsRepeatable = {
     expected = true;
     expr = (deps { }).outPath == default.outPath;
@@ -58,9 +80,9 @@ in
     expected = true;
     expr = !(pkgs.lib.strings.hasInfix "sha256-" (baseNameOf default.outPath));
   };
-  testStoreNameCarriesThePnpmMajor = {
+  testStoreNameCarriesThePnpmMajorAndFetcherVersion = {
     expected = true;
-    expr = pkgs.lib.strings.hasInfix ("-pnpm${pkgs.lib.versions.major pkgs.pnpm.version}-pnpm-deps") (
+    expr = pkgs.lib.strings.hasInfix "-pnpm${pkgs.lib.versions.major pkgs.pnpm.version}-fetcher4-pnpm-deps" (
       baseNameOf default.outPath
     );
   };

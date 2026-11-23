@@ -50,12 +50,12 @@ in
     expected = true;
     expr = kept.pname != substituted.pname;
   };
-  # The name is what makes the resolved toolchain legible, so it carries the major that runs rather than the one upstream asked for.
+  # The name is what makes the resolved toolchain legible, so it carries the major that runs rather than the one upstream asked for, and it carries the fetcher version the hash was generated against.
   testFetchNameCarriesTheResolvedMajor = {
     expected = true;
     expr =
-      pkgs.lib.strings.hasSuffix "-pnpm11" kept.pname
-      && pkgs.lib.strings.hasSuffix "-pnpm10" substituted.pname;
+      pkgs.lib.strings.hasSuffix "-pnpm11-fetcher4" kept.pname
+      && pkgs.lib.strings.hasSuffix "-pnpm10-fetcher4" substituted.pname;
   };
   # The adapted tree is handed to the fetcher and to the build, and it keeps the name of the tree it replaces, because that name is where a producer locates its workspace.
   testFetcherAndBuildAreHandedTheAdaptedTree = {

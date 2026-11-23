@@ -6,6 +6,8 @@
 #
 # The fetcher uses `pname` for its store name and nothing else, so either half of the name costs a cache miss on the first build and no change to the hash value.
 #
+# The name records the major rather than the release, so two package sets that answer one major with different releases share a fetched tree. Within a major the offline install reads the same lockfile into the same content; two package sets answering different majors do not, and that is the sharing the name removes.
+#
 # `pnpmMajor` resolves the toolchain through `pnpmToolchain` instead of taking one from the producer, and the resolved pair is published on `passthru.pnpmToolchain` so the build reads the same tree the fetch did. Producers that declare no major keep passing `pnpm`.
 {
   # Value the fetcher's own contract requires, passed through unchanged.

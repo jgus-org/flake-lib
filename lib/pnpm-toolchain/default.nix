@@ -16,18 +16,22 @@
   src,
   workspaceDir ? null,
 }:
+# `src` is one of the two things published, so inside a recursive attrset it names the adapted tree rather than the tree the fetcher was given, and the builder below would read its own output. The source it copies needs a name of its own.
 let
-  inherit (pkgs) lib;
-
-  available = name: builtins.hasAttr name pkgs && (builtins.tryEval pkgs.${name}.version).success;
-
+  source = src;
+in
+rec {
   pnpm =
     let
+      available = name: builtins.hasAttr name pkgs && (builtins.tryEval pkgs.${name}.version).success;
+
       declaredName = "pnpm_${toString declaredMajor}";
 
-      substitution = lib.findFirst available null (
+      substitution = pkgs.lib.findFirst available null (
         map (major: "pnpm_${toString major}") (
-          lib.range (lib.toInt declaredMajor + 1) (lib.toInt (lib.versions.major pkgs.pnpm.version))
+          pkgs.lib.range (pkgs.lib.toInt declaredMajor + 1) (
+            pkgs.lib.toInt (pkgs.lib.versions.major pkgs.pnpm.version)
+          )
         )
       );
     in
@@ -38,14 +42,11 @@ let
     else if substitution != null then
       pkgs.${substitution}
     else
-      throw "pnpmToolchain: the package set carries no pnpm ${toString declaredMajor} and no major above it, so ${baseNameOf (toString src)} has no toolchain to build with.";
-in
-{
-  inherit pnpm;
+      throw "pnpmToolchain: the package set carries no pnpm ${toString declaredMajor} and no major above it, so ${baseNameOf (toString source)} has no toolchain to build with.";
 
   # The tree the fetcher reads and the tree the build compiles have to be the same tree, so the adaptation is published here rather than left for each producer to reproduce. The adapted tree keeps the name of the tree it replaces, because a producer locates its workspace inside the unpacked source by that name and `fetchPnpmDeps` unpacks the same way, so a new name would make the adaptation visible wherever the source is named.
   src =
-    pkgs.runCommand (if lib.isPath src then baseNameOf (toString src) else src.name)
+    pkgs.runCommand (if pkgs.lib.isPath source then baseNameOf (toString source) else source.name)
       {
         dontFixup = true;
         nativeBuildInputs = [ pkgs.jq ];
@@ -53,7 +54,7 @@ in
         workspaceDir = if workspaceDir == null then "" else workspaceDir;
       }
       ''
-        cp -r ${src} $out
+        cp -r ${source} $out
         chmod -R u+w $out
         cd $out
         bash ${./adapt-workspace.sh}

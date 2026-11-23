@@ -28,24 +28,24 @@
   workspaceDir ? null,
   ...
 }@args:
-let
-  # A store path name carries neither `/` nor `=`, and an SRI hash carries both.
-  nameSafeFingerprint = pkgs.lib.replaceStrings [ "/" "=" ] [ "-" "-" ] sourceFingerprint;
-
-  toolchain =
-    if pnpmMajor == null then
-      {
-        pnpm = if pnpm != null then pnpm else pkgs.pnpm;
-        src = args.src;
-      }
-    else
-      import ./pnpm-toolchain {
-        inherit pkgs workspaceDir;
-        declaredMajor = pnpmMajor;
-        src = args.src;
-      };
-
-  fetchArgs =
+if pnpm != null && pnpmMajor != null then
+  throw "mkPnpmDeps: both pnpm and pnpmMajor are given, so which toolchain fetches this tree is ambiguous."
+else
+  let
+    toolchain =
+      if pnpmMajor == null then
+        {
+          pnpm = if pnpm != null then pnpm else pkgs.pnpm;
+          src = args.src;
+        }
+      else
+        import ./pnpm-toolchain {
+          inherit pkgs workspaceDir;
+          declaredMajor = pnpmMajor;
+          src = args.src;
+        };
+  in
+  pkgs.fetchPnpmDeps (
     builtins.removeAttrs args [
       "pkgs"
       "pnpm"
@@ -56,12 +56,10 @@ let
     // {
       inherit (toolchain) pnpm src;
       passthru.pnpmToolchain = toolchain;
+      # A store path name carries neither `/` nor `=`, and an SRI hash carries both.
       pname = "${pname}-pnpm${pkgs.lib.versions.major toolchain.pnpm.version}${
-        pkgs.lib.optionalString (sourceFingerprint != null) "-${nameSafeFingerprint}"
+        pkgs.lib.optionalString (sourceFingerprint != null)
+          "-${pkgs.lib.replaceStrings [ "/" "=" ] [ "-" "-" ] sourceFingerprint}"
       }";
-    };
-in
-if pnpm != null && pnpmMajor != null then
-  throw "mkPnpmDeps: both pnpm and pnpmMajor are given, so which toolchain fetches this tree is ambiguous."
-else
-  pkgs.fetchPnpmDeps fetchArgs
+    }
+  )

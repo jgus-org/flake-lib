@@ -21,27 +21,30 @@ let
 
   available = name: builtins.hasAttr name pkgs && (builtins.tryEval pkgs.${name}.version).success;
 
-  declaredName = "pnpm_${toString declaredMajor}";
-  newestMajor = lib.toInt (lib.versions.major pkgs.pnpm.version);
+  pnpm =
+    let
+      declaredName = "pnpm_${toString declaredMajor}";
 
-  substitution = lib.findFirst available null (
-    map (major: "pnpm_${toString major}") (lib.range (lib.toInt declaredMajor + 1) newestMajor)
-  );
-
-  resolvedName =
+      substitution = lib.findFirst available null (
+        map (major: "pnpm_${toString major}") (
+          lib.range (lib.toInt declaredMajor + 1) (lib.toInt (lib.versions.major pkgs.pnpm.version))
+        )
+      );
+    in
     if declaredMajor == null then
-      "pnpm"
+      pkgs.pnpm
     else if available declaredName then
-      declaredName
+      pkgs.${declaredName}
     else if substitution != null then
-      substitution
+      pkgs.${substitution}
     else
       throw "pnpmToolchain: the package set carries no pnpm ${toString declaredMajor} and no major above it, so ${baseNameOf (toString src)} has no toolchain to build with.";
+in
+{
+  inherit pnpm;
 
-  pnpm = pkgs.${resolvedName};
-
-  # The adapted tree keeps the name of the tree it replaces. A producer locates its workspace inside the unpacked source by that name, and `fetchPnpmDeps` unpacks the same way, so a new name would make the adaptation visible wherever the source is named.
-  adapted =
+  # The tree the fetcher reads and the tree the build compiles have to be the same tree, so the adaptation is published here rather than left for each producer to reproduce. The adapted tree keeps the name of the tree it replaces, because a producer locates its workspace inside the unpacked source by that name and `fetchPnpmDeps` unpacks the same way, so a new name would make the adaptation visible wherever the source is named.
+  src =
     pkgs.runCommand (if lib.isPath src then baseNameOf (toString src) else src.name)
       {
         dontFixup = true;
@@ -55,10 +58,4 @@ let
         cd $out
         bash ${./adapt-workspace.sh}
       '';
-in
-{
-  inherit pnpm;
-
-  # The tree the fetcher reads and the tree the build compiles have to be the same tree, so the adaptation is published here rather than left for each producer to reproduce.
-  src = adapted;
 }

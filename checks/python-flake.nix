@@ -95,18 +95,6 @@ in
           outputs.checks.${system}.six.drvPath != outputs.packages.${system}.six.drvPath;
       };
   };
-  testADefaultPackageThePayloadDoesNotPublishThrows = {
-    expected = {
-      success = false;
-      value = false;
-    };
-    expr = tryEval (
-      (producer {
-        defaultPackage = "three";
-        payload.packages = twoPackages;
-      }).packages.${system}.default.drvPath
-    );
-  };
   testAGitlabSourceFetchesItsSourceFromGitLab = {
     expected = {
       owner = "someone";

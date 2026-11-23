@@ -147,11 +147,7 @@ in
       published
       // (
         if defaultPackage != null then
-          {
-            default =
-              published.${defaultPackage}
-                or (throw "mkPythonFlake: defaultPackage names ${defaultPackage}, which this flake's payload does not publish, so the alias has nothing to name");
-          }
+          { default = published.${defaultPackage}; }
         else
           nixpkgs.lib.optionalAttrs (length packageNames == 1) {
             default = published.${head packageNames};

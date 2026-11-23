@@ -34,6 +34,34 @@
 
   oci-image-tests = import ./oci-image.nix { inherit lib pkgs; };
 
+  pnpm-adaptation-tests = import ./pnpm-adaptation.nix { inherit pkgs; };
+
+  pnpm-deps-tests =
+    let
+      failures = pkgs.lib.runTests (
+        import ./pnpm-deps.nix {
+          inherit lib pkgs;
+          inherit (lib) mkPnpmDeps;
+        }
+      );
+    in
+    pkgs.lib.throwIf (failures != [ ]) "mkPnpmDeps tests failed" (
+      pkgs.runCommand "pnpm-deps-tests" { } "touch $out"
+    );
+
+  pnpm-toolchain-tests =
+    let
+      failures = pkgs.lib.runTests (
+        import ./pnpm-toolchain.nix {
+          inherit lib pkgs;
+          inherit (lib) mkPnpmDeps;
+        }
+      );
+    in
+    pkgs.lib.throwIf (failures != [ ]) "pnpmToolchain tests failed" (
+      pkgs.runCommand "pnpm-toolchain-tests" { } "touch $out"
+    );
+
   python-flake-tests =
     let
       failures = pkgs.lib.runTests (

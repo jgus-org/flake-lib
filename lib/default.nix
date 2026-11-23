@@ -66,6 +66,8 @@ in
   mkHuggingFaceModelManager = import ./mk-huggingface-model-manager.nix;
   mkJsDepsHook = import ./mk-js-deps-hook.nix;
   mkOciImage = import ./mk-oci-image.nix;
+  mkPnpmDeclarationHook = import ./mk-pnpm-declaration-hook.nix;
+  mkPnpmDeps = import ./mk-pnpm-deps.nix;
   mkPythonApplication = import ./mk-python-application.nix;
   mkRevalidateHash = import ./mk-revalidate-hash.nix;
   pythonDualStackIPv6 = import ./python-dual-stack-ipv6.nix;

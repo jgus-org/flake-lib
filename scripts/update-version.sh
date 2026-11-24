@@ -50,8 +50,9 @@ HASH_MODE="${HASH_MODE:-prefetch}" # prefetch | build-failure (source/vendor has
 EXTRA_HASHES="${EXTRA_HASHES:-[]}" # JSON array of extra pin field names (e.g. ["npmDepsHash"])
 PIN_HASHES="${PIN_HASHES:-${EXTRA_HASHES}}"
 BUILD_FAILURE_HASHES="${BUILD_FAILURE_HASHES:-[]}"
-ARTIFACT_HOOK="${ARTIFACT_HOOK:-}" # consumer script: regenerate vendored files, emit name=value extra hashes
-FORMATTER="${FORMATTER:-}"         # the repository's formatter binary, which puts a nested pin field in its canonical shape
+BUILD_FAILURE_TARGETS="${BUILD_FAILURE_TARGETS:-}" # JSON object of pin field name -> the published package whose fetch produces it
+ARTIFACT_HOOK="${ARTIFACT_HOOK:-}"                 # consumer script: regenerate vendored files, emit name=value extra hashes
+FORMATTER="${FORMATTER:-}"                         # the repository's formatter binary, which puts a nested pin field in its canonical shape
 ORCHESTRATED_OWNED_FILES="${ORCHESTRATED_OWNED_FILES:-}"
 SIBLINGS="${SIBLINGS:-[]}"
 SIBLING_REFS_IN_PIN="${SIBLING_REFS_IN_PIN:-}"
@@ -501,9 +502,11 @@ run_artifact_hook() {
 }
 
 pin_field_holding() {
-  local WANT="${1}" NAME VALUE
-  while IFS='=' read -r NAME VALUE; do
-    if [[ ${VALUE} == "${WANT}" ]]; then
+  local WANT="${1}" NAME PAIR
+  while IFS= read -r PAIR; do
+    # Split on the first '=' only, so a base64 SRI's trailing '=' padding survives.
+    NAME="${PAIR%%=*}"
+    if [[ ${PAIR#*=} == "${WANT}" ]]; then
       printf '%s\n' "${NAME}"
       return 0
     fi
@@ -530,6 +533,36 @@ next_unresolved_failure_field() {
   return 1
 }
 
+resolve_bound_failure_hashes() {
+  # Mines a bound field's hash from a build narrowed to the one published package that fetches it, so interleaved output from parallel fetchers cannot pair one fetcher's hash with another field. A binding whose package fetches another bound field's output must be declared after it, since the first failing fetch inside a narrowed build is the one mined.
+  local FIELD TARGET OUT RC GOT_HASH
+  if [[ -z ${BUILD_FAILURE_TARGETS} || ${BUILD_FAILURE_TARGETS} == '{}' ]]; then
+    return 0
+  fi
+  for FIELD in "${BUILD_FAILURE_FIELDS[@]}"; do
+    TARGET=$(jq -r --arg field "${FIELD}" '.[$field] // empty' <<<"${BUILD_FAILURE_TARGETS}")
+    if [[ -z ${TARGET} ]]; then
+      continue
+    fi
+    echo "Mining ${FIELD} from a build of ${TARGET}..."
+    set +e
+    OUT=$("${BUILD_PACKAGES_SCRIPT:?required env var}" --flake "${FLAKE_ROOT}" --only "${TARGET}" 2>&1)
+    RC=${?}
+    set -e
+    if ((RC == 0)); then
+      continue
+    fi
+    GOT_HASH=$(printf '%s\n' "${OUT}" | sed -nE 's/.*got:[[:space:]]+(sha256-[A-Za-z0-9+/=]+).*/\1/p' | head -1)
+    if [[ -z ${GOT_HASH} ]]; then
+      echo "error: building ${TARGET}, the package bound to pin field ${FIELD}, failed and it wasn't a hash mismatch:" >&2
+      printf '%s\n' "${OUT}" >&2
+      exit 1
+    fi
+    echo "  ${FIELD} drift -> ${GOT_HASH}"
+    sed -i -E "s|^([[:space:]]*${FIELD}[[:space:]]*=[[:space:]]*\")[^\"]*(\";)|\\1${GOT_HASH}\\2|" "${PIN_PATH}"
+  done
+}
+
 revalidate_build_hashes() {
   local -A BUILD_FAILURE_RESOLVED=()
   local OUT RC SPECIFIED_HASH GOT_HASH FIELD OWNER
@@ -537,6 +570,7 @@ revalidate_build_hashes() {
   if [[ -n ${BUILD_TARGET:-} ]]; then
     DISCOVERY_ARGS=(--only "${BUILD_TARGET}")
   fi
+  resolve_bound_failure_hashes
   # A mismatch states its own hash, so the field holding it is looked up from there and no producer has to name a target. A producer that does narrows this build to what its hash fetches. A family that builds nothing would report the incomplete pin's hashes as resolved, so a build is required either way.
   while :; do
     echo "Validating ${BUILD_FAILURE_FIELDS[*]} via build..."

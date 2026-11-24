@@ -2,6 +2,7 @@
 #   hashMode     : "prefetch" (default) or "build-failure" (vendor hashes that can't be prefetched)
 #   buildFailureHash  : the one pin field name whose value the build's hash mismatch can name
 #   buildFailureHashes : the pin field names any of which the build's hash mismatch can name
+#   buildFailureHashTargets : pin field name -> published package that fetches it, for a field whose hash cannot be prefetched and whose fetcher the log cannot name
 #   buildTarget    : published package a build-failure hash is mined from (default: the whole published family)
 #   extraHashes  : extra pin field names whose values the artifactHook emits (e.g. [ "npmDepsHash" ])
 #   artifactHook : consumer script (path) that regenerates vendored files + prints name=value extra hashes
@@ -14,6 +15,7 @@ with builtins;
   artifactHook ? null,
   buildFailureHash ?
     if hashMode == "build-failure" && buildFailureHashes == [ ] then "sourceHash" else null,
+  buildFailureHashTargets ? { },
   buildFailureHashes ? [ ],
   buildTarget ? "",
   extraHashes ? [ ],
@@ -72,6 +74,11 @@ in
 assert hfManifest == null || source.type == "huggingface";
 assert hfManifest == null || hfManifest ? path;
 assert hfManifestHashField == null || hfManifestHashField != "";
+# A bound field must be one the run is allowed to rewrite, and a bound package must be named.
+assert pkgs.lib.all (field: pkgs.lib.elem field buildFailureFields) (
+  builtins.attrNames buildFailureHashTargets
+);
+assert pkgs.lib.all (target: target != "") (builtins.attrValues buildFailureHashTargets);
 assert
   formatter != null
   || !pkgs.lib.any (name: pkgs.lib.hasInfix "." name) (effectiveExtraHashes ++ buildFailureFields);
@@ -97,6 +104,7 @@ pkgs.writeShellApplication {
     ARTIFACT_FINGERPRINT = artifactFingerprint;
     ARTIFACT_HOOK = if artifactHook == null then "" else "${artifactHook}";
     BUILD_FAILURE_HASHES = toJSON buildFailureFields;
+    BUILD_FAILURE_TARGETS = toJSON buildFailureHashTargets;
     BUILD_PACKAGES_SCRIPT = "${pkgs.copyPathToStore ../scripts/build-packages.sh}";
     BUILD_PACKAGES_SELECT = "${pkgs.copyPathToStore ../scripts/build-packages-select.nix}";
     BUILD_TARGET = buildTarget;

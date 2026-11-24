@@ -373,6 +373,7 @@ chmod +x "${PNPM_ARTIFACT_HOOK}"
 
 run_build_failure_case() {
   local CASE_ROOT="${1}" PLAN="${2}" FAILURE_HASHES="${3}" PIN_HASHES_JSON="${4}" EXTRA_HASHES_JSON="${5}" TARGET="${6:-}"
+  local BOUND_TARGETS="${7:-}" HOOK="${8:-${PNPM_ARTIFACT_HOOK}}" SELECTION="${9:-}"
   mkdir -p "${CASE_ROOT}"
   printf '%s\n' '{ version = ""; sourceRev = ""; sourceHash = ""; }' >"${CASE_ROOT}/pin.nix"
   FLAKE_ROOT="${CASE_ROOT}" \
@@ -389,11 +390,13 @@ run_build_failure_case() {
     EXTRA_HASHES="${EXTRA_HASHES_JSON}" \
     PIN_HASHES="${PIN_HASHES_JSON}" \
     BUILD_FAILURE_HASHES="${FAILURE_HASHES}" \
+    BUILD_FAILURE_TARGETS="${BOUND_TARGETS}" \
     BUILD_TARGET="${TARGET}" \
-    ARTIFACT_HOOK="${PNPM_ARTIFACT_HOOK}" \
+    ARTIFACT_HOOK="${HOOK}" \
     SIBLINGS='[]' \
     TEST_BUILD_PLAN="${PLAN}" \
     TEST_BUILD_LOG="${CASE_ROOT}/builds.log" \
+    TEST_NIX_SELECTION="${SELECTION}" \
     bash "${UPDATE_VERSION}" 1.2.3
 }
 
@@ -437,6 +440,48 @@ if BOUND_OUTPUT=$(run_build_failure_case "${BOUND_ROOT}" "${BOUND_PLAN}" '["pnpm
 fi
 grep -Fq 'resolved once each' <<<"${BOUND_OUTPUT}"
 [[ "$(wc -l <"${BOUND_ROOT}/builds.log")" -eq 3 ]]
+
+PADDED_HOOK="${TEST_ROOT}/padded-artifact-hook"
+printf '%s\n' \
+  "#!${TEST_BASH}/bin/bash" \
+  'printf "%s\n" "pnpmDepsHash=sha256-dohj/hAP3OZbwJc5/jKpGpaFqumJUwUN8DuSyKk8ppg=" "vendorHash=sha256-5yh5i19Ex/SM5eHTOvdxintnRLkzwuMC4c8xm2MevKM="' >"${PADDED_HOOK}"
+chmod +x "${PADDED_HOOK}"
+
+# The trailing '=' of a real SRI is the whole signal naming which declared field a family mismatch belongs to.
+PADDED_ROOT="${TEST_ROOT}/build-failure-padded-hash"
+PADDED_PLAN="${TEST_ROOT}/padded.plan"
+cat >"${PADDED_PLAN}" <<'EOF'
+mismatch sha256-5yh5i19Ex/SM5eHTOvdxintnRLkzwuMC4c8xm2MevKM= sha256-vendornew
+mismatch sha256-dohj/hAP3OZbwJc5/jKpGpaFqumJUwUN8DuSyKk8ppg= sha256-pnpmnew
+ok
+EOF
+run_build_failure_case "${PADDED_ROOT}" "${PADDED_PLAN}" '["pnpmDepsHash","vendorHash"]' '["pnpmDepsHash","vendorHash"]' '[]' '' '' "${PADDED_HOOK}"
+grep -Fq 'pnpmDepsHash = "sha256-pnpmnew";' "${PADDED_ROOT}/pin.nix"
+grep -Fq 'vendorHash = "sha256-vendornew";' "${PADDED_ROOT}/pin.nix"
+
+# A new version branch starts with every build-resolvable field empty, so no pin value names the fetcher that failed.
+BOOTSTRAP_ROOT="${TEST_ROOT}/build-failure-bootstrap-binding"
+BOOTSTRAP_PLAN="${TEST_ROOT}/bootstrap.plan"
+cat >"${BOOTSTRAP_PLAN}" <<'EOF'
+mismatch sha256-Zzzz000000000000000000000000000000000000000000= sha256-pnpmnew
+mismatch sha256-Zzzz000000000000000000000000000000000000000000= sha256-vendornew
+ok
+EOF
+EMPTY_HOOK="${TEST_ROOT}/empty-artifact-hook"
+printf '%s\n' \
+  "#!${TEST_BASH}/bin/bash" \
+  'printf "%s\n" "pnpmDepsHash=" "vendorHash="' >"${EMPTY_HOOK}"
+chmod +x "${EMPTY_HOOK}"
+run_build_failure_case "${BOOTSTRAP_ROOT}" "${BOOTSTRAP_PLAN}" '["pnpmDepsHash","vendorHash"]' '["pnpmDepsHash","vendorHash"]' '[]' '' \
+  '{"pnpmDepsHash":"kandev-web","vendorHash":"kandev"}' "${EMPTY_HOOK}" '{"build":["kandev-web","kandev"],"skip":[]}'
+grep -Fq 'pnpmDepsHash = "sha256-pnpmnew";' "${BOOTSTRAP_ROOT}/pin.nix"
+grep -Fq 'vendorHash = "sha256-vendornew";' "${BOOTSTRAP_ROOT}/pin.nix"
+[[ "$(wc -l <"${BOOTSTRAP_ROOT}/builds.log")" -eq 3 ]]
+grep -Fq '"kandev-web"' <(sed -n '1p' "${BOOTSTRAP_ROOT}/builds.log")
+if grep -Fq '"kandev"' <(sed -n '1p' "${BOOTSTRAP_ROOT}/builds.log"); then
+  echo "expected the first build to narrow to one published package" >&2
+  exit 1
+fi
 
 # Over the family, the build that discovers a hash is the build that proves the tree.
 PLAIN_ROOT="${TEST_ROOT}/build-failure-plain"

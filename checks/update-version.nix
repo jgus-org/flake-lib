@@ -83,9 +83,14 @@ let
           ;;
         eval)
           # What `build-packages` selects comes back as JSON; the family the updater counts
-          # below comes back with --raw, so the two fixture shapes tell each other apart.
+          # below comes back with --raw, so the two fixture shapes tell each other apart. A
+          # case that binds a hash field to a named package needs a family that names it.
           if [[ "''${*}" == *'#packages.'* && "''${*}" == *'--apply'* && "''${*}" == *'--json'* ]]; then
-            printf '%s\n' '{"build":["fixture"],"skip":[]}'
+            if [[ -n "''${TEST_NIX_SELECTION:-}" ]]; then
+              printf '%s\n' "''${TEST_NIX_SELECTION}"
+            else
+              printf '%s\n' '{"build":["fixture"],"skip":[]}'
+            fi
             exit 0
           fi
           # The published-family evaluation the updater runs before it writes a pin. The
@@ -128,7 +133,8 @@ let
           ;;
         build)
           if [[ -n "''${TEST_BUILD_PLAN:-}" ]]; then
-            printf '%s\n' build >> "''${TEST_BUILD_LOG}"
+            # The requested targets are logged so a case can read which published package each build narrowed to.
+            printf '%s\n' "build ''${*}" >> "''${TEST_BUILD_LOG}"
             read -r OUTCOME TEST_SPECIFIED TEST_GOT <<<"$(head -1 "''${TEST_BUILD_PLAN}")"
             tail -n +2 "''${TEST_BUILD_PLAN}" > "''${TEST_BUILD_PLAN}.rest"
             mv "''${TEST_BUILD_PLAN}.rest" "''${TEST_BUILD_PLAN}"

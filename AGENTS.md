@@ -96,7 +96,7 @@ flake-lib.inputs.nixpkgs.follows = "nixpkgs";
 
 ## Pin shapes
 
-The fields a pin carries follow from what identifies the artifact, and the updater rewrites exactly those. [`lib/pinned-source.nix`](lib/pinned-source.nix) names the source types and [`lib/mk-update-version.nix`](lib/mk-update-version.nix) what each resolves. `mkUpdateVersion`'s `buildTarget` names the single published package a build-failure hash is mined from, defaulting to the whole published family.
+The fields a pin carries follow from what identifies the artifact, and the updater rewrites exactly those. [`lib/pinned-source.nix`](lib/pinned-source.nix) names the source types and [`lib/mk-update-version.nix`](lib/mk-update-version.nix) what each resolves. `mkUpdateVersion`'s `buildTarget` names the single published package a build-failure hash is mined from, defaulting to the whole published family. Where a family carries more than one build-resolvable field, `buildFailureHashTargets` binds each field to the package that fetches it, because a fresh version branch starts with those fields empty and nothing in the log then names which fetcher produced which hash.
 
 - **PyPI distribution**: `version` and `hash`. `source.pname` is the distribution's real name. The Nix attribute may differ. Source distributions by default, wheels only when upstream requires them and the builder supports the format.
 - **GitHub or GitLab source**: `version`, `sourceRev`, `sourceHash`, fetched at the resolved commit. Release, tag, and commit discovery differ in capability.

@@ -14,9 +14,12 @@ and `flake.nix` are executable uses.
 
 `mkPythonFlake` (`lib/mk-python-flake.nix`): one call is a whole producer flake: the upstream
 it tracks, the payload it publishes, and the org formatter. It publishes `overlays.default`, and
-per supported system `packages` (the `payload.packages` half, the update tools, and `default` when
-that half has exactly one package), `checks` (the `payload.overlays` members built in the tree
-`gate.config` names, the `payload.checks` half, and `formatting`) and `formatter`. Neither family
+per supported system `packages` (the `payload.packages` half, the update tools, and `default`:
+that half's lone package, or the one `defaultPackage` names when it has several), `checks` (the
+`payload.overlays` members built in the tree `gate.config` names, the `payload.checks` half, and
+`formatting`) and `formatter`. `default` is the alias a bare installable resolves to, and
+`overlays.default` publishes the payload's own names and never the alias, so naming a default adds
+nothing to a consumer's set. Neither family
 mirrors the other: a published artifact is not also a check, because a host needs the payload
 resolved in its own set, which the producer cannot see. Building the host is what verifies it.
 The update tools appear only when the flake names an upstream to track. A

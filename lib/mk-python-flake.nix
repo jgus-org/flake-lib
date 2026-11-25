@@ -1,4 +1,4 @@
-# Assembles a python producer flake's outputs from what it publishes and the upstream it tracks. `payload.packages` becomes `packages.<system>`, `payload.overlays` extends the consumer's python set, and `payload.checks` adds checks that ship nothing. `checks.<system>` holds the overlay members built in the tree `gate.config` names, the checks half, and `formatting`.
+# Assembles a python producer flake's outputs from what it publishes and the upstream it tracks. `payload.packages` becomes `packages.<system>`, `payload.overlays` extends the consumer's python set, and `payload.checks` adds checks that ship nothing. `checks.<system>` holds the overlay members built in the tree `gate.config` names, the checks half, and `formatting`. `packages.<system>.default` is the payload's lone package, or the one `defaultPackage` names.
 with builtins;
 {
   eachDefaultSystem,
@@ -13,6 +13,7 @@ with builtins;
   self,
   branchOwnedFiles ? null,
   branches ? true,
+  defaultPackage ? null,
   excludes ? [ ],
   gate ? { },
   nixpkgs,
@@ -144,9 +145,14 @@ in
     formatter = formatting.formatter;
     packages =
       published
-      // nixpkgs.lib.optionalAttrs (length packageNames == 1) {
-        default = published.${head packageNames};
-      }
+      // (
+        if defaultPackage != null then
+          { default = published.${defaultPackage}; }
+        else
+          nixpkgs.lib.optionalAttrs (length packageNames == 1) {
+            default = published.${head packageNames};
+          }
+      )
       // nixpkgs.lib.optionalAttrs (upstream != null) (
         { inherit update-version; } // nixpkgs.lib.optionalAttrs branches { inherit update-branches; }
       );

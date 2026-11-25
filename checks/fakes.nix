@@ -103,6 +103,17 @@ let
         exit 0
       fi
       if [[ "''${1}" == "eval" ]]; then
+        # The gate's probe for the command a tree publishes for itself. A fixture
+        # publishes none, which is the common tree, unless a case names the kind of
+        # program the app carries.
+        if [[ "''${*}" == *test-ci* ]]; then
+          if [[ -n "''${TEST_NIX_CI_PROGRAM_KIND:-}" ]]; then
+            printf '%s\n' "''${TEST_NIX_CI_PROGRAM_KIND}"
+            exit 0
+          fi
+          printf 'error: fixture: this tree publishes no test-ci app\n' >&2
+          exit 1
+        fi
         # The published selection the build gate reads. A case that needs another family
         # names one; the default carries one buildable package and excuses nothing.
         if [[ -n "''${TEST_NIX_SELECTION:-}" ]]; then

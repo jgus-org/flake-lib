@@ -464,6 +464,20 @@ tree an updater pushes is the tree a pull request would have gated. The build ha
 calling tree rather than anything baked into the workflow, so a package a producer adds later is
 gated by the next pull request without a workflow change.
 
+A third step runs the command the tree publishes for itself, the app named `test-ci`:
+
+```console
+nix run .#test-ci
+```
+
+It holds the verification a derivation cannot be: work that needs the network a build sandbox
+denies, a path outside the build tree, or hardware next to the runner. An app is published to run
+rather than to build, so nix builds nothing of it. It runs last so that every step still reports,
+and the minutes it takes come after the seconds the other two need. Most trees publish
+none, and the gate proceeds exactly as it did before one existed. A tree that publishes
+`apps.<system>.test-ci` whose program is neither a string nor a path fails the run. The gate will
+not treat a malformed app as a tree that published nothing.
+
 `build-packages` is the build half on its own: `nix run
 github:jgus-org/flake-lib/v1#build-packages`. It does the things the gate asks it to do, and a
 caller may ask for each directly. It prints the installables it would build instead of building
@@ -506,7 +520,8 @@ that is not a boolean fails the run. It is the per-package sibling of the public
 
 One system per run is a scope decision rather than a limit: hosted arm64 runners
 exist and a second job could gate `aarch64-linux`. Apps and devShells are not built: an
-app names a program to run, and a `mkShell` derivation has no build phase to fail. A flake
+app names a program to run, and a `mkShell` derivation has no build phase to fail. The `test-ci`
+app is the one app the gate reaches for, and it runs that rather than building any. A flake
 that publishes nothing buildable for the runner's system reports that and passes, which is
 why every published flake installs the gate whatever it publishes.
 
